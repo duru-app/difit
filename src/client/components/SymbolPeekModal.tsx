@@ -3,14 +3,23 @@ import type { Token } from 'prism-react-renderer';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 
-import type { SymbolMatch, SymbolSearchResponse } from '../../types/diff';
+import type {
+  LibrarySourceMissing,
+  LibrarySourceOrigin,
+  LibrarySourceResponse,
+  SymbolMatch,
+  SymbolSearchResponse,
+} from '../../types/diff';
 import { useHighlightedCode } from '../hooks/useHighlightedCode';
 import { NO_INDEX_UPDATES, type SymbolIndexUpdates } from '../hooks/useSymbolPeek';
 import { fetchBlobText, tokenizeContent } from '../utils/fileTokens';
 import { getPrismLanguageFromFilename } from '../utils/languageDetection';
 import {
+  fetchLibrarySource,
   fetchSymbol,
+  isLibraryDeclaration,
   isSameMatch,
+  type PeekSelection,
   reselect,
   shortRef,
   type SymbolPeekRequest,
@@ -64,11 +73,19 @@ export function SymbolPeekModal({
   indexUpdates = NO_INDEX_UPDATES,
 }: SymbolPeekModalProps) {
   const [search, setSearch] = useState<SearchState>({ status: 'loading' });
-  const [selected, setSelected] = useState<SymbolMatch | null>(null);
+  const [selected, setSelected] = useState<PeekSelection | null>(null);
+  // Until the user picks an item, or looks up a name in it, a new answer chooses the selection
+  // afresh.
+  const autoPicked = useRef(true);
   const latestUpdateSeq = useRef(indexUpdates.seq);
   const searchedAtSeq = useRef(indexUpdates.seq);
 
   useHotkeys('escape', () => onClose(), { enabled: !hidden }, [onClose, hidden]);
+
+  // A window is hidden only by a lookup opened from the item it shows.
+  useEffect(() => {
+    if (hidden) autoPicked.current = false;
+  }, [hidden]);
 
   useEffect(() => {
     latestUpdateSeq.current = indexUpdates.seq;
@@ -84,6 +101,7 @@ export function SymbolPeekModal({
       (result) => {
         if (controller.signal.aborted) return;
         setSearch({ status: 'done', result, seq });
+        autoPicked.current = true;
         setSelected(reselect(null, result));
       },
       () => {
@@ -113,7 +131,7 @@ export function SymbolPeekModal({
       (result) => {
         if (controller.signal.aborted) return;
         setSearch({ status: 'done', result, seq });
-        setSelected((current) => reselect(current, result));
+        setSelected((current) => reselect(autoPicked.current ? null : current, result));
       },
       () => {},
     );
@@ -168,18 +186,33 @@ export function SymbolPeekModal({
             {search.status === 'loading' && <Notice>찾는 중…</Notice>}
             {search.status === 'failed' && <Notice>이 리비전에서는 찾을 수 없습니다.</Notice>}
             {search.status === 'done' && (
-              <MatchList result={search.result} selected={selected} onSelect={setSelected} />
+              <MatchList
+                result={search.result}
+                selected={selected}
+                onSelect={(selection) => {
+                  autoPicked.current = false;
+                  setSelected(selection);
+                }}
+              />
             )}
           </nav>
           <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-            {selected && (
-              <SymbolFileView
-                key={selected.path}
-                path={selected.path}
-                gitRef={request.ref}
-                line={selected.line}
+            {isLibraryDeclaration(selected) ? (
+              <LibrarySourceView
+                key={selected.librarySymbol}
+                symbol={selected.librarySymbol}
                 syntaxTheme={syntaxTheme}
               />
+            ) : (
+              selected && (
+                <SymbolFileView
+                  key={selected.path}
+                  path={selected.path}
+                  gitRef={request.ref}
+                  line={selected.line}
+                  syntaxTheme={syntaxTheme}
+                />
+              )
             )}
           </div>
         </div>
@@ -199,12 +232,14 @@ const VIA_LABELS: Record<NonNullable<SymbolMatch['via']>, string> = {
 
 interface MatchListProps {
   result: SymbolSearchResponse;
-  selected: SymbolMatch | null;
-  onSelect: (match: SymbolMatch) => void;
+  selected: PeekSelection | null;
+  onSelect: (selection: PeekSelection) => void;
 }
 
 function MatchList({ result, selected, onSelect }: MatchListProps) {
-  const { library } = result;
+  const { librarySymbol } = result;
+  const library = librarySymbol && result.library;
+  const selectedMatch = isLibraryDeclaration(selected) ? null : selected;
   if (result.definitions.length === 0 && result.references.length === 0 && !library) {
     return <Notice>찾지 못했습니다.</Notice>;
   }
@@ -215,18 +250,21 @@ function MatchList({ result, selected, onSelect }: MatchListProps) {
         <h3 className="sticky top-0 bg-github-bg-secondary px-4 py-1.5 text-xs font-semibold text-github-text-secondary">
           {title} {matches.length + (libraryName ? 1 : 0)}
         </h3>
-        {libraryName && (
-          <div className="flex flex-col gap-1 border-b border-github-bg-tertiary px-4 py-2 text-xs">
+        {libraryName && librarySymbol && (
+          <button
+            onClick={() => onSelect({ librarySymbol })}
+            aria-current={isLibraryDeclaration(selected)}
+            className={`flex w-full flex-col gap-1 border-b border-github-bg-tertiary px-4 py-2 text-left text-xs transition-colors hover:bg-github-bg-tertiary ${isLibraryDeclaration(selected) ? 'bg-github-bg-tertiary' : ''}`}
+          >
             <span className="self-start rounded-full border border-github-border bg-github-bg-tertiary px-[7px] text-[11px] leading-4 text-github-text-secondary">
               라이브러리 선언
             </span>
             <code className="break-all font-mono text-github-text-primary">{libraryName}</code>
-            <span className="text-github-text-secondary">저장소에 소스가 없어 열 수 없습니다</span>
-          </div>
+          </button>
         )}
         <ul>
           {matches.map((match) => {
-            const isSelected = isSameMatch(match, selected);
+            const isSelected = isSameMatch(match, selectedMatch);
             return (
               <li key={`${match.path}:${match.line}`}>
                 <button
@@ -278,9 +316,6 @@ interface SymbolFileViewProps {
 
 function SymbolFileView({ path, gitRef, line, syntaxTheme }: SymbolFileViewProps) {
   const [text, setText] = useState<string | null | undefined>(undefined);
-  const language = useMemo(() => getPrismLanguageFromFilename(path), [path]);
-  const { ready: grammarReady } = useHighlightedCode(language);
-  const targetRow = useRef<HTMLTableRowElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -290,21 +325,115 @@ function SymbolFileView({ path, gitRef, line, syntaxTheme }: SymbolFileViewProps
     return () => controller.abort();
   }, [path, gitRef]);
 
+  if (text === null) return <Notice>파일을 읽지 못했습니다.</Notice>;
+  if (text === undefined) return <Notice>파일을 읽는 중…</Notice>;
+  return (
+    <CodeView path={path} text={text} line={line} syntaxTheme={syntaxTheme} searchRef={gitRef} />
+  );
+}
+
+function originLabel(origin: LibrarySourceOrigin): string {
+  if (origin.kind === 'jdk') return origin.installed ? `JDK ${origin.installed}` : 'JDK';
+  return origin.jar;
+}
+
+function versionNote(origin: LibrarySourceOrigin): string | null {
+  if (origin.kind !== 'jdk' || origin.installed === origin.indexed) return null;
+  const installed = origin.installed ? `JDK ${origin.installed}` : '버전을 알 수 없는 JDK';
+  return `색인은 JDK ${origin.indexed}로 만들었지만 ${installed}의 소스를 보여 줍니다. 선언이 다를 수 있습니다.`;
+}
+
+function missingReason(missing: LibrarySourceMissing): React.ReactNode {
+  switch (missing.kind) {
+    case 'jdk':
+      return (
+        <>
+          설치된 JDK에서 JDK {missing.indexed}의 소스(src.zip)를 찾지 못했습니다.
+          {missing.sourcePackage && (
+            <>
+              {' '}
+              <code className="font-mono">sudo apt install {missing.sourcePackage}</code>로 설치하면
+              볼 수 있습니다.
+            </>
+          )}
+        </>
+      );
+    case 'jar':
+      return `Gradle 캐시와 Maven 저장소에 ${missing.artifact}의 소스 jar가 없습니다.`;
+    case 'file':
+      return `${missing.archive} 안에 ${missing.path} 파일이 없습니다.`;
+    case 'unknown':
+      return '어느 라이브러리의 선언인지 알 수 없어 소스를 찾지 못했습니다.';
+  }
+}
+
+interface LibrarySourceViewProps {
+  symbol: string;
+  syntaxTheme?: AppearanceSettings['syntaxTheme'];
+}
+
+function LibrarySourceView({ symbol, syntaxTheme }: LibrarySourceViewProps) {
+  const [source, setSource] = useState<LibrarySourceResponse | null | undefined>(undefined);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchLibrarySource(symbol, controller.signal).then(
+      (fetched) => {
+        if (!controller.signal.aborted) setSource(fetched);
+      },
+      () => {
+        if (!controller.signal.aborted) setSource(null);
+      },
+    );
+    return () => controller.abort();
+  }, [symbol]);
+
+  if (source === undefined) return <Notice>라이브러리 소스를 찾는 중…</Notice>;
+  if (source === null) return <Notice>라이브러리 소스를 읽지 못했습니다.</Notice>;
+  if (!source.found) return <Notice>{missingReason(source.missing)}</Notice>;
+  return (
+    <CodeView
+      path={source.path}
+      text={source.text}
+      line={source.line}
+      syntaxTheme={syntaxTheme}
+      origin={originLabel(source.origin)}
+      note={versionNote(source.origin)}
+    />
+  );
+}
+
+interface CodeViewProps {
+  path: string;
+  text: string;
+  line: number;
+  syntaxTheme?: AppearanceSettings['syntaxTheme'];
+  // The revision a name clicked in the code is searched at; without it names are not searchable.
+  searchRef?: string;
+  origin?: string;
+  note?: string | null;
+}
+
+function CodeView({ path, text, line, syntaxTheme, searchRef, origin, note }: CodeViewProps) {
+  const language = useMemo(() => getPrismLanguageFromFilename(path), [path]);
+  const { ready: grammarReady } = useHighlightedCode(language);
+  const targetRow = useRef<HTMLTableRowElement>(null);
+
   const lines = useMemo(() => {
-    if (!text) return text === '' ? [] : null;
+    if (text === '') return [];
     const split = text.split('\n');
     if (split.at(-1) === '') split.pop();
     return split;
   }, [text]);
-  const total = lines?.length ?? 0;
+  const total = lines.length;
   const windowed = total > MAX_SHOWN_LINES;
   const first = windowed
     ? Math.max(1, Math.min(line - MAX_SHOWN_LINES / 2, total - MAX_SHOWN_LINES + 1))
     : 1;
   const last = windowed ? first + MAX_SHOWN_LINES - 1 : total;
-  const shown = useMemo(() => lines?.slice(first - 1, last) ?? null, [lines, first, last]);
+  const shown = useMemo(() => lines.slice(first - 1, last), [lines, first, last]);
   const fileTokens = useMemo(() => {
-    if (!lines || !grammarReady || highlightedLength(lines) > MAX_TOKENIZED_CHARS) return null;
+    if (!grammarReady || highlightedLength(lines) > MAX_TOKENIZED_CHARS) return null;
     const tokens: (Token[] | null)[] = [];
     let run: string[] = [];
     const tokenizeRun = () => {
@@ -325,7 +454,7 @@ function SymbolFileView({ path, gitRef, line, syntaxTheme }: SymbolFileViewProps
     return tokens;
   }, [lines, grammarReady, language]);
   const plainText = useMemo(() => {
-    if (fileTokens || !shown) return false;
+    if (fileTokens) return false;
     return highlightedLength(shown) > MAX_TOKENIZED_CHARS;
   }, [fileTokens, shown]);
   const lineTokens = useMemo(
@@ -339,14 +468,17 @@ function SymbolFileView({ path, gitRef, line, syntaxTheme }: SymbolFileViewProps
     targetRow.current?.scrollIntoView?.({ block: 'center' });
   }, [shown, line]);
 
-  if (text === null) return <Notice>파일을 읽지 못했습니다.</Notice>;
-  if (!shown) return <Notice>파일을 읽는 중…</Notice>;
-
   return (
-    <div className="font-mono text-xs" data-symbol-ref={gitRef} data-symbol-path={path}>
+    <div
+      className="font-mono text-xs"
+      data-symbol-ref={searchRef}
+      data-symbol-path={searchRef === undefined ? undefined : path}
+    >
       <div className="sticky top-0 z-10 border-b border-github-border bg-github-bg-secondary px-4 py-1.5 text-xs text-github-text-secondary">
         {path}
+        {origin && ` · ${origin}`}
         {windowed && ` · ${first}-${last}줄만 보여 줍니다`}
+        {note && <p className="mt-0.5 font-sans">{note}</p>}
       </div>
       <table className="w-full border-collapse">
         <tbody>

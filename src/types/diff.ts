@@ -185,14 +185,14 @@ export interface SymbolIndexLogResponse {
 // Where the source of a library declaration was read from: the src.zip of an installed JDK,
 // whose major version may differ from the `indexed` one the code was compiled against, or a
 // -sources.jar in the Gradle or Maven cache.
-type LibrarySourceOrigin =
+export type LibrarySourceOrigin =
   | { kind: 'jdk'; installed: string | null; indexed: string }
   | { kind: 'gradle' | 'maven'; jar: string };
 
 // Why no source was shown: no installed JDK has a src.zip (`sourcePackage` is the system
 // package that would install a missing one), no cache holds a -sources.jar of the artifact,
 // the archive found does not hold the file, or the symbol names no JDK or Maven artifact.
-type LibrarySourceMissing =
+export type LibrarySourceMissing =
   | { kind: 'jdk'; indexed: string; sourcePackage?: string }
   | { kind: 'jar'; artifact: string }
   | { kind: 'file'; archive: string; path: string }

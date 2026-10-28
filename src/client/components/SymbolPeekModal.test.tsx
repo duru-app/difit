@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SymbolSearchResponse } from '../../types/diff';
+import type { LibrarySourceResponse, SymbolSearchResponse } from '../../types/diff';
 import type { SymbolIndexState } from '../../types/watch';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import type { SymbolIndexUpdates } from '../hooks/useSymbolPeek';
@@ -389,10 +389,13 @@ describe('SymbolPeekModal with a commit index', () => {
 
   // `null` answers the search with a failure.
   let answers: ((value: SymbolSearchResponse | null) => void)[];
+  // `null` fails the request.
+  let librarySource: LibrarySourceResponse | null;
 
   beforeEach(() => {
     global.fetch = vi.fn();
     answers = [];
+    librarySource = null;
     files['src/other.ts'] = 'const other = {};\n\n\n\nother.addOne(2);\n';
     vi.mocked(global.fetch).mockImplementation(async (input) => {
       const url = new URL(String(input), 'http://localhost');
@@ -403,6 +406,11 @@ describe('SymbolPeekModal with a commit index', () => {
         return search === null
           ? new Response('', { status: 404 })
           : new Response(JSON.stringify(search), { status: 200 });
+      }
+      if (url.pathname === '/api/library-source') {
+        return librarySource === null
+          ? new Response('', { status: 500 })
+          : new Response(JSON.stringify(librarySource), { status: 200 });
       }
       const content = files[decodeURIComponent(url.pathname.replace('/api/blob/', ''))];
       return content === undefined
@@ -424,11 +432,12 @@ describe('SymbolPeekModal with a commit index', () => {
     answers[count - 1]!(search);
   }
 
-  function modal(indexUpdates?: SymbolIndexUpdates) {
+  function modal(indexUpdates?: SymbolIndexUpdates, hidden?: boolean) {
     return (
       <WordHighlightProvider>
         <SymbolPeekModal
           request={request}
+          hidden={hidden}
           canGoBack={false}
           onBack={vi.fn()}
           onClose={vi.fn()}
@@ -588,28 +597,192 @@ describe('SymbolPeekModal with a commit index', () => {
     expect(symbolRequests()).toHaveLength(1);
   });
 
-  it('shows a declaration that only a library holds, then the uses in the repository', async () => {
+  const LIBRARY_SYMBOL = 'semanticdb maven jdk 8 java/util/Optional#orElse().';
+  const OPTIONAL_SOURCE = [
+    'package java.util;',
+    'public final class Optional<T> {',
+    '    public T orElse(T other) {',
+    '        return value != null ? value : other;',
+    '    }',
+    '}',
+  ].join('\n');
+  const byLibrary: SymbolSearchResponse = {
+    ...byIndex,
+    name: 'orElse',
+    definitions: [],
+    library: 'java.util.Optional#orElse()',
+    librarySymbol: LIBRARY_SYMBOL,
+  };
+  const libraryFound = (
+    origin: Extract<LibrarySourceResponse, { found: true }>['origin'],
+  ): LibrarySourceResponse => ({
+    found: true,
+    path: 'java/util/Optional.java',
+    line: 3,
+    text: OPTIONAL_SOURCE,
+    origin,
+  });
+  const libraryRequests = () =>
+    vi
+      .mocked(global.fetch)
+      .mock.calls.filter(([url]) => String(url).startsWith('/api/library-source'));
+  const libraryPane = () =>
+    screen.findByText((_, element) => element?.textContent === 'java/util/Optional.java · JDK 8');
+
+  it('opens the source of a declaration that only a library holds at its line', async () => {
+    librarySource = libraryFound({ kind: 'jdk', installed: '8', indexed: '8' });
     render(modal());
-    await answer(
-      {
-        ...byIndex,
-        name: 'orElse',
-        definitions: [],
-        library: 'java.util.Optional#orElse()',
-      },
-      1,
-    );
+    await answer(byLibrary, 1);
 
     const list = await screen.findByRole('navigation');
     expect(within(list).getByText('선언 1')).toBeInTheDocument();
     expect(within(list).getByText('라이브러리 선언')).toBeInTheDocument();
-    expect(within(list).getByText('java.util.Optional#orElse()')).toBeInTheDocument();
-    expect(within(list).getByText('저장소에 소스가 없어 열 수 없습니다')).toBeInTheDocument();
+    expect(selectedItem()).toContain('java.util.Optional#orElse()');
     expect(within(list).getByText('쓰인 곳 1')).toBeInTheDocument();
-    expect(selectedItem()).toContain('src/use.ts:1');
-    expect(list.textContent?.indexOf('저장소에 소스가 없어')).toBeLessThan(
+    expect(list.textContent?.indexOf('java.util.Optional#orElse()')).toBeLessThan(
       list.textContent?.indexOf('src/use.ts:1') ?? -1,
     );
+    expect(await libraryPane()).toBeInTheDocument();
+    expect(libraryRequests()[0]?.[0]).toBe(
+      `/api/library-source?${new URLSearchParams({ symbol: LIBRARY_SYMBOL }).toString()}`,
+    );
+    const target = await screen.findByText('3');
+    expect(target.closest('tr')).toHaveClass('bg-github-accent/15');
+    expect(target.closest('tr')?.textContent).toContain('public T orElse(T other) {');
+    expect(screen.queryByText(/선언이 다를 수 있습니다/)).not.toBeInTheDocument();
+  });
+
+  it('selects the library declaration once the index answers, unless a use was picked', async () => {
+    librarySource = libraryFound({ kind: 'jdk', installed: '8', indexed: '8' });
+    const byNameOnly: SymbolSearchResponse = { ...byName, name: 'orElse', definitions: [] };
+
+    const first = render(modal(updates(building, 1)));
+    await answer(byNameOnly, 1);
+    await waitFor(() => expect(selectedItem()).toContain('src/use.ts:1'));
+    first.rerender(modal(updates(ready, 2)));
+    await answer(byLibrary, 2);
+
+    await waitFor(() => expect(selectedItem()).toContain('java.util.Optional#orElse()'));
+    expect(await libraryPane()).toBeInTheDocument();
+    first.unmount();
+
+    const second = render(modal(updates(building, 1)));
+    await answer(byNameOnly, 3);
+    await shownRows();
+    fireEvent.click(screen.getByText('src/use.ts:1'));
+    second.rerender(modal(updates(ready, 2)));
+    await answer(byLibrary, 4);
+
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    expect(selectedItem()).toContain('src/use.ts:1');
+  });
+
+  it('keeps the item a deeper lookup was opened from when the index answers meanwhile', async () => {
+    librarySource = libraryFound({ kind: 'jdk', installed: '8', indexed: '8' });
+    const byNameOnly: SymbolSearchResponse = { ...byName, name: 'orElse', definitions: [] };
+    const { rerender } = render(modal(updates(building, 1)));
+    await answer(byNameOnly, 1);
+    await waitFor(() => expect(selectedItem()).toContain('src/use.ts:1'));
+    await shownRows();
+
+    rerender(modal(updates(building, 1), true));
+    rerender(modal(updates(ready, 2), true));
+    await answer(byLibrary, 2);
+    await screen.findByText('라이브러리 선언');
+    rerender(modal(updates(ready, 2)));
+
+    expect(selectedItem()).toContain('src/use.ts:1');
+    expect(screen.getByText('src/use.ts')).toBeInTheDocument();
+    expect(libraryRequests()).toHaveLength(0);
+  });
+
+  it('does not search names clicked in a library source', async () => {
+    librarySource = libraryFound({ kind: 'jdk', installed: '8', indexed: '8' });
+    render(modal());
+    await answer(byLibrary, 1);
+    await libraryPane();
+
+    const word = await waitFor(() => {
+      const found = document.querySelector(
+        '[data-symbol-line="3"] .word-token[data-word="orElse"]',
+      );
+      expect(found).not.toBeNull();
+      return found;
+    });
+
+    expect(symbolRequestFromTarget(word, { base: 'abc1234^', target: 'abc1234' })).toBeNull();
+  });
+
+  it('moves between the library declaration and a use in the repository', async () => {
+    librarySource = libraryFound({ kind: 'gradle', jar: 'x-1.0-sources.jar' });
+    render(modal());
+    await answer(byLibrary, 1);
+    const list = await screen.findByRole('navigation');
+
+    fireEvent.click(within(list).getByText('src/use.ts:1'));
+    expect(await shownRows()).toEqual(['1const two = addOne(1);']);
+    fireEvent.click(within(list).getByText('java.util.Optional#orElse()'));
+
+    expect(
+      await screen.findByText(
+        (_, element) => element?.textContent === 'java/util/Optional.java · x-1.0-sources.jar',
+      ),
+    ).toBeInTheDocument();
+    expect(selectedItem()).toContain('java.util.Optional#orElse()');
+  });
+
+  it.each([
+    [
+      { kind: 'jdk', installed: '17', indexed: '8' } as const,
+      '색인은 JDK 8로 만들었지만 JDK 17의 소스를 보여 줍니다. 선언이 다를 수 있습니다.',
+    ],
+    [
+      { kind: 'jdk', installed: null, indexed: '8' } as const,
+      '색인은 JDK 8로 만들었지만 버전을 알 수 없는 JDK의 소스를 보여 줍니다. 선언이 다를 수 있습니다.',
+    ],
+  ])('notes a JDK source of another version than the index', async (origin, note) => {
+    librarySource = libraryFound(origin);
+    render(modal());
+    await answer(byLibrary, 1);
+
+    expect(await screen.findByText(note)).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      { kind: 'jdk', indexed: '8', sourcePackage: 'openjdk-8-source' } as const,
+      '설치된 JDK에서 JDK 8의 소스(src.zip)를 찾지 못했습니다. sudo apt install openjdk-8-source로 설치하면 볼 수 있습니다.',
+    ],
+    [
+      { kind: 'jdk', indexed: '8' } as const,
+      '설치된 JDK에서 JDK 8의 소스(src.zip)를 찾지 못했습니다.',
+    ],
+    [
+      { kind: 'jar', artifact: 'org.example:lib:1.0' } as const,
+      'Gradle 캐시와 Maven 저장소에 org.example:lib:1.0의 소스 jar가 없습니다.',
+    ],
+    [
+      { kind: 'file', archive: '/jdk/lib/src.zip', path: 'java/util/Optional.java' } as const,
+      '/jdk/lib/src.zip 안에 java/util/Optional.java 파일이 없습니다.',
+    ],
+    [{ kind: 'unknown' } as const, '어느 라이브러리의 선언인지 알 수 없어 소스를 찾지 못했습니다.'],
+  ])('says why a library source is not shown', async (missing, reason) => {
+    librarySource = { found: false, missing };
+    render(modal());
+    await answer(byLibrary, 1);
+
+    expect(
+      await screen.findByText(
+        (_, element) => element?.tagName === 'P' && element.textContent === reason,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('says when the library source could not be read', async () => {
+    render(modal());
+    await answer(byLibrary, 1);
+
+    expect(await screen.findByText('라이브러리 소스를 읽지 못했습니다.')).toBeInTheDocument();
   });
 
   it('marks only the uses that were found by name in an index answer', async () => {
