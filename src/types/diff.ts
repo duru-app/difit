@@ -173,6 +173,9 @@ export interface SymbolSearchResponse {
   // Why a click that name search answered did not use an index, sent only when the commit (or
   // HEAD, for a review of uncommitted changes) could be indexed.
   unindexed?: 'not-java' | 'not-commit';
+  // From the index: declarations of the types that extend or implement the clicked one, or of
+  // the methods that override it.
+  implementations?: SymbolMatch[];
 }
 
 // GET /api/symbol-index/:commit/log

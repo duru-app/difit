@@ -227,20 +227,30 @@ export async function answerFromScipIndex(
   const uses: Site[] = found.fieldUses ?? found.references;
   const placedDefinitions = placeSites(oneSitePerLine(found.definitions), changes);
   const placedReferences = placeSites(oneSitePerLine(uses), changes);
+  // An implementation is named differently from the clicked symbol when it is a type, so a
+  // line changed since cannot be checked by name.
+  const placedImplementations = placeSites(
+    oneSitePerLine(found.implementations ?? []),
+    changes,
+  ).filter((site) => !site.replaced);
   const committed = await files.existing([
     at.path,
     ...placedDefinitions.map((site) => site.path),
     ...placedReferences.map((site) => site.path),
+    ...placedImplementations.map((site) => site.path),
   ]);
   if (!committed.has(at.path)) return null;
   const definitions = placedDefinitions.filter((site) => committed.has(site.path));
   const references = placedReferences.filter((site) => committed.has(site.path));
+  const implementations = placedImplementations.filter((site) => committed.has(site.path));
   const shownDefinitions = definitions.slice(0, MAX_DEFINITIONS);
   const shownReferences = references.slice(0, MAX_REFERENCES);
+  const shownImplementations = implementations.slice(0, MAX_DEFINITIONS);
   const lines = await files.readLines([
     at.path,
     ...shownDefinitions.map((site) => site.path),
     ...shownReferences.map((site) => site.path),
+    ...shownImplementations.map((site) => site.path),
   ]);
   const clickedText = lines.get(at.path)?.[at.line - 1] ?? '';
   if (clickedText.slice(clicked.startCol, clicked.startCol + name.length) !== name) return null;
@@ -271,7 +281,13 @@ export async function answerFromScipIndex(
     ref,
     definitions: toMatches(shownDefinitions),
     references: toMatches(shownReferences),
-    truncated: definitions.length > MAX_DEFINITIONS || references.length > MAX_REFERENCES,
+    ...(shownImplementations.length > 0
+      ? { implementations: toMatches(shownImplementations) }
+      : {}),
+    truncated:
+      definitions.length > MAX_DEFINITIONS ||
+      references.length > MAX_REFERENCES ||
+      implementations.length > MAX_DEFINITIONS,
     source: 'index',
     ...(found.external
       ? { library: externalSymbolDisplayName(found.symbol), librarySymbol: found.symbol }

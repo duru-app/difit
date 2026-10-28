@@ -451,6 +451,86 @@ describe('answerFromScipIndex on Lombok classes', () => {
   });
 });
 
+const IMPL_DIR = join(__dirname, 'scip-index-impl-fixture');
+const SHAPE = 'src/main/java/demo/Shape.java';
+const SQUARE = 'src/main/java/demo/Square.java';
+const CIRCLE = 'src/main/java/demo/Circle.java';
+
+function implLines(path: string): string[] {
+  return readFileSync(join(IMPL_DIR, path), 'utf8').split('\n');
+}
+
+function implCommit(...left: string[]): CommitFiles {
+  return {
+    existing: async (paths) => new Set(paths.filter((path) => !left.includes(path))),
+    readLines: async (paths) =>
+      new Map(paths.filter((path) => !left.includes(path)).map((path) => [path, implLines(path)])),
+  };
+}
+
+function implMatch(path: string, line: number) {
+  return { path, line, text: implLines(path)[line - 1] };
+}
+
+describe('answerFromScipIndex on implementations and calls', () => {
+  let index: ScipIndex;
+
+  beforeAll(async () => {
+    index = await convertScipIndex(join(IMPL_DIR, 'index.scip'));
+  });
+
+  const answer = (name: string, path: string, line: number, files = implCommit()) =>
+    answerFromScipIndex(
+      index,
+      name,
+      'abc1234',
+      { path, line, column: (implLines(path)[line - 1] ?? '').indexOf(name) },
+      files,
+    );
+
+  it('lists the declarations that implement the clicked method', async () => {
+    expect((await answer('area', SHAPE, 4))?.implementations).toEqual([
+      implMatch(CIRCLE, 11),
+      implMatch(SQUARE, 11),
+    ]);
+  });
+
+  it('leaves out implementations in files the commit does not hold', async () => {
+    expect((await answer('area', SHAPE, 4, implCommit(CIRCLE)))?.implementations).toEqual([
+      implMatch(SQUARE, 11),
+    ]);
+  });
+
+  it('leaves out an implementation on a line changed since the indexed commit', async () => {
+    const changes = parseLineChanges(
+      [
+        `diff --git a/${CIRCLE} b/${CIRCLE}`,
+        `--- a/${CIRCLE}`,
+        `+++ b/${CIRCLE}`,
+        '@@ -11 +11 @@',
+        `-${implLines(CIRCLE)[10]}`,
+        '+    public double area() { // edited',
+        '',
+      ].join('\n'),
+    )!;
+    const result = await answerFromScipIndex(
+      index,
+      'area',
+      'fix1234',
+      { path: SHAPE, line: 4, column: (implLines(SHAPE)[3] ?? '').indexOf('area') },
+      implCommit(),
+      changes,
+    );
+    expect(result?.implementations).toEqual([implMatch(SQUARE, 11)]);
+  });
+
+  it('sends no implementations for a method nothing overrides', async () => {
+    const result = await answer('area', SQUARE, 11);
+    expect(result?.definitions).toEqual([implMatch(SQUARE, 11)]);
+    expect(result).not.toHaveProperty('implementations');
+  });
+});
+
 describe('commitFiles', () => {
   afterAll(() => {
     vi.unstubAllEnvs();
