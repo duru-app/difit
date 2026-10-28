@@ -75,6 +75,7 @@ import {
   type DiffLineRange,
   type DiffResponse,
   type DiffSelection,
+  type DiffSide,
   type DirectEditRejection,
   type DirectEditRequest,
   type DirectEditResponse,
@@ -87,6 +88,7 @@ import {
   type RewordRejection,
   type RewordRequest,
   type RewordResponse,
+  type SidedLine,
   type SymbolIndexLogResponse,
   type SymbolSearchResponse,
   type ThreadAwaitingAgent,
@@ -1127,6 +1129,17 @@ export async function startServer(options: ServerOptions): Promise<{
     return 1;
   }
 
+  function normalizeExtraLine(extra: unknown, side: DiffSide): SidedLine {
+    if (typeof extra === 'object' && extra !== null && 'line' in extra) {
+      const sided = extra as { side?: unknown; line: unknown };
+      return {
+        side: sided.side === 'old' || sided.side === 'new' ? sided.side : side,
+        line: lineOfRange(normalizeLineValue(sided.line)),
+      };
+    }
+    return { side, line: lineOfRange(normalizeLineValue(extra)) };
+  }
+
   function normalizeComment(comment: Comment): DiffCommentThread {
     const now = new Date().toISOString();
     const timestamp = typeof comment.timestamp === 'string' ? comment.timestamp : now;
@@ -1228,12 +1241,13 @@ export async function startServer(options: ServerOptions): Promise<{
       position:
         thread.line === undefined
           ? { side: thread.side ?? 'new', scope: 'file' }
-          : positionOfLines(thread.side ?? 'new', [
+          : positionOfLines(
+              thread.side ?? 'new',
               lineOfRange(normalizeLineValue(thread.line)),
-              ...(Array.isArray(thread.extraLines) ? thread.extraLines : []).map((line) =>
-                lineOfRange(normalizeLineValue(line)),
+              (Array.isArray(thread.extraLines) ? (thread.extraLines as unknown[]) : []).map(
+                (extra) => normalizeExtraLine(extra, thread.side ?? 'new'),
               ),
-            ]),
+            ),
       codeSnapshot:
         typeof thread.codeContent === 'string'
           ? {

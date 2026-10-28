@@ -6,13 +6,15 @@ import {
   type DiffCommentThread,
   type DiffLineRange,
   type DiffCommentCodeSnapshot,
+  type DiffSide,
+  type ExtraLineRange,
   type DiffCommentMessage,
   type DiffSelection,
   type ReplyChoice,
   type ReplyCommentImport,
   type ThreadCommentImport,
 } from '../types/diff.js';
-import { endOfLine, rangesOfPosition, startOfLine } from './commentPosition.js';
+import { endOfLine, rangesOfPosition, sideOfRange, startOfLine } from './commentPosition.js';
 import { createId } from './createId.js';
 import { createDiffSelection, isCommitHash } from './diffSelection.js';
 
@@ -68,19 +70,37 @@ function normalizeLineRange(value: unknown, fieldName = 'position.line'): DiffLi
   return { start, end };
 }
 
-// Ascending, apart from each other, and all above `line`, as the screen stores them.
-function normalizeExtraRanges(value: unknown, line: DiffLineRange): DiffLineRange[] | undefined {
+function normalizeExtraRange(value: unknown, side: DiffSide): ExtraLineRange {
+  const range = normalizeLineRange(value, 'position.extraRanges');
+  if (!isRecord(value) || value.side === undefined || value.side === side) return range;
+  if ((value.side !== 'old' && value.side !== 'new') || typeof range === 'number') {
+    throw new Error('Invalid comment import field: position.extraRanges');
+  }
+  return { side: value.side, start: range.start, end: range.end };
+}
+
+const ascending = (ranges: readonly ExtraLineRange[]) =>
+  ranges.every(
+    (range, index) => index === 0 || endOfLine(ranges[index - 1] ?? range) < startOfLine(range),
+  );
+
+// On each side ascending and apart from each other, and on `side` all above `line`, as the screen
+// stores them.
+function normalizeExtraRanges(
+  value: unknown,
+  line: DiffLineRange,
+  side: DiffSide,
+): ExtraLineRange[] | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (!Array.isArray(value)) {
     throw new Error('Invalid comment import field: position.extraRanges');
   }
-  const ranges = value.map((range) => normalizeLineRange(range, 'position.extraRanges'));
-  const ordered = [...ranges, line].every(
-    (range, index, all) => index === 0 || endOfLine(all[index - 1] ?? range) < startOfLine(range),
-  );
-  if (!ordered) {
+  const ranges = value.map((range) => normalizeExtraRange(range, side));
+  const onSide = ranges.filter((range) => sideOfRange(range, side) === side);
+  const onOtherSide = ranges.filter((range) => sideOfRange(range, side) !== side);
+  if (!ascending([...onSide, line]) || !ascending(onOtherSide)) {
     throw new Error('Invalid comment import field: position.extraRanges');
   }
   return ranges.length > 0 ? ranges : undefined;
@@ -97,7 +117,7 @@ function normalizePosition(value: unknown): DiffCommentPosition {
 
   if (value.scope === undefined) {
     const line = normalizeLineRange(value.line);
-    const extraRanges = normalizeExtraRanges(value.extraRanges, line);
+    const extraRanges = normalizeExtraRanges(value.extraRanges, line, value.side);
     return { side: value.side, line, ...(extraRanges ? { extraRanges } : {}) };
   }
   if (value.scope !== 'file' || value.line !== undefined || value.extraRanges !== undefined) {
@@ -359,8 +379,10 @@ export function parseCommentImportValue(value: string): CommentImport[] {
   );
 }
 
-const rangeKey = (range: DiffLineRange) =>
-  typeof range === 'number' ? String(range) : `${range.start}-${range.end}`;
+const rangeKey = (range: ExtraLineRange) => {
+  if (typeof range === 'number') return String(range);
+  return `${'side' in range ? `${range.side}@` : ''}${range.start}-${range.end}`;
+};
 
 function getPositionKey(position: DiffCommentPosition): string {
   if (!('line' in position)) {
@@ -490,6 +512,13 @@ function cloneLineRange(line: DiffLineRange): DiffLineRange {
   };
 }
 
+function cloneExtraRange(range: ExtraLineRange): ExtraLineRange {
+  if (typeof range === 'object' && 'side' in range) {
+    return { side: range.side, start: range.start, end: range.end };
+  }
+  return cloneLineRange(range);
+}
+
 function clonePosition(position: DiffCommentPosition): DiffCommentPosition {
   if (!('line' in position)) {
     return { side: position.side, scope: 'file' };
@@ -498,7 +527,7 @@ function clonePosition(position: DiffCommentPosition): DiffCommentPosition {
   return {
     side: position.side,
     line: cloneLineRange(position.line),
-    ...(position.extraRanges ? { extraRanges: position.extraRanges.map(cloneLineRange) } : {}),
+    ...(position.extraRanges ? { extraRanges: position.extraRanges.map(cloneExtraRange) } : {}),
   };
 }
 

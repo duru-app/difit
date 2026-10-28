@@ -636,7 +636,7 @@ describe.each(['unified', 'split'] as const)(
           '// new 40\nf40();',
           'new',
           {
-            lines: [11],
+            lines: [{ side: 'new', line: 11 }],
             contents: ['f10();'],
           },
         ),
@@ -696,7 +696,7 @@ describe.each(['unified', 'split'] as const)(
         id: 'multi',
         file: 'src/a.ts',
         line: [40, 41],
-        extraLines: [11],
+        extraLines: [{ side: 'new', line: 11 }],
         side: 'new',
         createdAt: '2026-10-27T00:00:00.000Z',
         updatedAt: '2026-10-27T00:00:00.000Z',
@@ -738,6 +738,53 @@ describe.each(['unified', 'split'] as const)(
         fireEvent.click(screen.getByText('Same mistake'));
 
         expect(flashed()).toEqual(['f10();', '// new 40', 'f40();']);
+      });
+    });
+
+    describe('a saved comment on deleted and kept lines', () => {
+      const thread: CommentThread = {
+        id: 'mixed',
+        file: 'src/a.ts',
+        line: [40, 41],
+        extraLines: [{ side: 'old', line: 10 }],
+        side: 'new',
+        createdAt: '2026-10-27T00:00:00.000Z',
+        updatedAt: '2026-10-27T00:00:00.000Z',
+        messages: [
+          {
+            id: 'mixed',
+            body: 'Same mistake',
+            createdAt: '2026-10-27T00:00:00.000Z',
+            updatedAt: '2026-10-27T00:00:00.000Z',
+          },
+        ],
+      };
+
+      it('points to the card from the deleted line, naming the side of the card', () => {
+        renderViewer({ ...open, threads: [thread] });
+
+        expect(screen.getAllByText('Same mistake')).toHaveLength(1);
+        const marker = screen.getByText('이 줄도 남은 줄 L40-L41 아래 지적에 함께 걸려 있습니다');
+        expect(
+          rowOf('// old 10').compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(
+          rowOf('f10();').compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_PRECEDING,
+        ).toBeTruthy();
+        expect(screen.getByText('src/a.ts:old:10,new:40-41')).toBeInTheDocument();
+      });
+
+      it('lights up the deleted line along with the kept ones', () => {
+        renderViewer({ ...open, threads: [thread] });
+
+        fireEvent.click(screen.getByText('Same mistake'));
+
+        // The split view shows the deleted line on the row of the line that replaced it.
+        expect(flashed()).toEqual([
+          mode === 'unified' ? '// old 10' : '// new 10',
+          '// new 40',
+          'f40();',
+        ]);
       });
     });
   },

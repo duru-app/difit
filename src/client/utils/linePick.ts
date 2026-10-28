@@ -1,4 +1,10 @@
-import type { CommentThread, DiffSide, LineNumber, LineSelection } from '../../types/diff';
+import type {
+  CommentThread,
+  DiffSide,
+  LineNumber,
+  LineSelection,
+  SidedLine,
+} from '../../types/diff';
 
 // The lines a comment being written sits on, all on one side.
 export interface LinePick {
@@ -118,17 +124,18 @@ const spanOf = (line: LineNumber): [number, number] => (Array.isArray(line) ? li
 
 type ThreadLines = Pick<CommentThread, 'line' | 'extraLines' | 'side'>;
 
+const sidedLinesOf = ({ line, extraLines, side }: ThreadLines): SidedLine[] =>
+  line === undefined ? [] : [...(extraLines ?? []), { side: side ?? 'new', line }];
+
 export function threadHoldsLine(
   thread: ThreadLines,
   side: DiffSide,
   lineNumber: number | undefined,
 ): boolean {
-  if (thread.line === undefined || lineNumber === undefined || (thread.side ?? 'new') !== side) {
-    return false;
-  }
-  return [...(thread.extraLines ?? []), thread.line].some((line) => {
-    const [start, end] = spanOf(line);
-    return lineNumber >= start && lineNumber <= end;
+  if (lineNumber === undefined) return false;
+  return sidedLinesOf(thread).some((range) => {
+    const [start, end] = spanOf(range.line);
+    return range.side === side && lineNumber >= start && lineNumber <= end;
   });
 }
 
@@ -137,8 +144,10 @@ export function extraRangeEndsAt(
   side: DiffSide,
   lineNumber: number | undefined,
 ): boolean {
-  if (lineNumber === undefined || (thread.side ?? 'new') !== side) return false;
-  return (thread.extraLines ?? []).some((line) => spanOf(line)[1] === lineNumber);
+  if (lineNumber === undefined) return false;
+  return (thread.extraLines ?? []).some(
+    (range) => range.side === side && spanOf(range.line)[1] === lineNumber,
+  );
 }
 
 export const rangeLabel = (line: LineNumber) =>

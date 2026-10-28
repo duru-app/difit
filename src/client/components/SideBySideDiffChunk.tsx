@@ -367,7 +367,7 @@ export function SideBySideDiffChunk({
       ...(extraLines.length > 0
         ? [
             {
-              lines: extraLines,
+              lines: extraLines.map((line) => ({ side, line })),
               contents: extraLines.map((line) => linePick.contentOf(side, line)),
             },
           ]

@@ -254,7 +254,10 @@ describe('locateThread on a thread with several ranges', () => {
   it('keeps every range where it was stored', () => {
     expect(locateThread(multi, shifted(0), TARGET)).toEqual({
       line: [30, 31],
-      extraLines: [10, 20],
+      extraLines: [
+        { side: 'new', line: 10 },
+        { side: 'new', line: 20 },
+      ],
       isOutdated: false,
     });
   });
@@ -262,7 +265,10 @@ describe('locateThread on a thread with several ranges', () => {
   it('moves every range to where its code now sits', () => {
     expect(locateThread(multi, shifted(5), TARGET)).toEqual({
       line: [35, 36],
-      extraLines: [15, 25],
+      extraLines: [
+        { side: 'new', line: 15 },
+        { side: 'new', line: 25 },
+      ],
       isOutdated: false,
     });
   });
@@ -270,7 +276,10 @@ describe('locateThread on a thread with several ranges', () => {
   it('is outdated as a whole when the code of one range is gone', () => {
     expect(locateThread(multi, shifted(5, { 20: 'log(`${p}${q}`);' }), TARGET)).toEqual({
       line: [30, 31],
-      extraLines: [10, 20],
+      extraLines: [
+        { side: 'new', line: 10 },
+        { side: 'new', line: 20 },
+      ],
       isOutdated: true,
       outdatedReason: 'missing',
     });
@@ -284,7 +293,10 @@ describe('locateThread on a thread with several ranges', () => {
 
     expect(locateThread(withoutCode, shifted(5), TARGET)).toEqual({
       line: [35, 36],
-      extraLines: [10, 20],
+      extraLines: [
+        { side: 'new', line: 10 },
+        { side: 'new', line: 20 },
+      ],
       isOutdated: false,
     });
   });
@@ -294,6 +306,48 @@ describe('locateThread on a thread with several ranges', () => {
       isOutdated: true,
     });
     expect(locateThread(multi, shifted(0), null)).toMatchObject({ isOutdated: false });
+  });
+});
+
+describe('locateThread on a thread over deleted and kept lines', () => {
+  const mixed = buildThread({
+    position: {
+      side: 'new',
+      line: { start: 12, end: 13 },
+      extraRanges: [{ side: 'old', start: 12, end: 14 }],
+    },
+    codeSnapshot: {
+      content: 'next(a);\nnext(b);',
+      extraContents: ['prev(a);\nprev(b);\nprev(c);'],
+      commit: '7654321',
+    },
+  });
+  const file = (newBy: number, oldContent = 'prev(a);') =>
+    buildFileLineIndex(
+      buildFile([
+        oldLine(12, oldContent),
+        oldLine(13, 'prev(b);'),
+        oldLine(14, 'prev(c);'),
+        newLine(12 + newBy, 'next(a);'),
+        newLine(13 + newBy, 'next(b);'),
+      ]),
+    );
+
+  it('finds each range among the lines of its own side', () => {
+    expect(locateThread(mixed, file(4), TARGET)).toEqual({
+      line: [16, 17],
+      extraLines: [{ side: 'old', line: [12, 14] }],
+      isOutdated: false,
+    });
+  });
+
+  it('is outdated as a whole when the deleted lines are not found', () => {
+    expect(locateThread(mixed, file(4, 'prev(z);'), TARGET)).toEqual({
+      line: [12, 13],
+      extraLines: [{ side: 'old', line: [12, 14] }],
+      isOutdated: true,
+      outdatedReason: 'missing',
+    });
   });
 });
 

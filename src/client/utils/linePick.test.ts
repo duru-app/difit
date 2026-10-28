@@ -97,7 +97,10 @@ describe('picking separate lines for one comment', () => {
 describe('the lines of a saved thread', () => {
   const thread: Pick<CommentThread, 'line' | 'extraLines' | 'side'> = {
     line: [77, 80],
-    extraLines: [12, [40, 41]],
+    extraLines: [
+      { side: 'new', line: 12 },
+      { side: 'new', line: [40, 41] },
+    ],
     side: 'new',
   };
 
@@ -111,5 +114,16 @@ describe('the lines of a saved thread', () => {
     expect([12, 41].every((line) => extraRangeEndsAt(thread, 'new', line))).toBe(true);
     expect(extraRangeEndsAt(thread, 'new', 40)).toBe(false);
     expect(extraRangeEndsAt(thread, 'new', 80)).toBe(false);
+  });
+
+  it('matches a range on the other side by its own side', () => {
+    const mixed = {
+      ...thread,
+      extraLines: [{ side: 'old' as const, line: [12, 14] as [number, number] }],
+    };
+    expect(threadHoldsLine(mixed, 'old', 13)).toBe(true);
+    expect(threadHoldsLine(mixed, 'new', 13)).toBe(false);
+    expect(extraRangeEndsAt(mixed, 'old', 14)).toBe(true);
+    expect(extraRangeEndsAt(mixed, 'new', 14)).toBe(false);
   });
 });

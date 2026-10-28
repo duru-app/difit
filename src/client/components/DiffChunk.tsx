@@ -305,7 +305,7 @@ export const DiffChunk = memo(function DiffChunk({
       ...(extraLines.length > 0
         ? [
             {
-              lines: extraLines,
+              lines: extraLines.map((line) => ({ side, line })),
               contents: extraLines.map((line) => linePick.contentOf(side, line)),
             },
           ]
@@ -317,11 +317,8 @@ export const DiffChunk = memo(function DiffChunk({
   const flashedThread = threads.find(({ id }) => id === linePick.flashedThreadId);
   const holdsFlashed = (line: DiffLine) =>
     !!flashedThread &&
-    threadHoldsLine(
-      flashedThread,
-      flashedThread.side ?? 'new',
-      lineNumberOn(line, flashedThread.side ?? 'new'),
-    );
+    (threadHoldsLine(flashedThread, 'old', line.oldLineNumber) ||
+      threadHoldsLine(flashedThread, 'new', line.newLineNumber));
   const showThread = (thread: CommentThread) => {
     goToThreadCard(thread.id);
     linePick.flash(thread.id);
@@ -529,12 +526,8 @@ export const DiffChunk = memo(function DiffChunk({
               : null;
             const markedThreads = threads.filter(
               (thread) =>
-                thread.extraLines &&
-                extraRangeEndsAt(
-                  thread,
-                  thread.side ?? 'new',
-                  lineNumberOn(line, thread.side ?? 'new'),
-                ),
+                extraRangeEndsAt(thread, 'old', line.oldLineNumber) ||
+                extraRangeEndsAt(thread, 'new', line.newLineNumber),
             );
 
             const commentLineNumber =

@@ -94,7 +94,10 @@ const newCode = 42;
         id: 'multi',
         file: 'order/OrderService.java',
         line: [77, 80],
-        extraLines: [12, 40],
+        extraLines: [
+          { side: 'new', line: 12 },
+          { side: 'new', line: 40 },
+        ],
         side: 'new',
         createdAt: at,
         updatedAt: at,
@@ -104,9 +107,43 @@ const newCode = 42;
       expect(formatCommentThreadPrompt(thread)).toBe(
         'order/OrderService.java:L12,L40,L77-L80\nUse a placeholder',
       );
-      expect(formatCommentThreadPrompt({ ...thread, side: 'old', extraLines: [[3, 4]] })).toBe(
-        'order/OrderService.java:L3-L4,L77-L80 (old)\nUse a placeholder',
+      expect(
+        formatCommentThreadPrompt({
+          ...thread,
+          side: 'old',
+          extraLines: [{ side: 'old', line: [3, 4] }],
+        }),
+      ).toBe('order/OrderService.java:L3-L4,L77-L80 (old)\nUse a placeholder');
+    });
+
+    it('leads each side of a comment on deleted and kept lines with that side, old first', () => {
+      const at = '2024-01-01T00:00:00Z';
+      const thread: CommentThread = {
+        id: 'mixed',
+        file: 'src/a.ts',
+        line: [12, 13],
+        extraLines: [
+          { side: 'new', line: 3 },
+          { side: 'old', line: 20 },
+          { side: 'old', line: [12, 14] },
+        ],
+        side: 'new',
+        createdAt: at,
+        updatedAt: at,
+        messages: [{ id: 'm', body: 'Same fix', createdAt: at, updatedAt: at }],
+      };
+
+      expect(formatCommentThreadPrompt(thread)).toBe(
+        'src/a.ts:old:L12-L14,L20,new:L3,L12-L13\nSame fix',
       );
+      expect(
+        formatCommentThreadPrompt({
+          ...thread,
+          side: 'old',
+          line: [12, 14],
+          extraLines: [{ side: 'new', line: [12, 13] }],
+        }),
+      ).toBe('src/a.ts:old:L12-L14,new:L12-L13\nSame fix');
     });
   });
 

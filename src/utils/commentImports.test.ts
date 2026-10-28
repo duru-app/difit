@@ -846,4 +846,86 @@ describe('commentImports', () => {
       expect(mergeCommentThreads([multi!], [multi!]).threads).toEqual([multi]);
     });
   });
+
+  describe('a comment over deleted and kept lines', () => {
+    const POSITION: DiffCommentPosition = {
+      side: 'new',
+      line: { start: 12, end: 13 },
+      extraRanges: [3, { side: 'old', start: 12, end: 14 }, { side: 'old', start: 20, end: 20 }],
+    };
+    const mixedImport: ThreadCommentImport = {
+      type: 'thread',
+      id: 'mixed',
+      filePath: 'src/example.ts',
+      position: POSITION,
+      body: 'Same fix on both sides',
+      codeSnapshot: { content: 'a\nb', extraContents: ['c', 'x\ny\nz', 'w'], commit: PIN_SHA },
+    };
+
+    it('keeps the side of each range on the other side', () => {
+      const [parsed] = parseCommentImportValue(JSON.stringify(mixedImport));
+
+      expect(parsed?.position).toEqual(POSITION);
+      expect(parsed?.codeSnapshot?.extraContents).toEqual(['c', 'x\ny\nz', 'w']);
+    });
+
+    it('reads a range that names the position side as a plain range', () => {
+      const [parsed] = parseCommentImportValue(
+        JSON.stringify({
+          ...mixedImport,
+          position: { ...POSITION, extraRanges: [{ side: 'new', start: 3, end: 4 }] },
+        }),
+      );
+
+      expect(parsed?.position).toEqual({ ...POSITION, extraRanges: [{ start: 3, end: 4 }] });
+    });
+
+    it.each([
+      [
+        'ranges on the other side out of order',
+        [
+          { side: 'old', start: 20, end: 20 },
+          { side: 'old', start: 12, end: 14 },
+        ],
+      ],
+      [
+        'ranges on the other side that overlap',
+        [
+          { side: 'old', start: 12, end: 14 },
+          { side: 'old', start: 14, end: 15 },
+        ],
+      ],
+      ['a range with an unknown side', [{ side: 'left', start: 1, end: 2 }]],
+    ])('rejects %s', (_label, extraRanges) => {
+      expect(() =>
+        normalizeCommentImports({ ...mixedImport, position: { ...POSITION, extraRanges } }),
+      ).toThrow(/Invalid comment import field: position.extraRanges/);
+    });
+
+    it('takes a reply only on the thread whose ranges sit on the same sides', () => {
+      const oneSide = {
+        ...mixedImport,
+        id: 'one-side',
+        position: { ...POSITION, extraRanges: [3, { start: 5, end: 7 }, 9] },
+      };
+      const { threads: both } = mergeCommentImports([], [mixedImport, oneSide]);
+
+      const { threads, warnings } = mergeCommentImports(both, [
+        { ...mixedImport, type: 'reply', id: 'reply-1', body: 'Done' },
+      ]);
+
+      expect(warnings).toEqual([]);
+      expect(threads.find(({ id }) => id === 'mixed')?.messages).toHaveLength(2);
+      expect(threads.find(({ id }) => id === 'one-side')?.messages).toHaveLength(1);
+    });
+
+    it('keeps the sides through a merge of thread lists', () => {
+      const {
+        threads: [mixed],
+      } = mergeCommentImports([], [mixedImport]);
+
+      expect(mergeCommentThreads([mixed!], [mixed!]).threads).toEqual([mixed]);
+      expect(mixed?.position).toEqual(POSITION);
+    });
+  });
 });

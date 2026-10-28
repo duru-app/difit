@@ -14,12 +14,12 @@ import type { DiffViewerBodyProps } from './types';
 
 function holdsThread(lines: DiffLine[], threads: CommentThread[]) {
   return threads.some((thread) =>
-    [...(thread.extraLines ?? []), thread.line].some((threadLine) => {
-      const end = Array.isArray(threadLine) ? threadLine[1] : threadLine;
+    [...(thread.extraLines ?? []), { side: thread.side, line: thread.line }].some((range) => {
+      const end = Array.isArray(range.line) ? range.line[1] : range.line;
       return lines.some(
         (line) =>
-          (thread.side !== 'new' && line.oldLineNumber === end) ||
-          (thread.side !== 'old' && line.newLineNumber === end),
+          (range.side !== 'new' && line.oldLineNumber === end) ||
+          (range.side !== 'old' && line.newLineNumber === end),
       );
     }),
   );

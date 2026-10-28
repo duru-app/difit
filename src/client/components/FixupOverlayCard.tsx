@@ -352,7 +352,7 @@ function FixupFileBox({
   if (isFocused && !isOpen) setIsOpen(true);
   const lastThread = threads[threads.length - 1];
   const lastLabel = lastThread
-    ? locationLabel(lastThread.file, lastThread.line, lastThread.extraLines)
+    ? locationLabel(lastThread.file, lastThread.line, lastThread.extraLines, lastThread.side)
     : '';
   return (
     <div
@@ -372,7 +372,7 @@ function FixupFileBox({
               onClick={() => pickThread(thread.id)}
               className="font-mono text-github-accent hover:underline"
             >
-              {locationLabel(thread.file, thread.line, thread.extraLines)}
+              {locationLabel(thread.file, thread.line, thread.extraLines, thread.side)}
             </button>
           </span>
         ))}

@@ -250,7 +250,12 @@ export function CommentsPanel({
                     className="min-w-0 flex-1 truncate font-mono text-[11px] text-github-text-secondary"
                     title={thread.file}
                   >
-                    {locationLabel(baseName(thread.file), thread.line, thread.extraLines)}
+                    {locationLabel(
+                      baseName(thread.file),
+                      thread.line,
+                      thread.extraLines,
+                      thread.side,
+                    )}
                   </span>
                   <span
                     className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${chip.className}`}

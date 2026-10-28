@@ -35,7 +35,7 @@ import {
   type RewordResponse,
 } from '../types/diff';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
-import { rangeOfLineNumber } from '../utils/commentPosition';
+import { inStoredOrder, positionOfLines, rangeOfLineNumber } from '../utils/commentPosition';
 import { DEFAULT_DIFF_VIEW_MODE, normalizeDiffViewMode } from '../utils/diffMode';
 import { mergeCommentThreads } from '../utils/commentImports';
 import {
@@ -335,19 +335,35 @@ const newThread = (
 ) => ({
   filePath,
   body,
-  side: side || ('new' as const),
-  line: rangeOfLineNumber(line),
-  ...(extra?.lines.length ? { extraRanges: extra.lines.map(rangeOfLineNumber) } : {}),
-  codeSnapshot:
-    codeContent !== undefined
-      ? {
-          content: codeContent,
-          ...(extra?.lines.length ? { extraContents: extra.contents } : {}),
-          language: undefined,
-        }
-      : undefined,
+  ...placedNewThread(side ?? 'new', line, codeContent, extra),
   binding,
 });
+
+function placedNewThread(
+  side: DiffSide,
+  line: LineNumber,
+  codeContent: string | undefined,
+  extra: ExtraCommentLines | undefined,
+) {
+  const ordered = inStoredOrder(
+    side,
+    (extra?.lines ?? []).map((range, index) => ({ ...range, content: extra?.contents[index] })),
+  );
+  const { extraRanges } = positionOfLines(side, line, ordered);
+  return {
+    side,
+    line: rangeOfLineNumber(line),
+    ...(extraRanges ? { extraRanges } : {}),
+    codeSnapshot:
+      codeContent !== undefined
+        ? {
+            content: codeContent,
+            ...(extraRanges ? { extraContents: ordered.map(({ content }) => content ?? '') } : {}),
+            language: undefined,
+          }
+        : undefined,
+  };
+}
 
 function App() {
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
@@ -928,11 +944,12 @@ function App() {
       answeredThreadsRef.current,
       reviewPlacement.normalizedThreads
         .filter((thread) => !reviewPlacement.hiddenThreadIds.has(thread.id))
-        .map(({ id, file, line, extraLines, isOutdated }) => ({
+        .map(({ id, file, line, extraLines, side, isOutdated }) => ({
           id,
           file,
           line,
           ...(extraLines ? { extraLines } : {}),
+          ...(side ? { side } : {}),
           isOutdated,
         })),
       sameAnsweredThread,
@@ -1973,7 +1990,12 @@ function App() {
       side?: DiffSide,
       extra?: ExtraCommentLines,
     ): Promise<void> => {
-      const binding = await bindNewThread(file, line, side || 'new', extra?.lines);
+      const binding = await bindNewThread(
+        file,
+        line,
+        side || 'new',
+        extra?.lines.map((range) => range.line),
+      );
       addThreadRef.current(newThread(file, line, body, codeContent, side, binding, extra));
     },
     [bindNewThread],

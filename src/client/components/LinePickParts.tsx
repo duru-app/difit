@@ -1,6 +1,7 @@
 import { MessageSquare, Plus } from 'lucide-react';
 
 import type { CommentThread, LineNumber } from '../../types/diff';
+import { coversBothSides } from '../../utils/commentPosition';
 import type { LinePickStore } from '../contexts/LinePickContext';
 import { rangeLabel } from '../utils/linePick';
 
@@ -62,14 +63,22 @@ export function ThreadMarker({
   thread,
   onGo,
 }: {
-  thread: Pick<CommentThread, 'line'>;
+  thread: Pick<CommentThread, 'line' | 'side' | 'extraLines'>;
   onGo: () => void;
 }) {
   if (thread.line === undefined) return null;
+  const cardSide = coversBothSides(thread.side, thread.extraLines)
+    ? thread.side === 'old'
+      ? '지운 줄 '
+      : '남은 줄 '
+    : '';
   return (
     <div className="mx-4 my-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-l-[3px] border-yellow-400 px-2 py-0.5 text-xs text-github-text-secondary">
       <MessageSquare size={12} aria-hidden="true" />
-      <span>이 줄도 {rangeLabel(thread.line)} 아래 지적에 함께 걸려 있습니다</span>
+      <span>
+        이 줄도 {cardSide}
+        {rangeLabel(thread.line)} 아래 지적에 함께 걸려 있습니다
+      </span>
       <button
         type="button"
         onClick={(e) => {

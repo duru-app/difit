@@ -977,6 +977,35 @@ describe('Server Integration Tests', () => {
       expect(output).toContain('test.js:L12,L40,L77-L80\nSame mistake');
     });
 
+    it('lists the deleted and kept lines of a thread by side in the output', async () => {
+      const at = '2024-01-01T00:00:00.000Z';
+      const thread = {
+        id: 'mixed',
+        filePath: 'test.js',
+        createdAt: at,
+        updatedAt: at,
+        position: {
+          side: 'new',
+          line: { start: 12, end: 13 },
+          extraRanges: [{ side: 'old', start: 12, end: 14 }],
+        },
+        codeSnapshot: { content: 'a\nb', extraContents: ['x\ny\nz'] },
+        messages: [{ id: 'mixed', body: 'Same mistake', createdAt: at, updatedAt: at }],
+      };
+      await fetch(`http://localhost:${port}/api/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threads: [thread] }),
+      });
+
+      const json = (await (await fetch(`http://localhost:${port}/api/comments-json`)).json()) as {
+        threads: Array<{ position: unknown }>;
+      };
+      expect(json.threads[0]?.position).toEqual(thread.position);
+      const output = await (await fetch(`http://localhost:${port}/api/comments-output`)).text();
+      expect(output).toContain('test.js:old:L12-L14,new:L12-L13\nSame mistake');
+    });
+
     it('reads the other lines of a thread an older page sends in its own shape', async () => {
       await fetch(`http://localhost:${port}/api/comments`, {
         method: 'POST',

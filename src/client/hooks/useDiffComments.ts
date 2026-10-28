@@ -8,6 +8,7 @@ import {
   type DiffContextStorage,
   type DiffCommentThread,
   type DiffLineRange,
+  type ExtraLineRange,
   type DiffSide,
   type LegacyDiffComment,
   type FixupRef,
@@ -34,8 +35,8 @@ interface AddThreadParams {
   side: DiffSide;
   // Left out for a comment on the whole file.
   line?: DiffLineRange;
-  // The comment's other ranges, above `line` and ascending.
-  extraRanges?: DiffLineRange[];
+  // The comment's other ranges, in the order of a position's `extraRanges`.
+  extraRanges?: ExtraLineRange[];
   codeSnapshot?: DiffCommentThread['codeSnapshot'];
   binding?: ViewBinding;
 }

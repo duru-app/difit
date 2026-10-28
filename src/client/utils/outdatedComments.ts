@@ -4,11 +4,19 @@ import type {
   DiffLineRange,
   DiffFile,
   DiffSelection,
+  DiffSide,
   LineNumber,
   ReviewScope,
+  SidedLine,
 } from '../../types/diff';
 import { noVisibleLineContradictsAnchor, relocateAnchor } from '../../utils/anchorRelocation';
-import { extraLinesOfPosition, lineOfPosition, lineOfRange } from '../../utils/commentPosition';
+import {
+  extraLinesOfPosition,
+  lineOfPosition,
+  lineOfRange,
+  rangeOfLineNumber,
+  sideOfRange,
+} from '../../utils/commentPosition';
 import { commitsOfView, isSameCommit, isSameView } from '../../utils/diffSelection';
 
 export interface FileLineIndex {
@@ -19,7 +27,7 @@ export interface FileLineIndex {
 export interface ThreadPlacement {
   // Absent for a thread on the whole file.
   line?: LineNumber;
-  extraLines?: LineNumber[];
+  extraLines?: SidedLine[];
   isOutdated: boolean;
   outdatedReason?: AnchorStaleReason;
 }
@@ -55,23 +63,30 @@ export function locateThread(
   if (!('line' in position)) {
     return index ? { isOutdated: false } : { isOutdated: true, outdatedReason: 'missing' };
   }
-  const extraRanges = position.extraRanges ?? [];
-  const stored = atLines(position.line, extraRanges);
+  const extraRanges = (position.extraRanges ?? []).map((range) => ({
+    side: sideOfRange(range, position.side),
+    line: lineOfRange(range),
+  }));
+  const stored = atLines(lineOfRange(position.line), extraRanges);
   const snapshot = thread.codeSnapshot?.content;
   if (snapshot === undefined) return { ...stored, isOutdated: false };
   if (!index) return { ...stored, isOutdated: true, outdatedReason: 'missing' };
 
   const extraContents = thread.codeSnapshot?.extraContents ?? [];
   // A range saved without its code stays where it was stored.
-  const anchors: Array<{ line: DiffLineRange; content?: string }> = [
-    ...extraRanges.map((line, i) => ({ line, content: extraContents[i] })),
-    { line: position.line, content: snapshot },
+  const anchors: Array<{ side: DiffSide; line: DiffLineRange; content?: string }> = [
+    ...extraRanges.map(({ side, line }, i) => ({
+      side,
+      line: rangeOfLineNumber(line),
+      content: extraContents[i],
+    })),
+    { side: position.side, line: position.line, content: snapshot },
   ];
-  const lines = position.side === 'old' ? index.old : index.new;
+  const linesOn = (side: DiffSide) => (side === 'old' ? index.old : index.new);
   if (targetCommit === null) {
     const contradicted = anchors.some(
-      ({ line, content }) =>
-        content !== undefined && !noVisibleLineContradictsAnchor({ line, content }, lines),
+      ({ side, line, content }) =>
+        content !== undefined && !noVisibleLineContradictsAnchor({ line, content }, linesOn(side)),
     );
     return contradicted
       ? { ...stored, isOutdated: true, outdatedReason: 'missing' }
@@ -83,26 +98,26 @@ export function locateThread(
   const anchorCommit = thread.codeSnapshot?.commit;
   const atAnchorCommit =
     madeOnThisView ?? (anchorCommit === undefined || isSameCommit(anchorCommit, targetCommit));
-  const located: DiffLineRange[] = [];
-  for (const { line, content } of anchors) {
+  const located: SidedLine[] = [];
+  for (const { side, line, content } of anchors) {
     if (content === undefined) {
-      located.push(line);
+      located.push({ side, line: lineOfRange(line) });
       continue;
     }
-    const relocation = relocateAnchor({ line, content }, lines, atAnchorCommit);
+    const relocation = relocateAnchor({ line, content }, linesOn(side), atAnchorCommit);
     if (relocation.kind === 'stale') {
       return { ...stored, isOutdated: true, outdatedReason: relocation.reason };
     }
-    located.push(relocation.line);
+    located.push({ side, line: lineOfRange(relocation.line) });
   }
-  const line = located.pop() ?? position.line;
-  return { ...atLines(line, located), isOutdated: false };
+  const card = located.pop();
+  return { ...atLines(card?.line ?? lineOfRange(position.line), located), isOutdated: false };
 }
 
-function atLines(line: DiffLineRange, extraRanges: readonly DiffLineRange[]) {
+function atLines(line: LineNumber, extraLines: readonly SidedLine[]) {
   return {
-    line: lineOfRange(line),
-    ...(extraRanges.length > 0 ? { extraLines: extraRanges.map(lineOfRange) } : {}),
+    line,
+    ...(extraLines.length > 0 ? { extraLines: [...extraLines] } : {}),
   };
 }
 
@@ -120,7 +135,7 @@ export interface PlacementContext {
 }
 
 const sameLines = (a: PlacedLines, b: PlacedLines) =>
-  String(a.line) === String(b.line) && String(a.extraLines) === String(b.extraLines);
+  JSON.stringify([a.line, a.extraLines]) === JSON.stringify([b.line, b.extraLines]);
 const placedLines = ({ line, extraLines }: PlacedLines): PlacedLines => ({
   ...(line === undefined ? {} : { line }),
   ...(extraLines === undefined ? {} : { extraLines }),

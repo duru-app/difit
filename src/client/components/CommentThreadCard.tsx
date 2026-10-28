@@ -333,7 +333,7 @@ export function CommentThreadCard({
               color: 'var(--color-yellow-path-text)',
             }}
           >
-            {locationLabel(thread.file, thread.line, thread.extraLines)}
+            {locationLabel(thread.file, thread.line, thread.extraLines, thread.side)}
           </span>
           {isResolved && (
             <span

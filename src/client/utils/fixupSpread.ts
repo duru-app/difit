@@ -27,14 +27,14 @@ export function fixupFileLabels(file: FixupFile): string[] {
 
 export type AnsweredThread = Pick<
   CommentThread,
-  'id' | 'file' | 'line' | 'extraLines' | 'isOutdated'
+  'id' | 'file' | 'line' | 'extraLines' | 'side' | 'isOutdated'
 >;
 
 export const sameAnsweredThread = (a: AnsweredThread, b: AnsweredThread) =>
   a.id === b.id &&
   a.file === b.file &&
-  String(a.line) === String(b.line) &&
-  String(a.extraLines) === String(b.extraLines) &&
+  JSON.stringify([a.line, a.extraLines, a.side]) ===
+    JSON.stringify([b.line, b.extraLines, b.side]) &&
   a.isOutdated === b.isOutdated;
 
 export interface FixupFileRef {

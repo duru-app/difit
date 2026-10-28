@@ -4,21 +4,25 @@ import type {
   CommentThread,
   DiffCommentMessage,
   DiffSide,
+  LineNumber,
+  SidedLine,
   ThreadReviewState,
 } from '../types/diff';
 
+import { coversBothSides, sidedRangesLabel } from './commentPosition.js';
 import { reviewStateLabel } from './reviewDecisions.js';
 import { hasSuggestionBlock, parseSuggestionBlocks } from './suggestionUtils.js';
 
-const spanInfo = (line: number | number[]) =>
+const spanInfo = (line: LineNumber) =>
   typeof line === 'number' ? `L${line}` : `L${line[0]}-L${line[1]}`;
 
 function getLineInfo(
-  line: number | number[] | undefined,
-  extraLines: ReadonlyArray<number | number[]> = [],
+  line: LineNumber | undefined,
+  side: DiffSide,
+  extraLines: readonly SidedLine[] = [],
 ): string {
   if (line === undefined) return '';
-  return `:${[...extraLines, line].map(spanInfo).join(',')}`;
+  return `:${sidedRangesLabel([...extraLines, { side, line }], spanInfo)}`;
 }
 
 export interface CommentPromptDiffContext {
@@ -31,14 +35,15 @@ export interface CommentPromptDiffContext {
 
 function formatCommentLocation(
   file: string,
-  line: number | number[] | undefined,
+  line: LineNumber | undefined,
   side?: DiffSide,
   reviewState?: ThreadReviewState,
-  extraLines?: ReadonlyArray<number | number[]>,
+  extraLines?: readonly SidedLine[],
 ): string {
   const filePath = file || '<unknown file>';
   const stateSuffix = reviewState ? ` [${reviewStateLabel(reviewState)}]` : '';
-  return `${filePath}${getLineInfo(line, extraLines)}${side === 'old' ? ' (old)' : ''}${stateSuffix}`;
+  const oldSuffix = side === 'old' && !coversBothSides(side, extraLines) ? ' (old)' : '';
+  return `${filePath}${getLineInfo(line, side ?? 'new', extraLines)}${oldSuffix}${stateSuffix}`;
 }
 
 function isNonRangeCommitish(commitish: string): boolean {
@@ -147,7 +152,7 @@ function normalizeLegacyComment(comment: Comment): CommentThread {
 
 export function formatCommentPrompt(
   file: string,
-  line: number | number[],
+  line: LineNumber,
   body: string,
   codeContent?: string,
   side?: DiffSide,

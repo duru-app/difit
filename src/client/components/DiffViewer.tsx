@@ -97,8 +97,10 @@ const normalizeCommentRanges = (threads: CommentThread[]): Record<DiffSide, Line
 
   threads.forEach((thread) => {
     if (thread.line === undefined) return;
-    const side = thread.side ?? 'new';
-    for (const line of [...(thread.extraLines ?? []), thread.line]) {
+    for (const { side, line } of [
+      ...(thread.extraLines ?? []),
+      { side: thread.side ?? 'new', line: thread.line },
+    ]) {
       const [start, end] = Array.isArray(line) ? [line[0], line[1]] : [line, line];
 
       if (start <= 0 || end <= 0) continue;

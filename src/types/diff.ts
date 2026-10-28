@@ -34,15 +34,18 @@ export interface DiffLine {
 export type DiffViewMode = 'split' | 'unified';
 export type DiffSide = 'old' | 'new';
 export type DiffLineRange = number | { start: number; end: number };
+// The object form names its side when it is not the position's `side`.
+export type ExtraLineRange = DiffLineRange | { side: DiffSide; start: number; end: number };
 
 export type DiffCommentPosition =
   | {
       side: DiffSide;
       // The bottom-most range, under which the comment's card sits.
       line: DiffLineRange;
-      // The comment's other ranges on the same side, in ascending order. Optional so a record
-      // stays version 2 and an older difit still reads it, as a comment on `line` alone.
-      extraRanges?: DiffLineRange[];
+      // The comment's other ranges, ascending on each side, those on `side` above `line`; the
+      // screen writes those on `side` first. Optional so a record stays version 2 and an older
+      // difit still reads it, as a comment on `line` alone.
+      extraRanges?: ExtraLineRange[];
     }
   // On the whole file rather than on any of its lines; `old` for a file the diff deletes.
   | { side: DiffSide; scope: 'file' };
@@ -198,10 +201,14 @@ export interface LineSelection {
   lineNumber: number;
 }
 
-// The ranges a new comment takes besides the one its card sits under, ascending, with the code
-// of each.
+export interface SidedLine {
+  side: DiffSide;
+  line: LineNumber;
+}
+
+// The ranges a new comment takes besides the one its card sits under, with the code of each.
 export interface ExtraCommentLines {
-  lines: LineNumber[];
+  lines: SidedLine[];
   contents: string[];
 }
 
@@ -550,8 +557,9 @@ export interface CommentThread {
   // Where the thread is drawn now, relocated by snapshot content; may differ from the stored position.
   // Absent on a thread about the whole file.
   line?: LineNumber;
-  // The thread's other ranges, in ascending order, placed like `line`.
-  extraLines?: LineNumber[];
+  // The thread's other ranges, placed like `line`, in the order of the position's `extraRanges`.
+  extraLines?: SidedLine[];
+  // The side of `line`.
   side?: DiffSide;
   createdAt: string;
   updatedAt: string;
