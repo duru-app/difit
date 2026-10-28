@@ -101,7 +101,7 @@ async function srcZipOf(home: string): Promise<{ zip: string } | { dangling: boo
   return { dangling };
 }
 
-// JDK 8 puts a JRE inside the JDK, and src.zip next to it.
+// The src.zip of a JDK 8 sits next to its jre directory.
 function jdkAround(home: string): string {
   return basename(home) === 'jre' ? dirname(home) : home;
 }
