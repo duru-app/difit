@@ -997,7 +997,7 @@ const DESCRIPTOR_SUFFIXES: Record<string, DescriptorKind> = {
   '!': 'macro',
 };
 
-interface Descriptor {
+export interface Descriptor {
   name: string;
   kind: DescriptorKind;
   // Of a method: what tells it apart from other methods of the same name, "" or "+1", "+2", ….

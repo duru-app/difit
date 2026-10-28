@@ -96,6 +96,7 @@ describe('answerFromScipIndex', () => {
       references: [match(SERVICE, line)],
       source: 'index',
       library: 'java.util.Optional#orElse()',
+      librarySymbol: 'semanticdb maven jdk 8 java/util/Optional#orElse().',
     });
   });
 
