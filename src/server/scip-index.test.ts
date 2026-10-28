@@ -40,10 +40,16 @@ function fixtureSource(dir: string) {
     return { path, line, startCol, endCol: startCol + name.length };
   };
 
-  return { sourceLine, columnOf, site };
+  const use = (caller: string, path: string, line: number, name: string, nth = 0) => ({
+    ...site(path, line, name, nth),
+    caller: `semanticdb maven . . ${caller}`,
+  });
+
+  return { sourceLine, columnOf, site, use };
 }
 
-const { sourceLine, columnOf, site } = fixtureSource(FIXTURE_DIR);
+const { sourceLine, columnOf, site, use } = fixtureSource(FIXTURE_DIR);
+const IN_FIND = 'demo/Service#이름찾기().';
 
 describe('convertScipIndex on a scip-java index', () => {
   let index: ScipIndex;
@@ -66,7 +72,13 @@ describe('convertScipIndex on a scip-java index', () => {
     expect(column).toBe(27);
     const result = index.lookup(SERVICE, line, column);
     expect(result?.symbol).toBe('local 4');
-    expect(result?.references).toContainEqual({ path: SERVICE, line, startCol: 27, endCol: 30 });
+    expect(result?.references).toContainEqual({
+      path: SERVICE,
+      line,
+      startCol: 27,
+      endCol: 30,
+      caller: `semanticdb maven . . ${IN_FIND}`,
+    });
     // Counted in code points the name would start one column earlier, on the space.
     expect(index.lookup(SERVICE, line, column - 1)).toBeNull();
   });
@@ -79,19 +91,19 @@ describe('convertScipIndex on a scip-java index', () => {
     expect(viaPort).toEqual({
       symbol: 'semanticdb maven . . demo/Port#findById().',
       definitions: [site(PORT, 6, 'findById')],
-      references: [site(SERVICE, line, 'findById', 0)],
+      references: [use(IN_FIND, SERVICE, line, 'findById', 0)],
       external: false,
     });
     expect(viaCache?.symbol).toBe('semanticdb maven . . demo/Cache#findById().');
     expect(viaCache?.definitions).toEqual([site(CACHE, 6, 'findById')]);
-    expect(viaCache?.references).toEqual([site(SERVICE, line, 'findById', 1)]);
+    expect(viaCache?.references).toEqual([use(IN_FIND, SERVICE, line, 'findById', 1)]);
   });
 
   it('sends a call of a library method redeclared in the repository to the redeclaration', () => {
     const result = index.lookup(SERVICE, 15, columnOf(SERVICE, 15, 'apply'));
     expect(result?.symbol).toBe('semanticdb maven . . demo/MemberRepository#apply().');
     expect(result?.definitions).toEqual([site(MEMBERS, 7, 'apply')]);
-    expect(result?.references).toEqual([site(SERVICE, 15, 'apply')]);
+    expect(result?.references).toEqual([use(IN_FIND, SERVICE, 15, 'apply')]);
     expect(result?.external).toBe(false);
   });
 
@@ -100,7 +112,7 @@ describe('convertScipIndex on a scip-java index', () => {
     expect(result).toEqual({
       symbol: 'semanticdb maven jdk 8 java/util/Optional#orElse().',
       definitions: [],
-      references: [site(SERVICE, 17, 'orElse', 0), site(SERVICE, 17, 'orElse', 1)],
+      references: [use(IN_FIND, SERVICE, 17, 'orElse', 0), use(IN_FIND, SERVICE, 17, 'orElse', 1)],
       external: true,
     });
   });
@@ -111,7 +123,10 @@ describe('convertScipIndex on a scip-java index', () => {
     expect(fromCall).toEqual({
       symbol: 'semanticdb maven . . demo/Service#이름찾기().',
       definitions: [site(SERVICE, 14, '이름찾기')],
-      references: [site(SERVICE, 21, '이름찾기', 0), site(SERVICE, 21, '이름찾기', 1)],
+      references: [
+        use('demo/Service#twice().', SERVICE, 21, '이름찾기', 0),
+        use('demo/Service#twice().', SERVICE, 21, '이름찾기', 1),
+      ],
       external: false,
     });
     expect(fromDeclaration).toEqual(fromCall);
@@ -120,7 +135,10 @@ describe('convertScipIndex on a scip-java index', () => {
   it('keeps a local variable to its own document', () => {
     const local = index.lookup(SERVICE, 15, columnOf(SERVICE, 15, '기본값'));
     expect(local?.definitions).toEqual([site(SERVICE, 15, '기본값')]);
-    expect(local?.references).toEqual([site(SERVICE, 16, '기본값'), site(SERVICE, 17, '기본값')]);
+    expect(local?.references).toEqual([
+      use(IN_FIND, SERVICE, 16, '기본값'),
+      use(IN_FIND, SERVICE, 17, '기본값'),
+    ]);
 
     // Port.java's parameter is also "local 0" in its document, but a different variable.
     const parameter = index.lookup(PORT, 6, columnOf(PORT, 6, 'id)'));
@@ -194,6 +212,8 @@ const BAR = 'src/main/java/demo/Bar.java';
 const HAND = 'src/main/java/demo/Hand.java';
 const PAIR = 'src/main/java/demo/Pair.java';
 const USE = 'src/main/java/demo/Use.java';
+const RUN = 'demo/Use#run().';
+const SUM = 'demo/Pair#sum().';
 
 describe('convertScipIndex on an index of Lombok classes', () => {
   const lombok = fixtureSource(LOMBOK_DIR);
@@ -209,18 +229,18 @@ describe('convertScipIndex on an index of Lombok classes', () => {
   it('lists the calls of a class-level getter with the uses of its field', () => {
     const fromField = at(PAIR, 11, 'left');
     expect(fromField?.fieldUses).toEqual([
-      lombok.site(PAIR, 8, 'left'),
-      { ...lombok.site(PAIR, 8, 'getLeft'), via: 'getter' },
+      lombok.use(SUM, PAIR, 8, 'left'),
+      { ...lombok.use(SUM, PAIR, 8, 'getLeft'), via: 'getter' },
     ]);
     expect(at(PAIR, 8, 'getLeft')?.fieldUses).toEqual(fromField?.fieldUses);
   });
 
   it('finds a getter that starts after the declaration when a comment ends its line', () => {
-    const expected = [{ ...lombok.site(USE, 6, 'getName'), via: 'getter' }];
+    const expected = [{ ...lombok.use(RUN, USE, 6, 'getName'), via: 'getter' }];
     expect(at(FOO, 8, 'name')?.fieldUses).toEqual(expected);
     expect(at(USE, 6, 'getName')?.fieldUses).toEqual(expected);
     expect(at(FOO, 9, 'count')?.fieldUses).toEqual([
-      { ...lombok.site(USE, 7, 'getCount'), via: 'getter' },
+      { ...lombok.use(RUN, USE, 7, 'getCount'), via: 'getter' },
     ]);
   });
 
@@ -232,8 +252,8 @@ describe('convertScipIndex on an index of Lombok classes', () => {
       expect.arrayContaining([6, 7, 9]),
     );
     expect(fromField?.fieldUses).toEqual([
-      { ...lombok.site(USE, 8, 'getCode'), via: 'getter' },
-      { ...lombok.site(USE, 10, 'code'), via: 'builder' },
+      { ...lombok.use(RUN, USE, 8, 'getCode'), via: 'getter' },
+      { ...lombok.use(RUN, USE, 10, 'code'), via: 'builder' },
     ]);
     expect(at(USE, 8, 'getCode')?.fieldUses).toEqual(fromField?.fieldUses);
     expect(at(USE, 10, 'code')?.fieldUses).toEqual(fromField?.fieldUses);
@@ -243,7 +263,9 @@ describe('convertScipIndex on an index of Lombok classes', () => {
   });
 
   it('keeps apart what it cannot place on the field', () => {
-    expect(at(HAND, 4, 'size')?.fieldUses).toEqual([lombok.site(HAND, 7, 'size')]);
+    expect(at(HAND, 4, 'size')?.fieldUses).toEqual([
+      lombok.use('demo/Hand#getSize().', HAND, 7, 'size'),
+    ]);
     expect(at(USE, 13, 'getSize')?.fieldUses).toBeUndefined();
     // Field-level @Getter and every @Setter sit on their annotation.
     expect(at(BAR, 9, 'title')?.fieldUses).toEqual([]);
@@ -251,7 +273,9 @@ describe('convertScipIndex on an index of Lombok classes', () => {
     expect(at(USE, 12, 'setTitle')?.fieldUses).toBeUndefined();
     expect(at(USE, 9, 'setCode')?.fieldUses).toBeUndefined();
     // scip-java put this getter's definition on its call in the class.
-    expect(at(FOO, 7, 'active')?.fieldUses).toEqual([lombok.site(FOO, 12, 'active')]);
+    expect(at(FOO, 7, 'active')?.fieldUses).toEqual([
+      lombok.use('demo/Foo#check().', FOO, 12, 'active'),
+    ]);
     expect(at(USE, 5, 'isActive')?.fieldUses).toBeUndefined();
     // @Builder on a constructor makes builder methods of its parameters, not of fields.
     expect(at(USE, 14, 'id')?.fieldUses).toBeUndefined();
@@ -274,6 +298,123 @@ describe('convertScipIndex on an index of Lombok classes', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+const IMPL_DIR = join(__dirname, 'scip-index-impl-fixture');
+const SHAPE = 'src/main/java/demo/Shape.java';
+const POLYGON = 'src/main/java/demo/Polygon.java';
+const SQUARE = 'src/main/java/demo/Square.java';
+const CIRCLE = 'src/main/java/demo/Circle.java';
+const RING = 'src/main/java/demo/Ring.java';
+const REPORT = 'src/main/java/demo/Report.java';
+const SERVICE_IMPL = 'src/main/java/demo/ReportService.java';
+const APP = 'src/main/java/demo/App.java';
+const symbolOf = (descriptor: string) => `semanticdb maven . . ${descriptor}`;
+
+describe('convertScipIndex on an index of implementations and calls', () => {
+  const impl = fixtureSource(IMPL_DIR);
+  let index: ScipIndex;
+
+  beforeAll(async () => {
+    index = await convertScipIndex(join(IMPL_DIR, 'index.scip'));
+  });
+
+  const at = (path: string, line: number, name: string, nth = 0) =>
+    index.lookup(path, line, impl.columnOf(path, line, name, nth));
+
+  it('lists every type that extends or implements a type, however far down', () => {
+    expect(index.knowsRelations).toBe(true);
+    expect(at(SHAPE, 3, 'Shape')?.implementations).toEqual([
+      impl.site(CIRCLE, 3, 'Circle'),
+      impl.site(POLYGON, 3, 'Polygon'),
+      impl.site(RING, 3, 'Ring'),
+      impl.site(SQUARE, 3, 'Square'),
+    ]);
+    expect(at(CIRCLE, 3, 'Circle')?.implementations).toEqual([impl.site(RING, 3, 'Ring')]);
+  });
+
+  it('lists the methods that override abstract, default and concrete methods', () => {
+    expect(at(SHAPE, 4, 'area')?.implementations).toEqual([
+      impl.site(CIRCLE, 11, 'area'),
+      impl.site(SQUARE, 11, 'area'),
+    ]);
+    expect(at(SHAPE, 6, 'label')?.implementations).toEqual([impl.site(POLYGON, 7, 'label')]);
+    expect(at(POLYGON, 4, 'sides')?.implementations).toEqual([impl.site(SQUARE, 16, 'sides')]);
+    expect(at(CIRCLE, 15, 'unit')?.implementations).toEqual([impl.site(RING, 9, 'unit')]);
+  });
+
+  it('does not take the method an override replaces for one of its implementations', () => {
+    expect(at(SQUARE, 11, 'area')?.implementations).toBeUndefined();
+    expect(at(SERVICE_IMPL, 5, 'render')?.implementations).toBeUndefined();
+    expect(at(RING, 9, 'unit')?.implementations).toBeUndefined();
+  });
+
+  it('names the method each use sits in, counting a lambda as part of it', () => {
+    expect(at(SHAPE, 4, 'area')?.references).toContainEqual(
+      impl.use('demo/Report#total().', REPORT, 13, 'area'),
+    );
+    expect(at(REPORT, 19, 'describe')?.references).toEqual([
+      impl.use('demo/Report#summary().', REPORT, 19, 'describe'),
+    ]);
+    expect(at(REPORT, 34, 'countdown')?.references).toContainEqual(
+      impl.use('demo/Report#countdown().', REPORT, 34, 'countdown'),
+    );
+  });
+
+  it('names no method for a use in an anonymous class, a field or Lombok code', () => {
+    expect(at(SHAPE, 6, 'label')?.references).toContainEqual(impl.site(REPORT, 27, 'label'));
+    const ofShape = at(SHAPE, 3, 'Shape')?.references ?? [];
+    expect(ofShape).toContainEqual(impl.site(REPORT, 8, 'Shape'));
+    // Methods Lombok generated for @Builder all share the annotation's range.
+    const onBuilder = ofShape.filter(({ path, line }) => path === REPORT && line === 6);
+    expect(onBuilder.length).toBeGreaterThan(0);
+    for (const site of onBuilder) expect(site.caller).toBeUndefined();
+  });
+
+  it('finds the calls of a method and those made through the interface it implements', () => {
+    expect(index.callersOf(symbolOf('demo/ReportService#render().'))).toEqual({
+      references: [impl.use('demo/App#direct().', APP, 15, 'render')],
+      viaInterface: [impl.use('demo/App#run().', APP, 11, 'render')],
+    });
+    expect(index.callersOf(symbolOf('demo/Report#summary().'))).toEqual({
+      references: [impl.use('demo/ReportService#render().', SERVICE_IMPL, 6, 'summary')],
+      viaInterface: [],
+    });
+    expect(index.callersOf(symbolOf('demo/Missing#nothing().'))).toBeNull();
+  });
+
+  it('answers the same from the stored file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'difit-scip-impl-'));
+    try {
+      const path = join(dir, 'index.bin');
+      await writeScipIndex(index, path);
+      const loaded = await readScipIndex(path);
+      expect(loaded?.knowsRelations).toBe(true);
+      for (const [file, line, name] of [
+        [SHAPE, 3, 'Shape'],
+        [SHAPE, 4, 'area'],
+        [REPORT, 19, 'describe'],
+      ] as const) {
+        const column = impl.columnOf(file, line, name);
+        expect(loaded?.lookup(file, line, column)).toEqual(index.lookup(file, line, column));
+      }
+      const render = symbolOf('demo/ReportService#render().');
+      expect(loaded?.callersOf(render)).toEqual(index.callersOf(render));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still answers from a file stored before implementations and callers were kept', async () => {
+    const old = await readScipIndex(join(IMPL_DIR, 'index.lookup.v1.gz'));
+    expect(old?.knowsRelations).toBe(false);
+    const found = old?.lookup(REPORT, 13, impl.columnOf(REPORT, 13, 'area'));
+    expect(found?.symbol).toBe(symbolOf('demo/Shape#area().'));
+    expect(found?.implementations).toBeUndefined();
+    expect(found?.references).toContainEqual(impl.site(REPORT, 13, 'area'));
+    expect(found?.references.some((site) => site.caller !== undefined)).toBe(false);
+    expect(old?.callersOf(symbolOf('demo/ReportService#render().'))).toBeNull();
   });
 });
 

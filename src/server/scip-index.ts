@@ -22,16 +22,31 @@ interface ScipSite {
   endCol: number;
 }
 
-type ScipAccessorKind = NonNullable<SymbolMatch['via']>;
+type ScipAccessorKind = Extract<SymbolMatch['via'], 'getter' | 'builder'>;
 
-interface ScipFieldUse extends ScipSite {
+interface ScipUse extends ScipSite {
+  // The method the use sits in, when exactly one method's declaration holds it and that
+  // method is not one of an anonymous class.
+  caller?: string;
+}
+
+interface ScipFieldUse extends ScipUse {
   via?: ScipAccessorKind;
+}
+
+interface ScipCallers {
+  references: ScipUse[];
+  // Uses of the interface methods the method implements.
+  viaInterface: ScipUse[];
 }
 
 export interface ScipLookupResult {
   symbol: string;
   definitions: ScipSite[];
-  references: ScipSite[];
+  references: ScipUse[];
+  // Declarations of the types that extend or implement the symbol, or of the methods that
+  // override it. Left out when there are none or the index was stored without them.
+  implementations?: ScipSite[];
   // No document of the index defines the symbol or the type it belongs to, so it lives in
   // a library. Never set for packages.
   external: boolean;
@@ -52,10 +67,18 @@ export const POSITION_ENCODING = {
 } as const;
 
 const FORMAT_MAGIC = 0x50435344; // "DSCP" read as a little-endian int32
-const FORMAT_VERSION = 1;
-const HEADER_WORDS = 8;
+// Version 1 has no implementations and no method ranges; it is still read for the rest.
+const FORMAT_VERSION = 2;
+const FORMAT_VERSION_WITHOUT_RELATIONS = 1;
+const HEADER_WORDS = 10;
+const HEADER_WORDS_WITHOUT_RELATIONS = 8;
 // Per occurrence: line, startCol, endCol, symbolId * 2 + isDefinition.
 const OCC_WORDS = 4;
+// Per method declaration: startLine, startCol, endLine, endCol (exclusive), symbolId.
+const RANGE_WORDS = 5;
+// scip.proto SymbolInformation.Kind.
+const KIND_INTERFACE = 21;
+const KIND_METHOD = 26;
 const MULTI_LINE_END = 0x7fffffff;
 const ROLE_DEFINITION = 1;
 const GENERATED_MARKERS = [' java/lang/SuppressWarnings#', ' lombok/Generated#'];
@@ -80,6 +103,18 @@ interface CompactData {
   symOccStart: Int32Array;
   symOcc: Int32Array;
   strings: { offsets: Int32Array; blob: Buffer };
+  relations: Relations | null;
+}
+
+interface Relations {
+  // Pairs of (overridden or extended symbol, symbol that implements it), sorted.
+  implementations: Int32Array;
+  // Interface types defined in the index, sorted.
+  interfaces: Int32Array;
+  // Method declarations of document d are ranges[rangeStart[d] .. rangeStart[d + 1]), sorted
+  // by start. Methods of anonymous classes are among them.
+  rangeStart: Int32Array;
+  ranges: Int32Array;
 }
 
 export class ScipIndex {
@@ -93,6 +128,11 @@ export class ScipIndex {
 
   get positionEncoding(): number {
     return this.data.positionEncoding;
+  }
+
+  // False for an index stored before implementations and callers were kept.
+  get knowsRelations(): boolean {
+    return this.data.relations !== null;
   }
 
   hasDocument(path: string): boolean {
@@ -121,6 +161,8 @@ export class ScipIndex {
     if (best < 0) return null;
     const symbol = (occ[best * OCC_WORDS + 3] ?? 0) >>> 1;
     const result = this.resultFor(symbol);
+    const implementations = this.implementationsOf(symbol);
+    if (implementations.length > 0) result.implementations = implementations;
     const group = this.accessorGroupOf(symbol);
     if (!group) return result;
     const fieldNames = new Set<string>();
@@ -252,9 +294,104 @@ export class ScipIndex {
     }
     found.sort((a, b) => a.occurrence - b.occurrence);
     return found.map(({ occurrence, via }) => {
-      const site = this.siteOf(occurrence);
+      const site = this.useOf(occurrence);
       return via === undefined ? site : { ...site, via };
     });
+  }
+
+  // Null when the index does not know the symbol or was stored without callers.
+  callersOf(method: string): ScipCallers | null {
+    const { relations } = this.data;
+    const id = this.symbolId(method);
+    if (!relations || id === undefined) return null;
+    const viaInterface: ScipUse[] = [];
+    const { implementations, interfaces } = relations;
+    for (let k = 0; k < implementations.length; k += 2) {
+      if (implementations[k + 1] !== id) continue;
+      const overridden = implementations[k] ?? 0;
+      const owner = ownerTypeOf(this.symbolName(overridden));
+      const ownerId = owner === null ? undefined : this.symbolId(owner);
+      if (ownerId === undefined || !hasSorted(interfaces, ownerId)) continue;
+      viaInterface.push(...this.usesOfSymbol(overridden));
+    }
+    return { references: this.usesOfSymbol(id), viaInterface };
+  }
+
+  private usesOfSymbol(symbol: number): ScipUse[] {
+    const { symOccStart, symOcc, occ } = this.data;
+    const uses: ScipUse[] = [];
+    const end = symOccStart[symbol + 1] ?? 0;
+    for (let k = symOccStart[symbol] ?? 0; k < end; k++) {
+      const i = symOcc[k] ?? 0;
+      if (((occ[i * OCC_WORDS + 3] ?? 0) & 1) === 0) uses.push(this.useOf(i));
+    }
+    return uses;
+  }
+
+  private implementationsOf(symbol: number): ScipSite[] {
+    const pairs = this.data.relations?.implementations;
+    if (!pairs) return [];
+    let lo = 0;
+    let hi = pairs.length / 2;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if ((pairs[mid * 2] ?? 0) < symbol) lo = mid + 1;
+      else hi = mid;
+    }
+    const sites: ScipSite[] = [];
+    for (let k = lo; k < pairs.length / 2 && pairs[k * 2] === symbol; k++) {
+      sites.push(...this.sitesOf(pairs[k * 2 + 1] ?? 0).definitions);
+    }
+    return sites.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line));
+  }
+
+  private useOf(occurrence: number): ScipUse {
+    const site = this.siteOf(occurrence);
+    const caller = this.enclosingMethod(occurrence);
+    return caller === null ? site : { ...site, caller: this.symbolName(caller) };
+  }
+
+  // The innermost method declaration holding the occurrence; null when none does, when
+  // methods Lombok generated share that declaration's range, or when it is a method of an
+  // anonymous class. A lambda has no declaration of its own, so its body counts as part of
+  // the method around it.
+  private enclosingMethod(occurrence: number): number | null {
+    const { relations, occ } = this.data;
+    if (!relations) return null;
+    const { rangeStart, ranges } = relations;
+    const doc = this.docOf(occurrence);
+    const line = occ[occurrence * OCC_WORDS] ?? 0;
+    const col = occ[occurrence * OCC_WORDS + 1] ?? 0;
+    let best = -1;
+    let shared = false;
+    const end = rangeStart[doc + 1] ?? 0;
+    for (let r = rangeStart[doc] ?? 0; r < end; r++) {
+      const at = r * RANGE_WORDS;
+      const startLine = ranges[at] ?? 0;
+      const startCol = ranges[at + 1] ?? 0;
+      if (startLine > line || (startLine === line && startCol > col)) break;
+      const endLine = ranges[at + 2] ?? 0;
+      const endCol = ranges[at + 3] ?? 0;
+      if (endLine < line || (endLine === line && endCol <= col)) continue;
+      if (best >= 0) {
+        const bestAt = best * RANGE_WORDS;
+        if (
+          ranges[bestAt] === startLine &&
+          ranges[bestAt + 1] === startCol &&
+          ranges[bestAt + 2] === endLine &&
+          ranges[bestAt + 3] === endCol
+        ) {
+          shared = true;
+          continue;
+        }
+      }
+      // Declarations nest, so a later start lies inside the one found before.
+      best = r;
+      shared = false;
+    }
+    if (best < 0 || shared) return null;
+    const method = ranges[best * RANGE_WORDS + 4] ?? 0;
+    return this.symbolName(method).startsWith('local ') ? null : method;
   }
 
   // Lombok puts the code it generates on an annotation or on the field's declaration and marks
@@ -336,16 +473,15 @@ export class ScipIndex {
     return undefined;
   }
 
-  private sitesOf(symbol: number): { definitions: ScipSite[]; references: ScipSite[] } {
+  private sitesOf(symbol: number): { definitions: ScipSite[]; references: ScipUse[] } {
     const { symOccStart, symOcc, occ } = this.data;
     const definitions: ScipSite[] = [];
-    const references: ScipSite[] = [];
+    const references: ScipUse[] = [];
     const end = symOccStart[symbol + 1] ?? 0;
     for (let k = symOccStart[symbol] ?? 0; k < end; k++) {
       const i = symOcc[k] ?? 0;
-      const site = this.siteOf(i);
-      if (((occ[i * OCC_WORDS + 3] ?? 0) & 1) === 1) definitions.push(site);
-      else references.push(site);
+      if (((occ[i * OCC_WORDS + 3] ?? 0) & 1) === 1) definitions.push(this.siteOf(i));
+      else references.push(this.useOf(i));
     }
     return { definitions, references };
   }
@@ -385,7 +521,27 @@ export class ScipIndex {
     header[4] = data.symbolCount;
     header[5] = data.occ.length / OCC_WORDS;
     header[6] = data.strings.blob.length;
-    return [header, data.strings.offsets, data.docStart, data.occ, data.symOccStart, data.symOcc]
+    const relations = data.relations ?? {
+      implementations: new Int32Array(0),
+      interfaces: new Int32Array(0),
+      rangeStart: new Int32Array(data.docPaths.length + 1),
+      ranges: new Int32Array(0),
+    };
+    header[7] = relations.implementations.length / 2;
+    header[8] = relations.interfaces.length;
+    header[9] = relations.ranges.length / RANGE_WORDS;
+    return [
+      header,
+      data.strings.offsets,
+      data.docStart,
+      data.occ,
+      data.symOccStart,
+      data.symOcc,
+      relations.implementations,
+      relations.interfaces,
+      relations.rangeStart,
+      relations.ranges,
+    ]
       .map((array) => Buffer.from(array.buffer, array.byteOffset, array.byteLength))
       .concat(data.strings.blob);
   }
@@ -425,17 +581,29 @@ export async function readScipIndex(path: string): Promise<ScipIndex | null> {
     file.copy(aligned);
     file = aligned;
   }
-  if (file.length < HEADER_WORDS * 4) return null;
-  const header = new Int32Array(file.buffer, file.byteOffset, HEADER_WORDS);
-  if (header[0] !== FORMAT_MAGIC || header[1] !== FORMAT_VERSION) return null;
+  if (file.length < HEADER_WORDS_WITHOUT_RELATIONS * 4) return null;
+  const version = new Int32Array(file.buffer, file.byteOffset, 2)[1];
+  const withRelations = version === FORMAT_VERSION;
+  if (!withRelations && version !== FORMAT_VERSION_WITHOUT_RELATIONS) return null;
+  const headerWords = withRelations ? HEADER_WORDS : HEADER_WORDS_WITHOUT_RELATIONS;
+  if (file.length < headerWords * 4) return null;
+  const header = new Int32Array(file.buffer, file.byteOffset, headerWords);
+  if (header[0] !== FORMAT_MAGIC) return null;
   const positionEncoding = header[2] ?? 0;
   const docCount = header[3] ?? 0;
   const symbolCount = header[4] ?? 0;
   const occCount = header[5] ?? 0;
   const blobBytes = header[6] ?? 0;
-  if (Math.min(docCount, symbolCount, occCount, blobBytes) < 0) return null;
+  const pairCount = header[7] ?? 0;
+  const interfaceCount = header[8] ?? 0;
+  const rangeCount = header[9] ?? 0;
+  if (
+    Math.min(docCount, symbolCount, occCount, blobBytes, pairCount, interfaceCount, rangeCount) < 0
+  ) {
+    return null;
+  }
 
-  let offset = HEADER_WORDS * 4;
+  let offset = headerWords * 4;
   const take = (words: number): Int32Array => {
     const array = new Int32Array(file.buffer, file.byteOffset + offset, words);
     offset += words * 4;
@@ -445,6 +613,9 @@ export async function readScipIndex(path: string): Promise<ScipIndex | null> {
     offset +
     4 * (docCount + symbolCount + 1 + docCount + 1 + occCount * OCC_WORDS) +
     4 * (symbolCount + 1 + occCount) +
+    (withRelations
+      ? 4 * (pairCount * 2 + interfaceCount + docCount + 1 + rangeCount * RANGE_WORDS)
+      : 0) +
     blobBytes;
   if (file.length !== expected) return null;
 
@@ -453,6 +624,14 @@ export async function readScipIndex(path: string): Promise<ScipIndex | null> {
   const occ = take(occCount * OCC_WORDS);
   const symOccStart = take(symbolCount + 1);
   const symOcc = take(occCount);
+  const relations: Relations | null = withRelations
+    ? {
+        implementations: take(pairCount * 2),
+        interfaces: take(interfaceCount),
+        rangeStart: take(docCount + 1),
+        ranges: take(rangeCount * RANGE_WORDS),
+      }
+    : null;
   const blob = file.subarray(offset, offset + blobBytes);
 
   const docPaths: string[] = [];
@@ -468,6 +647,7 @@ export async function readScipIndex(path: string): Promise<ScipIndex | null> {
     symOccStart,
     symOcc,
     strings: { offsets, blob },
+    relations,
   });
 }
 
@@ -562,19 +742,28 @@ class IndexBuilder {
   // Keyed by the symbol's bytes read as latin1, which is cheaper than decoding UTF-8.
   private readonly globalIds = new Map<string, number>();
   private readonly symbols: string[] = [];
+  // Of global symbols, keyed like globalIds: what SymbolInformation says they extend,
+  // implement or override, and their kind.
+  private readonly implemented = new Map<string, string[]>();
+  private readonly kinds = new Map<string, number>();
+  private readonly rangeStart = new GrowableInt32();
+  private readonly ranges = new GrowableInt32();
 
   constructor() {
     this.docStart.push(0);
+    this.rangeStart.push(0);
   }
 
   addDocument(buffer: Buffer): void {
     const doc = new ProtoReader(buffer, 0, buffer.length);
     const localIds = new Map<string, number>();
+    const localKinds = new Map<string, number>();
     let path = '';
     const lines: number[] = [];
     const starts: number[] = [];
     const ends: number[] = [];
     const symbols: number[] = [];
+    const methodRanges: { key: string; symbol: number; range: number[] }[] = [];
 
     while (!doc.done()) {
       const tag = doc.varint();
@@ -597,6 +786,19 @@ class IndexBuilder {
         starts.push(occurrence.startCol);
         ends.push(occurrence.endCol);
         symbols.push(symbol * 2 + (occurrence.isDefinition ? 1 : 0));
+        if (occurrence.isDefinition && occurrence.enclosing !== null) {
+          const key = buffer.toString('latin1', occurrence.symbolStart, occurrence.symbolEnd);
+          methodRanges.push({ key, symbol, range: occurrence.enclosing });
+        }
+      } else if (field === 3 && wire === WIRE_LENGTH_DELIMITED) {
+        const [start, end] = doc.lengthDelimited();
+        const info = readSymbolInformation(buffer, start, end);
+        if (info.symbol.startsWith('local ')) {
+          localKinds.set(info.symbol, info.kind);
+        } else {
+          if (info.implemented.length > 0) this.implemented.set(info.symbol, info.implemented);
+          this.kinds.set(info.symbol, info.kind);
+        }
       } else if (field === 6 && wire === WIRE_VARINT) {
         const encoding = doc.varint();
         if (this.positionEncoding === POSITION_ENCODING.unspecified) {
@@ -622,6 +824,65 @@ class IndexBuilder {
     }
     this.docPaths.push(path);
     this.docStart.push(this.occ.length / OCC_WORDS);
+
+    const kept = methodRanges.filter(({ key }) =>
+      key.startsWith('local ') ? localKinds.get(key) === KIND_METHOD : methodOwner(key) !== null,
+    );
+    kept.sort(
+      (a, b) =>
+        (a.range[0] ?? 0) - (b.range[0] ?? 0) ||
+        (a.range[1] ?? 0) - (b.range[1] ?? 0) ||
+        (b.range[2] ?? 0) - (a.range[2] ?? 0) ||
+        (b.range[3] ?? 0) - (a.range[3] ?? 0),
+    );
+    for (const { symbol, range } of kept) {
+      for (const value of range) this.ranges.push(value);
+      this.ranges.push(symbol);
+    }
+    this.rangeStart.push(this.ranges.length / RANGE_WORDS);
+  }
+
+  private globalId(key: string): number {
+    let id = this.globalIds.get(key);
+    if (id === undefined) {
+      id = this.symbols.length;
+      this.symbols.push(Buffer.from(key, 'latin1').toString('utf8'));
+      this.globalIds.set(key, id);
+    }
+    return id;
+  }
+
+  // scip-java also writes each override under the method it overrides, the other way round;
+  // the types it lists, which never run backwards, tell the two apart. With no word from the
+  // index on the overridden method's type, that type lives in a library and only the
+  // overriding side can have written it.
+  private implementationPairs(): Int32Array {
+    const pairs: [number, number][] = [];
+    for (const [symbol, targets] of this.implemented) {
+      const isType = symbol.endsWith('#');
+      const owner = isType ? null : methodOwner(symbol);
+      if (!isType && owner === null) continue;
+      for (const target of targets) {
+        if (target.startsWith('local ')) continue;
+        if (owner !== null) {
+          const targetOwner = methodOwner(target);
+          if (targetOwner === null) continue;
+          const runsForward = this.implemented.get(owner)?.includes(targetOwner) ?? false;
+          if (!runsForward && this.kinds.has(targetOwner)) continue;
+        }
+        pairs.push([this.globalId(target), this.globalId(symbol)]);
+      }
+    }
+    pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    return Int32Array.from(pairs.flat());
+  }
+
+  private interfaceTypes(): Int32Array {
+    const ids: number[] = [];
+    for (const [symbol, kind] of this.kinds) {
+      if (kind === KIND_INTERFACE && symbol.endsWith('#')) ids.push(this.globalId(symbol));
+    }
+    return Int32Array.from(ids.sort((a, b) => a - b));
   }
 
   private symbolId(
@@ -643,6 +904,8 @@ class IndexBuilder {
   }
 
   async finish(slicer: Slicer): Promise<ScipIndex> {
+    const implementations = this.implementationPairs();
+    const interfaces = this.interfaceTypes();
     const occ = this.occ.toArray();
     const occCount = occ.length / OCC_WORDS;
     const symbolCount = this.symbols.length;
@@ -674,6 +937,12 @@ class IndexBuilder {
       symOccStart,
       symOcc,
       strings,
+      relations: {
+        implementations,
+        interfaces,
+        rangeStart: this.rangeStart.toArray(),
+        ranges: this.ranges.toArray(),
+      },
     });
   }
 }
@@ -694,6 +963,57 @@ interface DecodedOccurrence {
   symbolStart: number;
   symbolEnd: number;
   isDefinition: boolean;
+  // startLine, startCol, endLine, endCol of the whole declaration, given on definitions.
+  enclosing: number[] | null;
+}
+
+interface DecodedSymbolInformation {
+  symbol: string;
+  kind: number;
+  implemented: string[];
+}
+
+// Symbols are read as latin1, like the keys of IndexBuilder.globalIds.
+function readSymbolInformation(
+  buffer: Buffer,
+  start: number,
+  end: number,
+): DecodedSymbolInformation {
+  const reader = new ProtoReader(buffer, start, end);
+  const info: DecodedSymbolInformation = { symbol: '', kind: 0, implemented: [] };
+  while (!reader.done()) {
+    const tag = reader.varint();
+    const field = Math.floor(tag / 8);
+    const wire = tag % 8;
+    if (field === 1 && wire === WIRE_LENGTH_DELIMITED) {
+      const [from, to] = reader.lengthDelimited();
+      info.symbol = buffer.toString('latin1', from, to);
+    } else if (field === 4 && wire === WIRE_LENGTH_DELIMITED) {
+      const [from, to] = reader.lengthDelimited();
+      const relationship = new ProtoReader(buffer, from, to);
+      let symbol = '';
+      let isImplementation = false;
+      while (!relationship.done()) {
+        const relTag = relationship.varint();
+        const relField = Math.floor(relTag / 8);
+        const relWire = relTag % 8;
+        if (relField === 1 && relWire === WIRE_LENGTH_DELIMITED) {
+          const [symbolStart, symbolEnd] = relationship.lengthDelimited();
+          symbol = buffer.toString('latin1', symbolStart, symbolEnd);
+        } else if (relField === 3 && relWire === WIRE_VARINT) {
+          isImplementation = relationship.varint() !== 0;
+        } else {
+          relationship.skip(relWire);
+        }
+      }
+      if (isImplementation && symbol) info.implemented.push(symbol);
+    } else if (field === 5 && wire === WIRE_VARINT) {
+      info.kind = reader.varint();
+    } else {
+      reader.skip(wire);
+    }
+  }
+  return info;
 }
 
 function readOccurrence(buffer: Buffer, start: number, end: number): DecodedOccurrence | null {
@@ -736,14 +1056,34 @@ function readOccurrence(buffer: Buffer, start: number, end: number): DecodedOccu
         ? outer
         : [range[0] ?? 0, range[1] ?? 0, MULTI_LINE_END];
   }
+  const isDefinition = (roles & ROLE_DEFINITION) !== 0;
+  const whole =
+    enclosing.length === 3
+      ? [enclosing[0] ?? 0, enclosing[1] ?? 0, enclosing[0] ?? 0, enclosing[2] ?? 0]
+      : enclosing;
   return {
     line: span[0],
     startCol: span[1],
     endCol: span[2],
     symbolStart,
     symbolEnd,
-    isDefinition: (roles & ROLE_DEFINITION) !== 0,
+    isDefinition,
+    enclosing:
+      isDefinition && whole.length === 4 && whole.every((value) => value < MULTI_LINE_END)
+        ? whole
+        : null,
   };
+}
+
+function hasSorted(values: Int32Array, wanted: number): boolean {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((values[mid] ?? 0) < wanted) lo = mid + 1;
+    else hi = mid;
+  }
+  return values[lo] === wanted;
 }
 
 function singleLineSpan(range: number[]): [line: number, startCol: number, endCol: number] | null {
