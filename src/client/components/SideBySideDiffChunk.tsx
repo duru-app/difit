@@ -17,7 +17,8 @@ import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { codeCellAttributes, quoteSelection } from '../utils/codeSelection';
-import { extraRangeEndsAt, pickHolds, threadHoldsLine } from '../utils/linePick';
+import { endOfLine } from '../../utils/commentPosition';
+import { endsOnRow, pickHolds, threadHoldsLine } from '../utils/linePick';
 import {
   computeWordLevelDiff,
   shouldComputeWordDiff,
@@ -384,14 +385,17 @@ export function SideBySideDiffChunk({
     [],
   );
 
+  const { placeCard } = linePick;
+  const cards = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, placeCard(thread, 'split')])),
+    [threads, placeCard],
+  );
+
   const getThreadsForLine = (lineNumber: number, side: DiffSide) => {
     return threads
       .filter((thread) => {
-        const lineMatches = Array.isArray(thread.line)
-          ? thread.line[1] === lineNumber
-          : thread.line === lineNumber;
-        const sideMatches = (thread.side ?? 'new') === side;
-        return lineMatches && sideMatches;
+        const card = cards.get(thread.id)?.card;
+        return card?.side === side && endOfLine(card.line) === lineNumber;
       })
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   };
@@ -913,15 +917,15 @@ export function SideBySideDiffChunk({
                 />
 
                 {threads
-                  .filter(
-                    (thread) =>
-                      extraRangeEndsAt(thread, 'old', sideLine.oldLineNumber) ||
-                      extraRangeEndsAt(thread, 'new', sideLine.newLineNumber),
-                  )
+                  .filter((thread) => endsOnRow(cards.get(thread.id)?.others ?? [], sideLine))
                   .map((thread) => (
                     <tr key={`marker-${thread.id}`} data-thread-marker={thread.id}>
                       <td colSpan={4} className="p-0">
-                        <ThreadMarker thread={thread} onGo={() => showThread(thread)} />
+                        <ThreadMarker
+                          thread={thread}
+                          card={cards.get(thread.id)?.card}
+                          onGo={() => showThread(thread)}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -941,7 +945,7 @@ export function SideBySideDiffChunk({
                   <tr className="bg-github-bg-secondary">
                     <td colSpan={4} className="p-0 border-t border-github-border">
                       {allThreads.map((thread) => {
-                        const threadSide = thread.side || 'new';
+                        const threadSide = cards.get(thread.id)?.card.side ?? thread.side ?? 'new';
                         const review = threadReviewControls(overlay, thread);
                         let layout: 'left' | 'right' | 'full';
 

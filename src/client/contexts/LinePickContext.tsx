@@ -9,12 +9,20 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 
-import type { DiffLine, DiffSide, LineNumber, LineSelection, SidedLine } from '../../types/diff';
+import type {
+  CommentThread,
+  DiffLine,
+  DiffSide,
+  LineNumber,
+  LineSelection,
+  SidedLine,
+} from '../../types/diff';
 import {
   extendTo,
   type LinePick,
   linesBetween,
   pickLines,
+  placeCard,
   type PickLayout,
   pickRows,
   rangesOfPick,
@@ -40,6 +48,10 @@ export interface LinePickStore {
   extend: (selection: LineSelection, layout: PickLayout) => void;
   between: (from: LineSelection, to: LineSelection, layout: PickLayout) => LineSelection[];
   ranges: (layout: PickLayout) => SidedLine[];
+  placeCard: (
+    thread: Pick<CommentThread, 'line' | 'extraLines' | 'side'>,
+    layout: PickLayout,
+  ) => { card: SidedLine; others: SidedLine[] } | null;
   // The line clicked last, where a Shift+click starts.
   setAnchor: (selection: LineSelection) => void;
   setAddMode: (on: boolean) => void;
@@ -145,6 +157,12 @@ function useLinePickState(
     [pick, rows],
   );
 
+  const placeCardOn = useCallback(
+    (thread: Pick<CommentThread, 'line' | 'extraLines' | 'side'>, layout: PickLayout) =>
+      placeCard(thread, rows[layout]),
+    [rows],
+  );
+
   const contentOf = useCallback(
     (side: DiffSide, line: LineNumber) => {
       const [start, end] = Array.isArray(line) ? line : [line, line];
@@ -178,6 +196,7 @@ function useLinePickState(
       extend,
       between,
       ranges,
+      placeCard: placeCardOn,
       setAnchor,
       setAddMode,
       close,
@@ -196,6 +215,7 @@ function useLinePickState(
       extend,
       between,
       ranges,
+      placeCardOn,
       close,
       contentOf,
       flash,

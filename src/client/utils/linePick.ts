@@ -207,7 +207,7 @@ export function rangesOfPick({ lines }: Pick<LinePick, 'lines'>, rows: PickRows)
       has(lines, { side: 'new', lineNumber: row.new })
     );
   });
-  const ranges: Array<SidedLine & { bottom: number }> = [];
+  const ranges: SidedLine[] = [];
   for (const side of ['old', 'new'] as const) {
     const numbers = kept
       .filter((line) => line.side === side)
@@ -217,17 +217,21 @@ export function rangesOfPick({ lines }: Pick<LinePick, 'lines'>, rows: PickRows)
     numbers.forEach((lineNumber, index) => {
       start ??= lineNumber;
       if (numbers[index + 1] === lineNumber + 1) return;
-      ranges.push({
-        side,
-        line: start === lineNumber ? lineNumber : [start, lineNumber],
-        bottom: rows.rowOf.get(keyOf({ side, lineNumber })) ?? -1,
-      });
+      ranges.push({ side, line: start === lineNumber ? lineNumber : [start, lineNumber] });
       start = undefined;
     });
   }
-  return ranges
-    .sort((a, b) => a.bottom - b.bottom || (a.side === b.side ? 0 : a.side === 'old' ? -1 : 1))
-    .map(({ side, line }) => ({ side, line }));
+  return inRowOrder(ranges, rows);
+}
+
+// Ascending by the row each range ends on, the old side first on one row; ranges off the screen go
+// first, in the order given.
+function inRowOrder(ranges: readonly SidedLine[], rows: PickRows): SidedLine[] {
+  const bottomOf = ({ side, line }: SidedLine) =>
+    rows.rowOf.get(keyOf({ side, lineNumber: spanOf(line)[1] })) ?? -1;
+  const sideOrder = (a: SidedLine, b: SidedLine) =>
+    a.side === b.side || bottomOf(a) < 0 ? 0 : a.side === 'old' ? -1 : 1;
+  return [...ranges].sort((a, b) => bottomOf(a) - bottomOf(b) || sideOrder(a, b));
 }
 
 export const pickHolds = (pick: LinePick | null, side: DiffSide, lineNumber: number | undefined) =>
@@ -252,16 +256,24 @@ export function threadHoldsLine(
   });
 }
 
-export function extraRangeEndsAt(
+// On this layout a thread's card goes under the range that ends lowest, and its other ranges get
+// markers.
+export function placeCard(
   thread: ThreadLines,
-  side: DiffSide,
-  lineNumber: number | undefined,
-): boolean {
-  if (lineNumber === undefined) return false;
-  return (thread.extraLines ?? []).some(
-    (range) => range.side === side && spanOf(range.line)[1] === lineNumber,
-  );
+  rows: PickRows,
+): { card: SidedLine; others: SidedLine[] } | null {
+  const ordered = inRowOrder(sidedLinesOf(thread), rows);
+  const card = ordered.pop();
+  return card ? { card, others: ordered } : null;
 }
+
+export const endsOnRow = (
+  ranges: readonly SidedLine[],
+  { oldLineNumber, newLineNumber }: { oldLineNumber?: number; newLineNumber?: number },
+) =>
+  ranges.some(
+    ({ side, line }) => spanOf(line)[1] === (side === 'old' ? oldLineNumber : newLineNumber),
+  );
 
 export const rangeLabel = (line: LineNumber) =>
   Array.isArray(line) ? `L${line[0]}-L${line[1]}` : `L${line}`;

@@ -67,21 +67,23 @@ export function PickControls({
 // Under a range of a thread other than the one its card sits under.
 export function ThreadMarker({
   thread,
+  card,
   onGo,
 }: {
-  thread: Pick<CommentThread, 'line' | 'side' | 'extraLines'>;
+  thread: Pick<CommentThread, 'side' | 'extraLines'>;
+  card: SidedLine | undefined;
   onGo: () => void;
 }) {
-  if (thread.line === undefined) return null;
+  if (!card) return null;
   const cardSide = coversBothSides(thread.side, thread.extraLines)
-    ? `${SIDE_NAMES[thread.side ?? 'new']} `
+    ? `${SIDE_NAMES[card.side]} `
     : '';
   return (
     <div className="mx-4 my-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-l-[3px] border-yellow-400 px-2 py-0.5 text-xs text-github-text-secondary">
       <MessageSquare size={12} aria-hidden="true" />
       <span>
         이 줄도 {cardSide}
-        {rangeLabel(thread.line)} 아래 지적에 함께 걸려 있습니다
+        {rangeLabel(card.line)} 아래 지적에 함께 걸려 있습니다
       </span>
       <button
         type="button"

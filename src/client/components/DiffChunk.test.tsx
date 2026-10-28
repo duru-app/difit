@@ -1501,6 +1501,52 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     ).toBeTruthy();
   });
 
+  it.each([
+    ['the split view', 'old' as const, 11, { side: 'new' as const, line: 10 }],
+    ['the unified view', 'new' as const, 10, { side: 'old' as const, line: 11 }],
+  ])(
+    'shows the card of a thread picked in %s under the range ending lowest here',
+    (_view, side, line, extra) => {
+      // The split view puts the added line next to the first deleted one.
+      const replaced: DiffChunkData = {
+        header: '@@ -10,3 +10,2 @@',
+        oldStart: 10,
+        oldLines: 3,
+        newStart: 10,
+        newLines: 2,
+        lines: [
+          { type: 'delete', content: 'gone();', oldLineNumber: 10 },
+          { type: 'delete', content: 'alsoGone();', oldLineNumber: 11 },
+          { type: 'add', content: 'came();', newLineNumber: 10 },
+          { type: 'normal', content: 'tail();', oldLineNumber: 12, newLineNumber: 11 },
+        ],
+      };
+      const thread = { ...threadOn(line, 'Both sides', side), extraLines: [extra] };
+      const { rows } = renderChunk(mode, { chunk: replaced, threads: [thread] });
+      const rowWith = (code: string) => rows.find((row) => row.textContent?.includes(code))!;
+      const directlyBelow = (row: Element) => {
+        const next = row.nextElementSibling;
+        return next?.matches('[data-diff-line-row="true"]') ? null : next;
+      };
+
+      const card = screen.getAllByText('Both sides');
+      expect(card).toHaveLength(1);
+      const cardRow = mode === 'unified' ? rowWith('came();') : rowWith('alsoGone();');
+      const markerRow = mode === 'unified' ? rowWith('alsoGone();') : rowWith('gone();');
+      expect(
+        cardRow.compareDocumentPosition(card[0]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        rowWith('tail();').compareDocumentPosition(card[0]!) & Node.DOCUMENT_POSITION_PRECEDING,
+      ).toBeTruthy();
+      expect(directlyBelow(markerRow)).toHaveTextContent(
+        mode === 'unified'
+          ? '이 줄도 남은 줄 L10 아래 지적에 함께 걸려 있습니다'
+          : '이 줄도 지운 줄 L11 아래 지적에 함께 걸려 있습니다',
+      );
+    },
+  );
+
   it.runIf(mode === 'unified')(
     'takes both sides when a drag from an unchanged line reaches deleted lines',
     async () => {

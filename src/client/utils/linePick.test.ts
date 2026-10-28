@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { CommentThread, DiffLine } from '../../types/diff';
 
 import {
+  endsOnRow,
   extendTo,
-  extraRangeEndsAt,
   type LinePick,
   pickLines,
+  placeCard,
   pickRows,
   type PickRows,
   rangesOfPick,
@@ -166,12 +167,6 @@ describe('the lines of a saved thread', () => {
     expect(threadHoldsLine(thread, 'old', 12)).toBe(false);
   });
 
-  it('marks the last line of each range other than the one its card is under', () => {
-    expect([12, 41].every((line) => extraRangeEndsAt(thread, 'new', line))).toBe(true);
-    expect(extraRangeEndsAt(thread, 'new', 40)).toBe(false);
-    expect(extraRangeEndsAt(thread, 'new', 80)).toBe(false);
-  });
-
   it('matches a range on the other side by its own side', () => {
     const mixed = {
       ...thread,
@@ -179,7 +174,40 @@ describe('the lines of a saved thread', () => {
     };
     expect(threadHoldsLine(mixed, 'old', 13)).toBe(true);
     expect(threadHoldsLine(mixed, 'new', 13)).toBe(false);
-    expect(extraRangeEndsAt(mixed, 'old', 14)).toBe(true);
-    expect(extraRangeEndsAt(mixed, 'new', 14)).toBe(false);
+  });
+});
+
+describe('where a saved thread shows its card', () => {
+  const lines = [normal(9), deleted(10), deleted(11), added(10), normal(12, 11)];
+  const unified = pickRows(lines, 'unified');
+  const split = pickRows(lines, 'split');
+  const thread: Pick<CommentThread, 'line' | 'extraLines' | 'side'> = {
+    line: 11,
+    side: 'old',
+    extraLines: [{ side: 'new', line: 10 }],
+  };
+
+  it('goes under the range that ends lowest on the layout shown', () => {
+    expect(placeCard(thread, split)).toEqual({
+      card: { side: 'old', line: 11 },
+      others: [{ side: 'new', line: 10 }],
+    });
+    expect(placeCard(thread, unified)).toEqual({
+      card: { side: 'new', line: 10 },
+      others: [{ side: 'old', line: 11 }],
+    });
+  });
+
+  it('keeps the stored range when no range is on the screen', () => {
+    expect(placeCard(thread, pickRows([normal(40)], 'unified'))?.card).toEqual({
+      side: 'old',
+      line: 11,
+    });
+    expect(placeCard({ side: 'new' }, unified)).toBeNull();
+  });
+
+  it('marks the rows the other ranges end on', () => {
+    expect(endsOnRow([{ side: 'old', line: [10, 11] }], { oldLineNumber: 11 })).toBe(true);
+    expect(endsOnRow([{ side: 'old', line: [10, 11] }], { newLineNumber: 11 })).toBe(false);
   });
 });

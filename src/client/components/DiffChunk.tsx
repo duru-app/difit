@@ -19,7 +19,7 @@ import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { quoteSelection } from '../utils/codeSelection';
-import { extraRangeEndsAt, pickHolds, threadHoldsLine } from '../utils/linePick';
+import { endsOnRow, pickHolds, threadHoldsLine } from '../utils/linePick';
 import {
   computeWordLevelDiff,
   shouldComputeWordDiff,
@@ -309,12 +309,17 @@ export const DiffChunk = memo(function DiffChunk({
     linePick.flash(thread.id);
   };
 
+  const { placeCard } = linePick;
+  const cards = useMemo(
+    () => new Map(threads.map((thread) => [thread.id, placeCard(thread, 'unified')])),
+    [threads, placeCard],
+  );
+
   const getThreadsForLine = (line: DiffLine) => {
     return threads
       .filter((thread) => {
-        const lineNumber = lineNumberOn(line, thread.side ?? 'new');
-        const lastLine = Array.isArray(thread.line) ? thread.line[1] : thread.line;
-        return lineNumber !== undefined && lineNumber === lastLine;
+        const card = cards.get(thread.id)?.card;
+        return !!card && endsOnRow([card], line);
       })
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   };
@@ -508,10 +513,8 @@ export const DiffChunk = memo(function DiffChunk({
                 ? commentingLine.lineNumber[1]
                 : commentingLine.lineNumber
               : null;
-            const markedThreads = threads.filter(
-              (thread) =>
-                extraRangeEndsAt(thread, 'old', line.oldLineNumber) ||
-                extraRangeEndsAt(thread, 'new', line.newLineNumber),
+            const markedThreads = threads.filter((thread) =>
+              endsOnRow(cards.get(thread.id)?.others ?? [], line),
             );
 
             const commentLineNumber =
@@ -623,7 +626,11 @@ export const DiffChunk = memo(function DiffChunk({
                 {markedThreads.map((thread) => (
                   <tr key={`marker-${thread.id}`} data-thread-marker={thread.id}>
                     <td colSpan={3} className="p-0">
-                      <ThreadMarker thread={thread} onGo={() => showThread(thread)} />
+                      <ThreadMarker
+                        thread={thread}
+                        card={cards.get(thread.id)?.card}
+                        onGo={() => showThread(thread)}
+                      />
                     </td>
                   </tr>
                 ))}
