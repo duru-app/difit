@@ -1547,6 +1547,33 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     },
   );
 
+  it('marks the deleted lines of a two-for-two change only where they end apart from the card', () => {
+    const twoForTwo: DiffChunkData = {
+      header: '@@ -10,3 +10,3 @@',
+      oldStart: 10,
+      oldLines: 3,
+      newStart: 10,
+      newLines: 3,
+      lines: [
+        { type: 'delete', content: 'gone();', oldLineNumber: 10 },
+        { type: 'delete', content: 'alsoGone();', oldLineNumber: 11 },
+        { type: 'add', content: 'came();', newLineNumber: 10 },
+        { type: 'add', content: 'alsoCame();', newLineNumber: 11 },
+        { type: 'normal', content: 'tail();', oldLineNumber: 12, newLineNumber: 12 },
+      ],
+    };
+    const thread = {
+      ...threadOn([10, 11], 'Two for two', 'new'),
+      extraLines: [{ side: 'old' as const, line: [10, 11] as [number, number] }],
+    };
+    renderChunk(mode, { chunk: twoForTwo, threads: [thread] });
+
+    expect(screen.getAllByText('Two for two')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-thread-marker]')).toHaveLength(
+      mode === 'unified' ? 1 : 0,
+    );
+  });
+
   it.runIf(mode === 'unified')(
     'takes both sides when a drag from an unchanged line reaches deleted lines',
     async () => {

@@ -226,9 +226,11 @@ export function rangesOfPick({ lines }: Pick<LinePick, 'lines'>, rows: PickRows)
 
 // Ascending by the row each range ends on, the old side first on one row; ranges off the screen go
 // first, in the order given.
+const bottomRowOf = (rows: PickRows, { side, line }: SidedLine) =>
+  rows.rowOf.get(keyOf({ side, lineNumber: spanOf(line)[1] })) ?? -1;
+
 function inRowOrder(ranges: readonly SidedLine[], rows: PickRows): SidedLine[] {
-  const bottomOf = ({ side, line }: SidedLine) =>
-    rows.rowOf.get(keyOf({ side, lineNumber: spanOf(line)[1] })) ?? -1;
+  const bottomOf = (range: SidedLine) => bottomRowOf(rows, range);
   const sideOrder = (a: SidedLine, b: SidedLine) =>
     a.side === b.side || bottomOf(a) < 0 ? 0 : a.side === 'old' ? -1 : 1;
   return [...ranges].sort((a, b) => bottomOf(a) - bottomOf(b) || sideOrder(a, b));
@@ -257,14 +259,17 @@ export function threadHoldsLine(
 }
 
 // On this layout a thread's card goes under the range that ends lowest, and its other ranges get
-// markers.
+// markers, apart from those ending on the card's row.
 export function placeCard(
   thread: ThreadLines,
   rows: PickRows,
 ): { card: SidedLine; others: SidedLine[] } | null {
   const ordered = inRowOrder(sidedLinesOf(thread), rows);
   const card = ordered.pop();
-  return card ? { card, others: ordered } : null;
+  if (!card) return null;
+  const cardRow = bottomRowOf(rows, card);
+  const others = ordered.filter((range) => cardRow < 0 || bottomRowOf(rows, range) !== cardRow);
+  return { card, others };
 }
 
 export const endsOnRow = (

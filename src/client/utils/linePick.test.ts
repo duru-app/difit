@@ -198,6 +198,19 @@ describe('where a saved thread shows its card', () => {
     });
   });
 
+  it('leaves out the marker of a range ending on the row of the card', () => {
+    const twoForTwo = pickRows(
+      [deleted(10), deleted(11), added(10), added(11), normal(12)],
+      'split',
+    );
+    expect(
+      placeCard(
+        { line: [10, 11], side: 'new', extraLines: [{ side: 'old', line: [10, 11] }] },
+        twoForTwo,
+      ),
+    ).toEqual({ card: { side: 'new', line: [10, 11] }, others: [] });
+  });
+
   it('keeps the stored range when no range is on the screen', () => {
     expect(placeCard(thread, pickRows([normal(40)], 'unified'))?.card).toEqual({
       side: 'old',
