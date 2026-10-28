@@ -74,6 +74,8 @@ export function SymbolPeekModal({
 }: SymbolPeekModalProps) {
   const [search, setSearch] = useState<SearchState>({ status: 'loading' });
   const [selected, setSelected] = useState<PeekSelection | null>(null);
+  // Until the user picks an item, a new answer chooses the selection afresh.
+  const autoPicked = useRef(true);
   const latestUpdateSeq = useRef(indexUpdates.seq);
   const searchedAtSeq = useRef(indexUpdates.seq);
 
@@ -93,6 +95,7 @@ export function SymbolPeekModal({
       (result) => {
         if (controller.signal.aborted) return;
         setSearch({ status: 'done', result, seq });
+        autoPicked.current = true;
         setSelected(reselect(null, result));
       },
       () => {
@@ -122,7 +125,7 @@ export function SymbolPeekModal({
       (result) => {
         if (controller.signal.aborted) return;
         setSearch({ status: 'done', result, seq });
-        setSelected((current) => reselect(current, result));
+        setSelected((current) => reselect(autoPicked.current ? null : current, result));
       },
       () => {},
     );
@@ -177,7 +180,14 @@ export function SymbolPeekModal({
             {search.status === 'loading' && <Notice>찾는 중…</Notice>}
             {search.status === 'failed' && <Notice>이 리비전에서는 찾을 수 없습니다.</Notice>}
             {search.status === 'done' && (
-              <MatchList result={search.result} selected={selected} onSelect={setSelected} />
+              <MatchList
+                result={search.result}
+                selected={selected}
+                onSelect={(selection) => {
+                  autoPicked.current = false;
+                  setSelected(selection);
+                }}
+              />
             )}
           </nav>
           <div className="min-h-0 min-w-0 flex-1 overflow-auto">

@@ -651,6 +651,31 @@ describe('SymbolPeekModal with a commit index', () => {
     expect(screen.queryByText(/선언이 다를 수 있습니다/)).not.toBeInTheDocument();
   });
 
+  it('selects the library declaration once the index answers, unless a use was picked', async () => {
+    librarySource = libraryFound({ kind: 'jdk', installed: '8', indexed: '8' });
+    const byNameOnly: SymbolSearchResponse = { ...byName, name: 'orElse', definitions: [] };
+
+    const first = render(modal(updates(building, 1)));
+    await answer(byNameOnly, 1);
+    await waitFor(() => expect(selectedItem()).toContain('src/use.ts:1'));
+    first.rerender(modal(updates(ready, 2)));
+    await answer(byLibrary, 2);
+
+    await waitFor(() => expect(selectedItem()).toContain('java.util.Optional#orElse()'));
+    expect(await libraryPane()).toBeInTheDocument();
+    first.unmount();
+
+    const second = render(modal(updates(building, 1)));
+    await answer(byNameOnly, 3);
+    await shownRows();
+    fireEvent.click(screen.getByText('src/use.ts:1'));
+    second.rerender(modal(updates(ready, 2)));
+    await answer(byLibrary, 4);
+
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    expect(selectedItem()).toContain('src/use.ts:1');
+  });
+
   it('does not search names clicked in a library source', async () => {
     librarySource = libraryFound({ kind: 'jdk', installed: '8', indexed: '8' });
     render(modal());
