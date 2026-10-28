@@ -26,6 +26,7 @@ import {
   type DiffSide,
   type ExtraCommentLines,
   type LineNumber,
+  type SidedLine,
   type CommentThread,
   type RevisionsResponse,
   type ReviewScope,
@@ -1971,7 +1972,7 @@ function App() {
       file: string,
       line: LineNumber | undefined,
       side: DiffSide,
-      extraLines?: readonly LineNumber[],
+      extraLines?: readonly SidedLine[],
     ): Promise<ViewBinding | undefined> => {
       if (!review || !resolvedSelection || !isViewOfReview(resolvedSelection, review)) {
         return undefined;
@@ -1990,12 +1991,7 @@ function App() {
       side?: DiffSide,
       extra?: ExtraCommentLines,
     ): Promise<void> => {
-      const binding = await bindNewThread(
-        file,
-        line,
-        side || 'new',
-        extra?.lines.map((range) => range.line),
-      );
+      const binding = await bindNewThread(file, line, side || 'new', extra?.lines);
       addThreadRef.current(newThread(file, line, body, codeContent, side, binding, extra));
     },
     [bindNewThread],

@@ -1092,15 +1092,18 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
 
-  // `range=12-12&range=40-41`; null when any of them is not a range of lines.
-  function parseLineRanges(value: unknown): Array<{ start: number; end: number }> | null {
+  // `range=12-12&range=old:40-41`; null when any of them is not a range of lines.
+  function parseLineRanges(
+    value: unknown,
+  ): Array<{ start: number; end: number; side?: DiffSide }> | null {
     if (value === undefined) return [];
     const values = Array.isArray(value) ? value : [value];
     const ranges = values.map((text) => {
-      const match = typeof text === 'string' ? /^(\d+)-(\d+)$/.exec(text) : null;
-      const start = Number(match?.[1]);
-      const end = Number(match?.[2]);
-      return match && start >= 1 && start <= end ? { start, end } : null;
+      const match = typeof text === 'string' ? /^(?:(old|new):)?(\d+)-(\d+)$/.exec(text) : null;
+      const side = match?.[1] as DiffSide | undefined;
+      const start = Number(match?.[2]);
+      const end = Number(match?.[3]);
+      return match && start >= 1 && start <= end ? { start, end, ...(side ? { side } : {}) } : null;
     });
     return ranges.every((range) => range !== null) ? ranges : null;
   }

@@ -238,6 +238,8 @@ it('folds the fixups for comments made on a run and on the whole review into the
   const unchangedLine = `base=${base}&target=${docs}&side=new&path=discount.js&start=3&end=3`;
   expect(await target(unchangedLine)).toBe(docs);
   expect(await target(`${unchangedLine}&range=1-1&range=2-2`)).toBe(fix);
+  expect(await target(`${unchangedLine}&range=old:2-2`)).toBe(docs);
+  expect(await status({ base, target: docs, side: 'new', ...line, range: 'left:2-2' })).toBe(400);
 
   const at = '2026-10-20T00:00:00Z';
   const thread = (id: string, filePath: string, line: number, content: string) => ({

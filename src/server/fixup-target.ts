@@ -13,8 +13,9 @@ export interface FixupTargetQuery {
   // the whole file.
   startLine?: number;
   endLine?: number;
-  // More ranges of the same comment, counted like the one above.
-  extraRanges?: ReadonlyArray<{ start: number; end: number }>;
+  // More ranges of the same comment, counted like the one above on their own side, `side` when
+  // left out.
+  extraRanges?: ReadonlyArray<{ start: number; end: number; side?: DiffSide }>;
   side: DiffSide;
   // Oldest first, full SHAs; every commit in the view's range when left out.
   commits?: readonly string[];
@@ -28,10 +29,11 @@ async function gitText(repoPath: string, args: string[]): Promise<string> {
   return run.stdout.toString('utf8').trim();
 }
 
-// The commit of the view that last changed the lines, the latest one when they came from several;
-// the view's last commit for lines the view left as they were and for lines on the old side. Lines a
-// commit outside `commits` changed count for the commit they came from before it. For the whole
-// file, on either side, the last of `commits` that changed the file, or the view's last commit.
+// The commit of the view that last changed the lines on the new side, the latest one when they came
+// from several; the view's last commit for lines the view left as they were and when every line is
+// on the old side. Lines a commit outside `commits` changed count for the commit they came from
+// before it. For the whole file, on either side, the last of `commits` that changed the file, or the
+// view's last commit.
 export async function chooseFixupTarget(
   repoPath: string,
   { view, filePath, startLine, endLine, extraRanges = [], side, commits }: FixupTargetQuery,
@@ -49,7 +51,10 @@ export async function chooseFixupTarget(
     if (!commits) return touched[0] || last;
     return [...commits].reverse().find((sha) => touched.includes(sha)) ?? last;
   }
-  if (side === 'old') return last;
+  const newRanges = [...extraRanges, { start: startLine, end: endLine, side }].filter(
+    (range) => (range.side ?? side) === 'new',
+  );
+  if (newRanges.length === 0) return last;
   const inRange = (await gitText(repoPath, ['rev-list', '--reverse', `${base}..${target}`])).split(
     '\n',
   );
@@ -62,10 +67,7 @@ export async function chooseFixupTarget(
       '--porcelain',
       '--no-ignore-revs-file',
       ...ignoring,
-      ...[...extraRanges, { start: startLine, end: endLine }].flatMap(({ start, end }) => [
-        '-L',
-        `${start},${end}`,
-      ]),
+      ...newRanges.flatMap(({ start, end }) => ['-L', `${start},${end}`]),
       `${base}..${target}`,
       '--',
       filePath,
