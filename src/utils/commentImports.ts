@@ -389,7 +389,12 @@ function getPositionKey(position: DiffCommentPosition): string {
     return `${position.side}:file`;
   }
 
-  return `${position.side}:${rangesOfPosition(position).map(rangeKey).join(',')}`;
+  const ranges = [...rangesOfPosition(position)].sort(
+    (a, b) =>
+      Number(sideOfRange(a, position.side) !== position.side) -
+        Number(sideOfRange(b, position.side) !== position.side) || startOfLine(a) - startOfLine(b),
+  );
+  return `${position.side}:${ranges.map(rangeKey).join(',')}`;
 }
 
 function positionsMatch(left: DiffCommentPosition, right: DiffCommentPosition): boolean {

@@ -919,6 +919,21 @@ describe('commentImports', () => {
       expect(threads.find(({ id }) => id === 'one-side')?.messages).toHaveLength(1);
     });
 
+    it('takes a reply whose ranges come in another order', () => {
+      const { threads: made } = mergeCommentImports([], [mixedImport]);
+      const topToBottom: DiffCommentPosition = {
+        ...POSITION,
+        extraRanges: [{ side: 'old', start: 12, end: 14 }, 3, { side: 'old', start: 20, end: 20 }],
+      };
+
+      const { threads, warnings } = mergeCommentImports(made, [
+        { ...mixedImport, type: 'reply', id: 'reply-1', body: 'Done', position: topToBottom },
+      ]);
+
+      expect(warnings).toEqual([]);
+      expect(threads[0]?.messages).toHaveLength(2);
+    });
+
     it('keeps the sides through a merge of thread lists', () => {
       const {
         threads: [mixed],
