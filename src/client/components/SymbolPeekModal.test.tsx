@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { LibrarySourceResponse, SymbolSearchResponse } from '../../types/diff';
+import type {
+  LibrarySourceResponse,
+  SymbolCallersResponse,
+  SymbolSearchResponse,
+} from '../../types/diff';
 import type { SymbolIndexState } from '../../types/watch';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import type { SymbolIndexUpdates } from '../hooks/useSymbolPeek';
@@ -391,14 +395,23 @@ describe('SymbolPeekModal with a commit index', () => {
   let answers: ((value: SymbolSearchResponse | null) => void)[];
   // `null` fails the request.
   let librarySource: LibrarySourceResponse | null;
+  // By the method whose callers they are; a method left out is answered with 404.
+  let callersOf: Record<string, SymbolCallersResponse>;
 
   beforeEach(() => {
     global.fetch = vi.fn();
     answers = [];
     librarySource = null;
+    callersOf = {};
     files['src/other.ts'] = 'const other = {};\n\n\n\nother.addOne(2);\n';
     vi.mocked(global.fetch).mockImplementation(async (input) => {
       const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/symbol-callers') {
+        const callers = callersOf[url.searchParams.get('symbol') ?? ''];
+        return callers
+          ? new Response(JSON.stringify(callers), { status: 200 })
+          : new Response('{}', { status: 404 });
+      }
       if (url.pathname === '/api/symbol') {
         const search = await new Promise<SymbolSearchResponse | null>((resolve) =>
           answers.push(resolve),
@@ -820,6 +833,160 @@ describe('SymbolPeekModal with a commit index', () => {
     const list = await screen.findByRole('navigation');
     await waitFor(() => expect(within(list).getByText('쓰인 곳 1')).toBeInTheDocument());
     expect(within(list).queryByText(/^구현/)).toBeNull();
+  });
+
+  describe('callers of the method a use sits in', () => {
+    const RUN = 'semanticdb maven . . demo/Use#run().';
+    const START = 'semanticdb maven . . demo/App#start().';
+    const withCallers: SymbolSearchResponse = {
+      ...byIndex,
+      references: [
+        { path: 'src/use.ts', line: 1, text: 'const two = addOne(1);', caller: RUN },
+        { path: 'src/other.ts', line: 5, text: 'other.addOne(2);' },
+      ],
+    };
+    const callerRequests = () =>
+      vi
+        .mocked(global.fetch)
+        .mock.calls.map(([url]) => String(url))
+        .filter((url) => url.startsWith('/api/symbol-callers'));
+    const rowOf = (text: string) => {
+      const row = within(screen.getByRole('navigation')).getByText(text).closest('li');
+      if (!row) throw new Error(`no row holds ${text}`);
+      return row;
+    };
+    const ownLine = (row: HTMLElement) => row.firstElementChild as HTMLElement;
+
+    beforeEach(() => {
+      files['src/app.ts'] = 'class App {\n  start() { run(); }\n}\n';
+      files['src/port.ts'] = '\n\nport.run();\n';
+      callersOf[RUN] = {
+        callers: [
+          { path: 'src/app.ts', line: 2, text: '  start() { run(); }', caller: START },
+          { path: 'src/port.ts', line: 3, text: 'port.run();', via: 'interface', caller: RUN },
+        ],
+        truncated: false,
+      };
+      callersOf[START] = { callers: [], truncated: false };
+    });
+
+    afterEach(() => {
+      delete files['src/app.ts'];
+      delete files['src/port.ts'];
+    });
+
+    it('offers to expand only the uses whose method the index named', async () => {
+      render(modal());
+      await answer(withCallers, 1);
+
+      await waitFor(() => expect(rowOf('src/use.ts:1')).toBeInTheDocument());
+      expect(
+        within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+      ).toHaveAttribute('aria-expanded', 'false');
+      expect(
+        within(rowOf('src/other.ts:5')).queryByRole('button', { name: /호출하는 곳/ }),
+      ).toBeNull();
+    });
+
+    it('shows no toggle when no use names its method', async () => {
+      render(modal());
+      await answer(byIndex, 1);
+
+      await waitFor(() => expect(rowOf('src/use.ts:1')).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /호출하는 곳/ })).toBeNull();
+    });
+
+    it('expands the callers one level at a time, each level indented', async () => {
+      render(modal());
+      await answer(withCallers, 1);
+      const toggle = await waitFor(() =>
+        within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+      );
+
+      fireEvent.click(toggle);
+      await waitFor(() => expect(rowOf('src/app.ts:2')).toBeInTheDocument());
+      expect(callerRequests()).toEqual([
+        `/api/symbol-callers?${new URLSearchParams({ ref: 'abc1234', symbol: RUN }).toString()}`,
+      ]);
+      expect(toggle).toHaveAccessibleName('호출하는 곳 접기');
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(ownLine(rowOf('src/use.ts:1')).style.paddingLeft).toBe('0px');
+      expect(ownLine(rowOf('src/app.ts:2')).style.paddingLeft).toBe('16px');
+      expect(within(rowOf('src/port.ts:3')).getByText('인터페이스로')).toBeInTheDocument();
+
+      fireEvent.click(
+        within(rowOf('src/app.ts:2')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+      );
+      expect(await screen.findByText('호출하는 곳이 없습니다.')).toBeInTheDocument();
+
+      fireEvent.click(within(rowOf('src/app.ts:2')).getByText('src/app.ts:2'));
+      expect(selectedItem()).toContain('src/app.ts:2');
+      expect(await shownRows()).toContainEqual(expect.stringContaining('start() { run(); }'));
+    });
+
+    it('indents callers past the toggle above them even when none of them has a toggle', async () => {
+      callersOf[RUN] = {
+        callers: [{ path: 'src/app.ts', line: 2, text: '  start() { run(); }' }],
+        truncated: false,
+      };
+      render(modal());
+      await answer(withCallers, 1);
+      fireEvent.click(
+        await waitFor(() =>
+          within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+        ),
+      );
+
+      const nested = ownLine(await waitFor(() => rowOf('src/app.ts:2')));
+      expect(nested.style.paddingLeft).toBe('16px');
+      expect(nested.firstElementChild).toHaveClass('w-11');
+      expect(within(nested).queryByRole('button', { name: /호출하는 곳/ })).toBeNull();
+    });
+
+    it('marks a caller in a method whose callers are already shown, with nothing to expand', async () => {
+      render(modal());
+      await answer(withCallers, 1);
+      fireEvent.click(
+        await waitFor(() =>
+          within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+        ),
+      );
+
+      const again = await waitFor(() => rowOf('src/port.ts:3'));
+      expect(within(again).getByText('재귀')).toBeInTheDocument();
+      expect(within(again).queryByRole('button', { name: /호출하는 곳/ })).toBeNull();
+      expect(within(rowOf('src/app.ts:2')).queryByText('재귀')).toBeNull();
+    });
+
+    it('collapses the callers and shows them again without asking twice', async () => {
+      render(modal());
+      await answer(withCallers, 1);
+      const toggle = await waitFor(() =>
+        within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+      );
+
+      fireEvent.click(toggle);
+      await waitFor(() => expect(rowOf('src/app.ts:2')).toBeInTheDocument());
+      fireEvent.click(toggle);
+      expect(screen.queryByText('src/app.ts:2')).toBeNull();
+      expect(toggle).toHaveAccessibleName('호출하는 곳 펼치기');
+      fireEvent.click(toggle);
+      expect(rowOf('src/app.ts:2')).toBeInTheDocument();
+      expect(callerRequests()).toHaveLength(1);
+    });
+
+    it('says so when the callers cannot be found', async () => {
+      delete callersOf[RUN];
+      render(modal());
+      await answer(withCallers, 1);
+      fireEvent.click(
+        await waitFor(() =>
+          within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+        ),
+      );
+
+      expect(await screen.findByText('호출하는 곳을 찾지 못했습니다.')).toBeInTheDocument();
+    });
   });
 
   it('marks only the uses that were found by name in an index answer', async () => {
