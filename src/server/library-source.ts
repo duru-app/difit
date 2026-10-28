@@ -101,14 +101,17 @@ async function srcZipOf(home: string): Promise<{ zip: string } | { dangling: boo
   return { dangling };
 }
 
+// JDK 8 puts a JRE inside the JDK, and src.zip next to it.
+function jdkAround(home: string): string {
+  return basename(home) === 'jre' ? dirname(home) : home;
+}
+
 async function javaOnPath(pathDirs: string[]): Promise<string | null> {
   const name = process.platform === 'win32' ? 'java.exe' : 'java';
   for (const dir of pathDirs) {
     const java = join(dir, name);
     if (!(await isFile(java))) continue;
-    const home = dirname(dirname(await realpath(java)));
-    // JDK 8 puts a JRE inside the JDK, and src.zip next to it.
-    return basename(home) === 'jre' ? dirname(home) : home;
+    return jdkAround(dirname(dirname(await realpath(java))));
   }
   return null;
 }
@@ -120,7 +123,7 @@ async function findJdkSource(
   indexed: string,
 ): Promise<{ zip: string; version: string | null } | { sourcePackage?: string }> {
   const homes: string[] = [];
-  if (locations.javaHome) homes.push(locations.javaHome);
+  if (locations.javaHome) homes.push(jdkAround(locations.javaHome));
   const pathHome = await javaOnPath(locations.pathDirs).catch(() => null);
   if (pathHome) homes.push(pathHome);
   const installed = await readdir(locations.jvmDir).catch(() => [] as string[]);

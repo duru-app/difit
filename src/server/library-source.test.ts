@@ -365,6 +365,25 @@ describe('findLibrarySource', () => {
     });
   });
 
+  it('takes the JDK around the JRE that JAVA_HOME names', async () => {
+    put('jdk8/release', 'JAVA_VERSION="1.8.0_402"\n');
+    put('jdk8/src.zip', zip({ 'java/util/Optional.java': OPTIONAL }));
+    mkdirSync(join(root, 'jdk8/jre'), { recursive: true });
+    put('jvm/jdk-17/release', 'JAVA_VERSION="17.0.20.1"\n');
+    put('jvm/jdk-17/lib/src.zip', zip({ 'java.base/java/util/Optional.java': OPTIONAL }));
+
+    const result = await findLibrarySource(
+      'semanticdb maven jdk 17 java/util/Optional#orElse().',
+      locations({ javaHome: join(root, 'jdk8/jre') }),
+    );
+
+    expect(result).toMatchObject({
+      found: true,
+      path: 'java/util/Optional.java',
+      origin: { installed: '8', indexed: '17' },
+    });
+  });
+
   it('prefers the JDK of the indexed version among those in the JVM directory', async () => {
     put('jvm/a-jdk-17/release', 'JAVA_VERSION="17.0.20.1"\n');
     put('jvm/a-jdk-17/lib/src.zip', zip({ 'java.base/java/util/Optional.java': OPTIONAL }));
