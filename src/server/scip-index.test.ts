@@ -374,10 +374,12 @@ describe('convertScipIndex on an index of implementations and calls', () => {
 
   it('finds the calls of a method and those made through the interface it implements', () => {
     expect(index.callersOf(symbolOf('demo/ReportService#render().'))).toEqual({
+      name: 'render',
       references: [impl.use('demo/App#direct().', APP, 15, 'render')],
       viaInterface: [impl.use('demo/App#run().', APP, 11, 'render')],
     });
     expect(index.callersOf(symbolOf('demo/Report#summary().'))).toEqual({
+      name: 'summary',
       references: [impl.use('demo/ReportService#render().', SERVICE_IMPL, 6, 'summary')],
       viaInterface: [],
     });

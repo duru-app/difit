@@ -18,7 +18,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { startServer } from './server.js';
-import type { SymbolIndexLogResponse, SymbolSearchResponse } from '../types/diff.js';
+import type {
+  SymbolCallersResponse,
+  SymbolIndexLogResponse,
+  SymbolSearchResponse,
+} from '../types/diff.js';
 import { createDiffSelection } from '../utils/diffSelection.js';
 
 // The repository under review holds the Java sources the fixture index.scip was made from, so a
@@ -166,6 +170,9 @@ async function openReview(options: Parameters<typeof startServer>[0] = {}) {
   return { api, peek, stopSymbolIndex, settle, settleSymbolIndex, openPage };
 }
 
+const IN_FIND = 'semanticdb maven . . demo/Service#이름찾기().';
+const IN_TWICE = 'semanticdb maven . . demo/Service#twice().';
+
 const FIND_BY_ID = {
   name: 'findById',
   from: SERVICE,
@@ -211,12 +218,35 @@ describe('symbol peek of a commit review', () => {
       name: 'findById',
       ref: head.slice(0, 7),
       definitions: [{ path: PORT, line: 6, text: sourceLine(PORT, 6) }],
-      references: [{ path: SERVICE, line: 17, text: sourceLine(SERVICE, 17) }],
+      references: [{ path: SERVICE, line: 17, text: sourceLine(SERVICE, 17), caller: IN_FIND }],
       truncated: false,
       source: 'index',
     });
     expect((await peek({ ...FIND_BY_ID, ref: head })).body.source).toBe('index');
     expect(tool.pids()).toHaveLength(1);
+  });
+
+  posixOnly('lists the callers of the method a use sits in', async () => {
+    fakeScipJava();
+    const { api, peek } = await openReview();
+    const answer = await waitFor(async () => {
+      const { body } = await peek({ ...FIND_BY_ID, ref: head });
+      return body.source === 'index' ? body : undefined;
+    });
+    expect(answer.references[0]?.caller).toBe(IN_FIND);
+
+    const callers = (ref: string, symbol: string) =>
+      fetch(api(`/api/symbol-callers?${new URLSearchParams({ ref, symbol }).toString()}`));
+    const found = await callers(head, IN_FIND);
+    expect(found.status).toBe(200);
+    expect((await found.json()) as SymbolCallersResponse).toEqual({
+      callers: [{ path: SERVICE, line: 21, text: sourceLine(SERVICE, 21), caller: IN_TWICE }],
+      truncated: false,
+    });
+    expect((await callers(head, '')).status).toBe(400);
+    expect((await callers('-x', IN_FIND)).status).toBe(400);
+    expect((await callers(base, IN_FIND)).status).toBe(404);
+    expect((await callers(head, 'semanticdb maven . . demo/Missing#nothing().')).status).toBe(404);
   });
 
   posixOnly('names the library of a declaration outside the repository', async () => {
@@ -644,6 +674,22 @@ describe('symbol peek of a commit review', () => {
       expect(changed.body.source).toBe('name');
       expect(changed.body.index).toEqual({ commit: fixup, status: 'none' });
       expect(tool.pids()).toHaveLength(1);
+    });
+
+    posixOnly('lists callers on the lines of the fixup from the commit it fixes', async () => {
+      const fixup = fixupOfHead();
+      fakeScipJava();
+      const { api, settle, settleSymbolIndex } = await openReview();
+      await settle();
+      expect((await fetch(api(`/api/diff?base=${head}&target=${fixup}`))).ok).toBe(true);
+      await settleSymbolIndex?.();
+
+      const query = new URLSearchParams({ ref: fixup, symbol: IN_FIND });
+      const response = await fetch(api(`/api/symbol-callers?${query.toString()}`));
+      expect((await response.json()) as SymbolCallersResponse).toEqual({
+        callers: [{ path: SERVICE, line: 23, text: sourceLine(SERVICE, 21), caller: IN_TWICE }],
+        truncated: false,
+      });
     });
 
     posixOnly('waits for the index of the commit it fixes while it is built', async () => {

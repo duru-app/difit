@@ -145,8 +145,12 @@ export interface SymbolMatch {
   // Cut short when the source line is very long.
   text: string;
   // Set on a use of the clicked field that goes through a method Lombok generated from it: a
-  // getter call, or a call of a @Builder method.
-  via?: 'getter' | 'builder';
+  // getter call, or a call of a @Builder method. `interface` marks a caller that calls the
+  // interface method the method implements.
+  via?: 'getter' | 'builder' | 'interface';
+  // From the index: the SCIP symbol of the method the use on this line sits in, which
+  // /api/symbol-callers takes.
+  caller?: string;
   // `name` where the index may no longer be right, so the line was found by name.
   source?: 'name';
 }
@@ -176,6 +180,11 @@ export interface SymbolSearchResponse {
   // From the index: declarations of the types that extend or implement the clicked one, or of
   // the methods that override it.
   implementations?: SymbolMatch[];
+}
+
+export interface SymbolCallersResponse {
+  callers: SymbolMatch[];
+  truncated: boolean;
 }
 
 // GET /api/symbol-index/:commit/log

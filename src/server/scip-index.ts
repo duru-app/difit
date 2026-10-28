@@ -35,6 +35,8 @@ interface ScipFieldUse extends ScipUse {
 }
 
 interface ScipCallers {
+  // The method's own name, as its calls write it.
+  name: string | null;
   references: ScipUse[];
   // Uses of the interface methods the method implements.
   viaInterface: ScipUse[];
@@ -314,7 +316,19 @@ export class ScipIndex {
       if (ownerId === undefined || !hasSorted(interfaces, ownerId)) continue;
       viaInterface.push(...this.usesOfSymbol(overridden));
     }
-    return { references: this.usesOfSymbol(id), viaInterface };
+    return { name: memberName(method), references: this.usesOfSymbol(id), viaInterface };
+  }
+
+  declarationsOf(methods: Iterable<string>): Map<string, ScipSite> {
+    const wanted = new Set(methods);
+    const found = new Map<string, ScipSite>();
+    for (let id = 0; id < this.data.symbolCount && found.size < wanted.size; id++) {
+      const name = this.symbolName(id);
+      if (!wanted.has(name)) continue;
+      const definition = this.firstDefinition(id);
+      if (definition !== undefined) found.set(name, this.siteOf(definition));
+    }
+    return found;
   }
 
   private usesOfSymbol(symbol: number): ScipUse[] {

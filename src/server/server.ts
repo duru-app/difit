@@ -61,7 +61,13 @@ import { type LineChanges, lineChangesBetween } from './line-changes.js';
 import { acceptLiveSockets, isLiveSocketRequest } from './live-socket.js';
 import { runGit } from './run-git.js';
 import { ScipIndexBuilder, indexStateForClient, readBuildLog } from './scip-build.js';
-import { type SymbolPosition, answerFromScipIndex, commitFiles, isJavaPath } from './scip-peek.js';
+import {
+  type SymbolPosition,
+  answerFromScipIndex,
+  callersFromScipIndex,
+  commitFiles,
+  isJavaPath,
+} from './scip-peek.js';
 import { searchSymbol } from './symbol-search.js';
 import { parseUserSettingsPatch, readUserConfig, updateUserClientSettings } from './user-config.js';
 
@@ -89,6 +95,7 @@ import {
   type RewordRequest,
   type RewordResponse,
   type LibrarySourceResponse,
+  type SymbolCallersResponse,
   type SymbolIndexLogResponse,
   type SymbolSearchResponse,
   type ThreadAwaitingAgent,
@@ -763,6 +770,57 @@ export async function startServer(options: ServerOptions): Promise<{
     } catch (error) {
       console.error('Error fetching generated status:', error);
       res.status(500).json({ error: 'Failed to get generated status' });
+    }
+  });
+
+  // From the commit's own index once it is ready, or else from an indexed ancestor, as
+  // /api/symbol borrows one.
+  const callersAt = async (
+    commit: string,
+    symbol: string,
+    signal: AbortSignal,
+  ): Promise<SymbolCallersResponse | null> => {
+    if (!symbolIndex) return null;
+    const files = commitFiles(repositoryPath, commit, signal);
+    const own = await symbolIndex.getIndex(commit);
+    if (own) return callersFromScipIndex(own, symbol, files);
+    const { status } = symbolIndex.state(commit);
+    if (status === 'queued' || status === 'building') return null;
+    const ancestor = await indexedAncestor(commit);
+    if (!ancestor.ready) return null;
+    const [index, changes] = await Promise.all([
+      symbolIndex.getIndex(ancestor.ready),
+      lineChangesSince(ancestor.ready, commit),
+    ]);
+    return index && changes ? callersFromScipIndex(index, symbol, files, changes) : null;
+  };
+
+  app.get('/api/symbol-callers', async (req, res) => {
+    const { ref, symbol } = req.query;
+    if (typeof ref !== 'string' || !validateCommitish(ref)) {
+      res.status(400).json({ error: 'Invalid ref' });
+      return;
+    }
+    if (typeof symbol !== 'string' || symbol.length === 0 || symbol.length > MAX_SYMBOL_LENGTH) {
+      res.status(400).json({ error: 'Invalid symbol' });
+      return;
+    }
+    const disconnected = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) disconnected.abort();
+    });
+    try {
+      const commit = symbolIndex ? await resolveCommit(ref) : null;
+      const answer = commit ? await callersAt(commit, symbol, disconnected.signal) : null;
+      if (!answer) {
+        res.status(404).json({ error: 'No index of this revision knows the callers' });
+        return;
+      }
+      res.json(answer);
+    } catch (error) {
+      if (disconnected.signal.aborted) return;
+      console.error('Error finding callers:', error);
+      res.status(500).json({ error: 'Failed to find callers' });
     }
   });
 

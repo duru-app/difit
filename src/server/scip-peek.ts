@@ -1,6 +1,10 @@
 import { spawn } from 'child_process';
 
-import { type SymbolMatch, type SymbolSearchResponse } from '../types/diff.js';
+import {
+  type SymbolCallersResponse,
+  type SymbolMatch,
+  type SymbolSearchResponse,
+} from '../types/diff.js';
 import type { LineChanges } from './line-changes.js';
 import { POSITION_ENCODING, type ScipIndex, externalSymbolDisplayName } from './scip-index.js';
 import { MAX_DEFINITIONS, MAX_REFERENCES, clipLine } from './symbol-search.js';
@@ -140,6 +144,7 @@ interface Site {
   startCol: number;
   endCol: number;
   via?: SymbolMatch['via'];
+  caller?: string;
 }
 
 function oneSitePerLine(sites: Site[]): Site[] {
@@ -172,18 +177,63 @@ interface Placed {
   path: string;
   line: number;
   via?: SymbolMatch['via'];
+  caller?: string;
   // Set when the site's line changed since the indexed commit: the lines that replaced it,
   // each listed when it holds one of the names searched for.
   replaced?: { first: number; last: number };
 }
 
-function placeSites(sites: Site[], changes: LineChanges | undefined): Placed[] {
+function placeSites(index: ScipIndex, sites: Site[], changes: LineChanges | undefined): Placed[] {
   if (!changes) return sites;
+  const declarations = index.declarationsOf(sites.flatMap((site) => site.caller ?? []));
+  const unchangedMethod = (caller: string) => {
+    const declared = declarations.get(caller);
+    const now = declared && changes.toNewer(declared.path, declared.line);
+    return !!now && 'line' in now;
+  };
   return sites.flatMap((site): Placed[] => {
     const now = changes.toNewer(site.path, site.line);
     if (!now) return [];
-    if ('line' in now) return [site.via ? { ...now, via: site.via } : now];
+    if ('line' in now) {
+      return [
+        {
+          ...now,
+          ...(site.via ? { via: site.via } : {}),
+          ...(site.caller && unchangedMethod(site.caller) ? { caller: site.caller } : {}),
+        },
+      ];
+    }
     return [{ path: now.path, line: now.first, replaced: { first: now.first, last: now.last } }];
+  });
+}
+
+// A site on a line changed since is listed at each line that replaced it and holds one of
+// `names`.
+function toMatches(sites: Placed[], lines: Map<string, string[]>, names: string[]): SymbolMatch[] {
+  const listed = new Set<string>();
+  return sites.flatMap((site) => {
+    const fileLines = lines.get(site.path) ?? [];
+    const { first, last } = site.replaced ?? { first: site.line, last: site.line };
+    const matches: SymbolMatch[] = [];
+    for (let line = first; line <= last; line++) {
+      const text = fileLines[line - 1] ?? '';
+      const key = `${site.path}:${line}`;
+      if (listed.has(key) || (site.replaced && !names.some((held) => holdsName(text, held)))) {
+        continue;
+      }
+      listed.add(key);
+      const match: SymbolMatch = { path: site.path, line, text: clipLine(text) };
+      if (site.replaced) {
+        matches.push({ ...match, source: 'name' });
+      } else {
+        matches.push({
+          ...match,
+          ...(site.via ? { via: site.via } : {}),
+          ...(site.caller ? { caller: site.caller } : {}),
+        });
+      }
+    }
+    return matches;
   });
 }
 
@@ -225,11 +275,12 @@ export async function answerFromScipIndex(
   }
 
   const uses: Site[] = found.fieldUses ?? found.references;
-  const placedDefinitions = placeSites(oneSitePerLine(found.definitions), changes);
-  const placedReferences = placeSites(oneSitePerLine(uses), changes);
+  const placedDefinitions = placeSites(index, oneSitePerLine(found.definitions), changes);
+  const placedReferences = placeSites(index, oneSitePerLine(uses), changes);
   // An implementation is named differently from the clicked symbol when it is a type, so a
   // line changed since cannot be checked by name.
   const placedImplementations = placeSites(
+    index,
     oneSitePerLine(found.implementations ?? []),
     changes,
   ).filter((site) => !site.replaced);
@@ -256,33 +307,13 @@ export async function answerFromScipIndex(
   if (clickedText.slice(clicked.startCol, clicked.startCol + name.length) !== name) return null;
 
   const names = [...new Set([name, ...(found.fieldNames ?? [])])];
-  const toMatches = (sites: Placed[]): SymbolMatch[] => {
-    const listed = new Set<string>();
-    return sites.flatMap((site) => {
-      const fileLines = lines.get(site.path) ?? [];
-      const { first, last } = site.replaced ?? { first: site.line, last: site.line };
-      const matches: SymbolMatch[] = [];
-      for (let line = first; line <= last; line++) {
-        const text = fileLines[line - 1] ?? '';
-        const key = `${site.path}:${line}`;
-        if (listed.has(key) || (site.replaced && !names.some((held) => holdsName(text, held)))) {
-          continue;
-        }
-        listed.add(key);
-        const match: SymbolMatch = { path: site.path, line, text: clipLine(text) };
-        if (site.replaced) matches.push({ ...match, source: 'name' });
-        else matches.push(site.via ? { ...match, via: site.via } : match);
-      }
-      return matches;
-    });
-  };
   return {
     name,
     ref,
-    definitions: toMatches(shownDefinitions),
-    references: toMatches(shownReferences),
+    definitions: toMatches(shownDefinitions, lines, names),
+    references: toMatches(shownReferences, lines, names),
     ...(shownImplementations.length > 0
-      ? { implementations: toMatches(shownImplementations) }
+      ? { implementations: toMatches(shownImplementations, lines, names) }
       : {}),
     truncated:
       definitions.length > MAX_DEFINITIONS ||
@@ -292,5 +323,33 @@ export async function answerFromScipIndex(
     ...(found.external
       ? { library: externalSymbolDisplayName(found.symbol), librarySymbol: found.symbol }
       : {}),
+  };
+}
+
+// The lines that call `method`, then those that call an interface method it implements. Null
+// when the index does not know the method or was stored without callers.
+export async function callersFromScipIndex(
+  index: ScipIndex,
+  method: string,
+  files: CommitFiles,
+  changes?: LineChanges,
+): Promise<SymbolCallersResponse | null> {
+  const found = index.callersOf(method);
+  if (!found) return null;
+  const placed = placeSites(
+    index,
+    oneSitePerLine([
+      ...found.references,
+      ...found.viaInterface.map((site) => ({ ...site, via: 'interface' as const })),
+    ]),
+    changes,
+  );
+  const committed = await files.existing(placed.map((site) => site.path));
+  const callers = placed.filter((site) => committed.has(site.path));
+  const shown = callers.slice(0, MAX_REFERENCES);
+  const lines = await files.readLines(shown.map((site) => site.path));
+  return {
+    callers: toMatches(shown, lines, found.name === null ? [] : [found.name]),
+    truncated: callers.length > MAX_REFERENCES,
   };
 }

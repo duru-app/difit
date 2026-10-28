@@ -228,6 +228,7 @@ function Notice({ children }: { children: React.ReactNode }) {
 const VIA_LABELS: Record<NonNullable<SymbolMatch['via']>, string> = {
   getter: '게터',
   builder: '빌더',
+  interface: '인터페이스로',
 };
 
 interface MatchListProps {

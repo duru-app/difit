@@ -5,8 +5,13 @@ import { dirname, join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { parseLineChanges } from './line-changes';
-import { POSITION_ENCODING, type ScipIndex, convertScipIndex } from './scip-index';
-import { type CommitFiles, answerFromScipIndex, commitFiles } from './scip-peek';
+import { POSITION_ENCODING, type ScipIndex, convertScipIndex, readScipIndex } from './scip-index';
+import {
+  type CommitFiles,
+  answerFromScipIndex,
+  callersFromScipIndex,
+  commitFiles,
+} from './scip-peek';
 
 // The index.scip fixture and its Java sources; scip-index.test.ts says how it was made.
 const FIXTURE_DIR = join(__dirname, 'scip-index-fixture');
@@ -38,6 +43,12 @@ function columnOf(path: string, line: number, name: string, nth = 0): number {
 
 function match(path: string, line: number) {
   return { path, line, text: fixtureLines(path)[line - 1] };
+}
+
+const IN_FIND = 'semanticdb maven . . demo/Service#이름찾기().';
+
+function call(path: string, line: number, caller = IN_FIND) {
+  return { ...match(path, line), caller };
 }
 
 let temp: string;
@@ -79,7 +90,7 @@ describe('answerFromScipIndex', () => {
       name: 'findById',
       ref: 'abc1234',
       definitions: [match(PORT, 6)],
-      references: [match(SERVICE, line)],
+      references: [call(SERVICE, line)],
       truncated: false,
       source: 'index',
     });
@@ -119,7 +130,7 @@ describe('answerFromScipIndex', () => {
     const result = await answer('기본값', SERVICE, 16, 27);
 
     expect(result?.definitions).toEqual([match(SERVICE, 15)]);
-    expect(result?.references).toEqual([match(SERVICE, 16), match(SERVICE, 17)]);
+    expect(result?.references).toEqual([call(SERVICE, 16), call(SERVICE, 17)]);
   });
 
   it('leaves the answer to name search when the index cannot give one', async () => {
@@ -246,7 +257,14 @@ describe('answerFromScipIndex', () => {
         name: '이름찾기',
         ref: 'fix1234',
         definitions: [{ path: SERVICE, line: 16, text: newerService[15] }],
-        references: [{ path: SERVICE, line: 23, text: newerService[22] }],
+        references: [
+          {
+            path: SERVICE,
+            line: 23,
+            text: newerService[22],
+            caller: 'semanticdb maven . . demo/Service#twice().',
+          },
+        ],
         truncated: false,
         source: 'index',
       });
@@ -372,6 +390,13 @@ describe('answerFromScipIndex on Lombok classes', () => {
     text: lines(path)[line - 1],
     ...(via ? { via } : {}),
   });
+  const inMethod = (caller: string, path: string, line: number, via?: 'getter' | 'builder') => ({
+    path,
+    line,
+    text: lines(path)[line - 1],
+    ...(via ? { via } : {}),
+    caller: `semanticdb maven . . ${caller}`,
+  });
 
   it('lists the getter and builder calls among the uses of a field and marks them', async () => {
     const fromField = await answer('code', DAT, 9);
@@ -380,7 +405,10 @@ describe('answerFromScipIndex on Lombok classes', () => {
       name: 'code',
       ref: 'abc1234',
       definitions: [use(DAT, 9)],
-      references: [use(USE, 8, 'getter'), use(USE, 10, 'builder')],
+      references: [
+        inMethod('demo/Use#run().', USE, 8, 'getter'),
+        inMethod('demo/Use#run().', USE, 10, 'builder'),
+      ],
       truncated: false,
       source: 'index',
     });
@@ -388,7 +416,9 @@ describe('answerFromScipIndex on Lombok classes', () => {
   });
 
   it('shows a line that uses the field and calls its getter as a direct use', async () => {
-    expect((await answer('left', PAIR, 11))?.references).toEqual([use(PAIR, 8)]);
+    expect((await answer('left', PAIR, 11))?.references).toEqual([
+      inMethod('demo/Pair#sum().', PAIR, 8),
+    ]);
   });
 
   describe('from the index of an older commit', () => {
@@ -455,6 +485,10 @@ const IMPL_DIR = join(__dirname, 'scip-index-impl-fixture');
 const SHAPE = 'src/main/java/demo/Shape.java';
 const SQUARE = 'src/main/java/demo/Square.java';
 const CIRCLE = 'src/main/java/demo/Circle.java';
+const REPORT = 'src/main/java/demo/Report.java';
+const APP = 'src/main/java/demo/App.java';
+const symbolOf = (descriptor: string) => `semanticdb maven . . ${descriptor}`;
+const RENDER = symbolOf('demo/ReportService#render().');
 
 function implLines(path: string): string[] {
   return readFileSync(join(IMPL_DIR, path), 'utf8').split('\n');
@@ -522,6 +556,77 @@ describe('answerFromScipIndex on implementations and calls', () => {
       changes,
     );
     expect(result?.implementations).toEqual([implMatch(SQUARE, 11)]);
+  });
+
+  it('names the method each use sits in', async () => {
+    expect((await answer('area', SHAPE, 4))?.references).toContainEqual({
+      ...implMatch(REPORT, 13),
+      caller: symbolOf('demo/Report#total().'),
+    });
+  });
+
+  it('lists the calls of a method, then the calls through the interface it implements', async () => {
+    expect(await callersFromScipIndex(index, RENDER, implCommit())).toEqual({
+      callers: [
+        { ...implMatch(APP, 15), caller: symbolOf('demo/App#direct().') },
+        { ...implMatch(APP, 11), via: 'interface', caller: symbolOf('demo/App#run().') },
+      ],
+      truncated: false,
+    });
+  });
+
+  it('marks a call on a line changed since as found by name', async () => {
+    const edited = '        return service.render(report); // edited';
+    const changes = parseLineChanges(
+      [
+        `diff --git a/${APP} b/${APP}`,
+        `--- a/${APP}`,
+        `+++ b/${APP}`,
+        '@@ -15 +15 @@',
+        `-${implLines(APP)[14]}`,
+        `+${edited}`,
+        '',
+      ].join('\n'),
+    )!;
+    const newer: CommitFiles = {
+      existing: async (paths) => new Set(paths),
+      readLines: async (paths) =>
+        new Map(
+          paths.map((path) => [
+            path,
+            path === APP
+              ? implLines(APP).map((text, i) => (i === 14 ? edited : text))
+              : implLines(path),
+          ]),
+        ),
+    };
+    expect((await callersFromScipIndex(index, RENDER, newer, changes))?.callers).toEqual([
+      { path: APP, line: 15, text: edited, source: 'name' },
+      { ...implMatch(APP, 11), via: 'interface', caller: symbolOf('demo/App#run().') },
+    ]);
+  });
+
+  it('drops the method of a call when that method was declared differently since', async () => {
+    const changes = parseLineChanges(
+      [
+        `diff --git a/${APP} b/${APP}`,
+        `--- a/${APP}`,
+        `+++ b/${APP}`,
+        '@@ -14 +14 @@',
+        `-${implLines(APP)[13]}`,
+        '+    String direct(ReportService service, Report report, int times) {',
+        '',
+      ].join('\n'),
+    )!;
+    expect((await callersFromScipIndex(index, RENDER, implCommit(), changes))?.callers).toEqual([
+      implMatch(APP, 15),
+      { ...implMatch(APP, 11), via: 'interface', caller: symbolOf('demo/App#run().') },
+    ]);
+  });
+
+  it('knows no callers in an index stored without them', async () => {
+    const old = await readScipIndex(join(IMPL_DIR, 'index.lookup.v1.gz'));
+    expect(old && (await callersFromScipIndex(old, RENDER, implCommit()))).toBeNull();
   });
 
   it('sends no implementations for a method nothing overrides', async () => {
