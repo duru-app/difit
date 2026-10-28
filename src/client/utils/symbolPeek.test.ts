@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SymbolSearchResponse } from '../../types/diff';
 
-import { fetchSymbol, reselect, shortRef, symbolRequestFromTarget } from './symbolPeek';
+import {
+  fetchLibrarySource,
+  fetchSymbol,
+  reselect,
+  shortRef,
+  symbolRequestFromTarget,
+} from './symbolPeek';
 
 const refs = { base: 'aaa1111', target: 'bbb2222' };
 
@@ -173,7 +179,43 @@ describe('reselect', () => {
       line: 1,
       text: 'run();',
     });
-    expect(reselect(current, result(['A.java']))?.path).toBe('A.java');
+    expect(reselect(current, result(['A.java']))).toMatchObject({ path: 'A.java' });
     expect(reselect(current, result([]))).toBeNull();
+  });
+
+  it('takes the library declaration first, and keeps a selected place over it', () => {
+    const symbol = 'semanticdb maven jdk 8 java/util/Optional#orElse().';
+    const withLibrary = { ...result(['A.java']), librarySymbol: symbol };
+    const library = { librarySymbol: symbol };
+
+    expect(reselect(null, withLibrary)).toEqual(library);
+    expect(reselect(library, withLibrary)).toEqual(library);
+    expect(reselect({ path: 'A.java', line: 1, text: 'run();' }, withLibrary)).toMatchObject({
+      path: 'A.java',
+    });
+    expect(reselect({ path: 'Gone.java', line: 1, text: 'run();' }, withLibrary)).toEqual(library);
+    expect(reselect(library, result(['A.java']))).toMatchObject({ path: 'A.java' });
+  });
+});
+
+describe('fetchLibrarySource', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('asks for the source of the symbol, and fails on an error status', async () => {
+    const answer = { found: false, missing: { kind: 'unknown' } };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(answer), { status: 200 }))
+      .mockResolvedValueOnce(new Response('', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await fetchLibrarySource('semanticdb maven . . a/B#')).toEqual(answer);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/library-source?symbol=semanticdb+maven+.+.+a%2FB%23',
+      { signal: undefined },
+    );
+    await expect(fetchLibrarySource('x')).rejects.toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import type { SymbolMatch, SymbolSearchResponse } from '../../types/diff';
+import type { LibrarySourceResponse, SymbolMatch, SymbolSearchResponse } from '../../types/diff';
 import { isSymbolName } from '../../utils/symbolName';
 
 export interface SymbolPeekRequest {
@@ -96,10 +96,40 @@ export function isSameMatch(a: SymbolMatch | null, b: SymbolMatch | null): boole
   return a !== null && b !== null && a.path === b.path && a.line === b.line;
 }
 
+// The declaration that only a library holds, named by its SCIP symbol.
+export interface LibraryDeclaration {
+  librarySymbol: string;
+}
+
+export type PeekSelection = SymbolMatch | LibraryDeclaration;
+
+export function isLibraryDeclaration(
+  selection: PeekSelection | null,
+): selection is LibraryDeclaration {
+  return selection !== null && 'librarySymbol' in selection;
+}
+
+// Keeps the selected place when the answer still has it; otherwise the library declaration
+// comes first, as it stands for the declaration the answer lacks.
 export function reselect(
-  current: SymbolMatch | null,
+  current: PeekSelection | null,
   result: SymbolSearchResponse,
-): SymbolMatch | null {
+): PeekSelection | null {
   const matches = [...result.definitions, ...result.references];
-  return matches.find((match) => isSameMatch(match, current)) ?? matches[0] ?? null;
+  if (!isLibraryDeclaration(current)) {
+    const same = matches.find((match) => isSameMatch(match, current));
+    if (same) return same;
+  }
+  if (result.librarySymbol) return { librarySymbol: result.librarySymbol };
+  return matches[0] ?? null;
+}
+
+export async function fetchLibrarySource(
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<LibrarySourceResponse> {
+  const params = new URLSearchParams({ symbol });
+  const response = await fetch(`/api/library-source?${params.toString()}`, { signal });
+  if (!response.ok) throw new Error(`Library source failed: ${response.status}`);
+  return (await response.json()) as LibrarySourceResponse;
 }
