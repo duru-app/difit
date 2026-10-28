@@ -7,6 +7,7 @@ import {
   type ScipIndex,
   convertScipIndex,
   externalSymbolDisplayName,
+  parseGlobalSymbol,
   POSITION_ENCODING,
   readScipIndex,
   writeScipIndex,
@@ -520,5 +521,37 @@ describe('externalSymbolDisplayName', () => {
     ['semanticdb maven jdk 8 java/util/List#add(', 'semanticdb maven jdk 8 java/util/List#add('],
   ])('%s', (symbol, expected) => {
     expect(externalSymbolDisplayName(symbol)).toBe(expected);
+  });
+});
+
+describe('parseGlobalSymbol', () => {
+  it('splits the package, the version and the descriptors with method disambiguators', () => {
+    expect(
+      parseGlobalSymbol(
+        'semanticdb maven maven/org.springframework/spring-web 4.3.30.RELEASE org/springframework/web/Foo#bar(+2).',
+      ),
+    ).toEqual({
+      packageName: 'maven/org.springframework/spring-web',
+      version: '4.3.30.RELEASE',
+      descriptors: [
+        { name: 'org', kind: 'namespace' },
+        { name: 'springframework', kind: 'namespace' },
+        { name: 'web', kind: 'namespace' },
+        { name: 'Foo', kind: 'type' },
+        { name: 'bar', kind: 'method', disambiguator: '+2' },
+      ],
+    });
+  });
+
+  it('reads a doubled space in the package name as one space', () => {
+    expect(parseGlobalSymbol('scip-typescript npm my  pkg 1.0 src/run().')).toMatchObject({
+      packageName: 'my pkg',
+      version: '1.0',
+    });
+  });
+
+  it('gives null for a local symbol or one that does not parse', () => {
+    expect(parseGlobalSymbol('local 3')).toBeNull();
+    expect(parseGlobalSymbol('semanticdb maven jdk 8 java/util/List#add(')).toBeNull();
   });
 });

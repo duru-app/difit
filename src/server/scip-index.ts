@@ -937,21 +937,46 @@ function memberName(symbol: string): string | null {
   return null;
 }
 
-// Skips scheme, manager, package name and version; a doubled space is an escaped space.
-function descriptorPart(symbol: string): string | null {
-  let fields = 0;
+export interface GlobalSymbol {
+  // "jdk", or "maven/<group>/<artifact>" for a Maven artifact; "." when unknown.
+  packageName: string;
+  version: string;
+  descriptors: Descriptor[];
+}
+
+// "semanticdb maven jdk 8 java/util/Optional#orElse()." has the package "jdk", the version "8"
+// and the descriptors "java/", "util/", "Optional#" and "orElse()."; null for a local symbol
+// or one that does not parse.
+export function parseGlobalSymbol(symbol: string): GlobalSymbol | null {
+  const header = symbolHeader(symbol);
+  if (header === null) return null;
+  const descriptors = parseDescriptors(symbol.slice(header.descriptorsAt));
+  if (descriptors === null) return null;
+  const [, , packageName = '.', version = '.'] = header.fields;
+  return { packageName, version, descriptors };
+}
+
+// Scheme, manager, package name and version, with a doubled space read as an escaped space.
+function symbolHeader(symbol: string): { fields: string[]; descriptorsAt: number } | null {
+  const fields: string[] = [''];
   let i = 0;
-  while (i < symbol.length && fields < 4) {
-    if (symbol[i] === ' ') {
-      if (symbol[i + 1] === ' ') {
-        i += 2;
-        continue;
-      }
-      fields++;
+  while (i < symbol.length && fields.length <= 4) {
+    if (symbol[i] === ' ' && symbol[i + 1] === ' ') {
+      fields[fields.length - 1] += ' ';
+      i += 2;
+      continue;
     }
+    if (symbol[i] === ' ') fields.push('');
+    else fields[fields.length - 1] += symbol[i];
     i++;
   }
-  return fields === 4 ? symbol.slice(i) : null;
+  if (fields.length !== 5) return null;
+  return { fields: fields.slice(0, 4), descriptorsAt: i };
+}
+
+function descriptorPart(symbol: string): string | null {
+  const header = symbolHeader(symbol);
+  return header === null ? null : symbol.slice(header.descriptorsAt);
 }
 
 type DescriptorKind =
@@ -972,8 +997,15 @@ const DESCRIPTOR_SUFFIXES: Record<string, DescriptorKind> = {
   '!': 'macro',
 };
 
-function parseDescriptors(text: string): { name: string; kind: DescriptorKind }[] | null {
-  const result: { name: string; kind: DescriptorKind }[] = [];
+interface Descriptor {
+  name: string;
+  kind: DescriptorKind;
+  // Of a method: what tells it apart from other methods of the same name, "" or "+1", "+2", ….
+  disambiguator?: string;
+}
+
+function parseDescriptors(text: string): Descriptor[] | null {
+  const result: Descriptor[] = [];
   let i = 0;
   const readUntil = (close: string): string | null => {
     const end = text.indexOf(close, i);
@@ -1018,9 +1050,10 @@ function parseDescriptors(text: string): { name: string; kind: DescriptorKind }[
     const suffix = text[i] ?? '';
     i++;
     if (suffix === '(') {
-      if (readUntil(')') === null || text[i] !== '.') return null;
+      const disambiguator = readUntil(')');
+      if (disambiguator === null || text[i] !== '.') return null;
       i++;
-      result.push({ name, kind: 'method' });
+      result.push({ name, kind: 'method', disambiguator });
       continue;
     }
     const kind = DESCRIPTOR_SUFFIXES[suffix];
