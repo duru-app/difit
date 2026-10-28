@@ -180,11 +180,17 @@ function sourcePath(descriptors: Descriptor[]): string | null {
   return null;
 }
 
-const MODIFIERS =
-  '(?:(?:public|protected|private|static|final|abstract|synchronized|native|default|strictfp|transient|volatile|sealed|non-sealed)\\s+)*';
-const ANNOTATIONS = '(?:@[\\w$.]+(?:\\([^)]*\\))?\\s+)*';
-const TYPE = '[\\w$][\\w$.<>\\[\\],?& ]*?';
+const ANNOTATION = '@[\\w$.]+(?:\\([^)]*\\))?';
+const ANNOTATIONS = `(?:${ANNOTATION}\\s+)*`;
+// Annotations may stand among the modifiers, as in "public @Nullable String".
+const MODIFIERS = `(?:(?:public|protected|private|static|final|abstract|synchronized|native|default|strictfp|transient|volatile|sealed|non-sealed|${ANNOTATION})\\s+)*`;
+// A comma, "?" or "&" belongs to a type only between its angle brackets.
+const TYPE = '[\\w$][\\w$.]*(?:<[^()]*>)?(?:\\[\\])*';
 const NOT_A_TYPE = /^(?:return|new|throw|else|case|yield|assert)\b/;
+
+function isStatic(modifiers: string): boolean {
+  return /\bstatic\b/.test(modifiers.replace(new RegExp(ANNOTATION, 'g'), ''));
+}
 
 function escapeRegExp(text: string): string {
   return text.replace(/[$.]/g, '\\$&');
@@ -217,22 +223,25 @@ function headAbove(lines: string[], line: number): string {
 }
 
 // scip-java numbers the overloads of a method in declaration order, instance methods before
-// static ones: "()" is the first, "(+1)" the second.
-function methodLine(lines: string[], from: number, name: string, disambiguator: string): number {
-  const method = new RegExp(
-    `^\\s*${ANNOTATIONS}(${MODIFIERS})(?:<[^()]*>\\s+)?(${TYPE})\\s+${escapeRegExp(name)}\\s*\\(`,
-  );
-  const constructor = new RegExp(
-    `^\\s*${ANNOTATIONS}(${MODIFIERS})(?:<[^()]*>\\s+)?()${escapeRegExp(name)}\\s*\\(`,
+// static ones: "()" is the first, "(+1)" the second. A constructor has no return type.
+function methodLine(
+  lines: string[],
+  from: number,
+  name: string,
+  disambiguator: string,
+  isConstructor: boolean,
+): number {
+  const returnType = isConstructor ? '()' : `(${TYPE})\\s+`;
+  const declaration = new RegExp(
+    `^\\s*(${MODIFIERS})(?:<[^()]*>\\s+)?${ANNOTATIONS}${returnType}${escapeRegExp(name)}\\s*\\(`,
   );
   const found: { line: number; isStatic: boolean }[] = [];
   for (let i = from; i < lines.length; i++) {
     const text = lines[i] ?? '';
     if (isComment(text)) continue;
-    const match = method.exec(text) ?? constructor.exec(text);
+    const match = declaration.exec(text);
     if (!match || NOT_A_TYPE.test(match[2] ?? '')) continue;
-    const modifiers = `${headAbove(lines, i)} ${match[1] ?? ''}`;
-    found.push({ line: i, isStatic: /\bstatic\b/.test(modifiers) });
+    found.push({ line: i, isStatic: isStatic(`${headAbove(lines, i)} ${match[1] ?? ''}`) });
   }
   const ordered = [
     ...found.filter((site) => !site.isStatic),
@@ -243,9 +252,7 @@ function methodLine(lines: string[], from: number, name: string, disambiguator: 
 }
 
 function fieldLine(lines: string[], from: number, name: string): number {
-  const field = new RegExp(
-    `^\\s*${ANNOTATIONS}${MODIFIERS}(${TYPE})\\s+${escapeRegExp(name)}\\s*(?:=|;|,)`,
-  );
+  const field = new RegExp(`^\\s*${MODIFIERS}(${TYPE})\\s+${escapeRegExp(name)}\\s*(?:=|;|,)`);
   const enumConstant = new RegExp(`^\\s*${ANNOTATIONS}${escapeRegExp(name)}\\s*(?:[(,;{]|$)`);
   return findLine(lines, from, (text) => {
     const match = field.exec(text);
@@ -268,8 +275,10 @@ export function declarationLine(lines: string[], descriptors: Descriptor[]): num
       from = found = line;
       typeName = descriptor.name;
     } else if (descriptor.kind === 'method' && found >= 0) {
-      const name = descriptor.name === '<init>' ? typeName : descriptor.name;
-      const line = name ? methodLine(lines, from, name, descriptor.disambiguator ?? '') : -1;
+      const isConstructor = descriptor.name === '<init>';
+      const name = isConstructor ? typeName : descriptor.name;
+      const disambiguator = descriptor.disambiguator ?? '';
+      const line = name ? methodLine(lines, from, name, disambiguator, isConstructor) : -1;
       if (line >= 0) found = line;
       break;
     } else if (descriptor.kind === 'term' && found >= 0) {

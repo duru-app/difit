@@ -201,6 +201,59 @@ describe('declarationLine', () => {
     expect(line('(+2)')).toBe(9);
   });
 
+  it('counts no call as an overload, nor an annotation argument as static', () => {
+    const source = lines(
+      'public class Helper {',
+      '  public void run(String s) {',
+      '    validate(s);',
+      '    log.debug("checked {} {}", s,',
+      '        s, validate(s));',
+      '    String t = ok ? validate(s) : s;',
+      '  }',
+      '  public boolean validate(Object o) {',
+      '  }',
+      '  @SuppressWarnings("static-access")',
+      '  public boolean validate(String s) {',
+      '  }',
+      '  private static boolean validate(int i) {',
+      '  }',
+      '}',
+    );
+    const line = (disambiguator: string) =>
+      declarationLine(
+        source,
+        descriptors(`semanticdb maven jdk 8 a/Helper#validate${disambiguator}.`),
+      );
+
+    expect(line('()')).toBe(8);
+    expect(line('(+1)')).toBe(11);
+    expect(line('(+2)')).toBe(13);
+  });
+
+  it('finds members whose type carries a type-use annotation', () => {
+    const source = lines(
+      'public abstract class StringUtils {',
+      '  private @Nullable String cached;',
+      '  public static @Nullable String getFilename(@Nullable String path) {',
+      '  }',
+      '  public @Nullable String get(int i) {',
+      '  }',
+      '  public String get(String key) {',
+      '  }',
+      '  public static <T> @Nullable T first(List<@NonNull T> items) {',
+      '  }',
+      '}',
+    );
+    const line = (member: string) =>
+      declarationLine(source, descriptors(`semanticdb maven jdk 8 a/StringUtils#${member}`));
+
+    expect(line('cached.')).toBe(2);
+    expect(line('getFilename().')).toBe(3);
+    expect(line('get().')).toBe(5);
+    expect(line('get(+1).')).toBe(7);
+    expect(line('first().')).toBe(9);
+  });
+
   it('finds a constructor, a member of a nested type, a field and an enum constant', () => {
     const source = lines(
       'public interface Map<K, V> {',
