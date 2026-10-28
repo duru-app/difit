@@ -53,7 +53,9 @@ export type SymbolIndexState =
   | { status: 'queued'; after: string }
   // Milliseconds since the epoch.
   | { status: 'building'; startedAt: number }
-  | { status: 'ready' }
+  // `withoutRelations`: only an index stored before implementations and callers were kept is
+  // there.
+  | { status: 'ready'; withoutRelations?: true }
   | { status: 'unavailable'; reason: SymbolIndexUnavailableReason }
   | {
       status: 'failed';

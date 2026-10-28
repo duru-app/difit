@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'child_process';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,8 +14,9 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { readScipIndex } from './scip-index';
 import {
   type ScipBuildState,
   ScipIndexBuilder,
@@ -28,7 +30,22 @@ import {
   toolSpawnSpec,
 } from './scip-build';
 
+const reads = vi.hoisted(() => ({
+  before: undefined as ((path: string) => Promise<void>) | undefined,
+}));
+vi.mock('./scip-index', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./scip-index')>();
+  return {
+    ...actual,
+    readScipIndex: async (path: string) => {
+      await reads.before?.(path);
+      return actual.readScipIndex(path);
+    },
+  };
+});
 const FIXTURE = join(__dirname, 'scip-index-fixture', 'index.scip');
+const IMPL_FIXTURE_DIR = join(__dirname, 'scip-index-impl-fixture');
+const STORED_WITHOUT_RELATIONS = join(IMPL_FIXTURE_DIR, 'index.lookup.v1.gz');
 const posixOnly = process.platform === 'win32' ? it.skip : it;
 
 let home: string;
@@ -59,6 +76,7 @@ afterAll(() => {
 });
 
 afterEach(async () => {
+  reads.before = undefined;
   await Promise.all(builders.splice(0).map((builder) => builder.stop()));
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -114,6 +132,12 @@ function fakeScipJava(body: string): { path: string; log: string } {
 }
 
 const WRITES_INDEX = `[ -f build.gradle ] || exit 7\ncp '${FIXTURE}' "$OUT"`;
+const WRITES_IMPL_INDEX = `[ -f build.gradle ] || exit 7\ncp '${join(IMPL_FIXTURE_DIR, 'index.scip')}' "$OUT"`;
+
+function storeWithoutRelations(cache: string, sha: string): void {
+  mkdirSync(join(cache, sha), { recursive: true });
+  copyFileSync(STORED_WITHOUT_RELATIONS, join(cache, sha, 'index.lookup.gz'));
+}
 
 function calls(log: string): string[] {
   return existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
@@ -375,7 +399,7 @@ describe('ScipIndexBuilder', () => {
     const [call] = calls(fake.log);
     expect(call).toMatch(new RegExp(`^run index --output ${join(cache, sha)}/work-`));
     // Only the stored lookup form stays: the extracted tree, raw index and log are gone.
-    expect(readdirSync(join(cache, sha))).toEqual(['index.lookup.gz']);
+    expect(readdirSync(join(cache, sha))).toEqual(['index.lookup.v2.gz']);
 
     const index = await builder.getIndex(sha);
     expect(index?.hasDocument('src/main/java/demo/Service.java')).toBe(true);
@@ -386,6 +410,142 @@ describe('ScipIndexBuilder', () => {
     expect(reloaded?.hasDocument('src/main/java/demo/Service.java')).toBe(true);
     expect(calls(fake.log)).toHaveLength(1);
   });
+
+  posixOnly(
+    'indexes again a commit stored without implementations while that index answers',
+    async () => {
+      const repo = createRepo();
+      const sha = commit(repo, JAVA_PROJECT);
+      const cache = tempDir('difit-scip-cache-');
+      storeWithoutRelations(cache, sha);
+      const fake = fakeScipJava(`sleep 0.3\n${WRITES_IMPL_INDEX}`);
+      const { builder, events } = newBuilder(repo, fake.path, cache);
+
+      await expect(builder.useStored(sha)).resolves.toBe(true);
+      expect((await builder.getIndex(sha))?.knowsRelations).toBe(false);
+      await waitFor(() => calls(fake.log).length > 0);
+      expect(builder.state(sha)).toEqual({ status: 'ready', withoutRelations: true });
+      expect((await builder.getIndex(sha))?.knowsRelations).toBe(false);
+
+      await waitFor(() => events.length === 2);
+      expect(events).toEqual([
+        [sha, 'ready'],
+        [sha, 'ready'],
+      ]);
+      expect((await builder.getIndex(sha))?.knowsRelations).toBe(true);
+      await expect(builder.request(sha)).resolves.toEqual({ status: 'ready' });
+      const later = newBuilder(repo, fake.path, cache);
+      await later.builder.useStored(sha);
+      expect((await later.builder.getIndex(sha))?.knowsRelations).toBe(true);
+      expect(calls(fake.log)).toHaveLength(1);
+      expect(readdirSync(join(cache, sha)).sort()).toEqual([
+        'index.lookup.gz',
+        'index.lookup.v2.gz',
+      ]);
+      expect((await readScipIndex(join(cache, sha, 'index.lookup.gz')))?.knowsRelations).toBe(
+        false,
+      );
+    },
+  );
+
+  posixOnly(
+    'builds a commit asked for later ahead of one waiting to be indexed again',
+    async () => {
+      const repo = createRepo();
+      const running = commit(repo, JAVA_PROJECT);
+      const stale = commit(repo, { 'src/main/java/demo/B.java': 'package demo;\nclass B {}\n' });
+      const later = commit(repo, { 'src/main/java/demo/C.java': 'package demo;\nclass C {}\n' });
+      const cache = tempDir('difit-scip-cache-');
+      storeWithoutRelations(cache, stale);
+      const gate = join(tempDir('difit-scip-gate-'), 'open');
+      const fake = fakeScipJava(
+        `while [ ! -f '${gate}' ]; do sleep 0.05; done\n${WRITES_IMPL_INDEX}`,
+      );
+      const { builder, events } = newBuilder(repo, fake.path, cache);
+
+      const first = builder.request(running);
+      await waitFor(() => calls(fake.log).length === 1);
+      await builder.useStored(stale);
+      await builder.getIndex(stale);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const second = builder.request(later);
+      await waitFor(() => builder.state(later).status === 'queued');
+      expect(builder.state(later)).toEqual({ status: 'queued', after: running });
+      writeFileSync(gate, '');
+      await Promise.all([first, second]);
+      await waitFor(() => events.filter(([sha]) => sha === stale).length === 2);
+
+      const order = calls(fake.log).map((call) =>
+        [running, stale, later].find((sha) => call.includes(`/${sha}/work-`)),
+      );
+      expect(order).toEqual([running, later, stale]);
+    },
+  );
+
+  posixOnly(
+    'answers from the index built again when a read of the older one ends after it',
+    async () => {
+      const repo = createRepo();
+      const sha = commit(repo, JAVA_PROJECT);
+      const cache = tempDir('difit-scip-cache-');
+      storeWithoutRelations(cache, sha);
+      const gate = join(tempDir('difit-scip-gate-'), 'open');
+      const fake = fakeScipJava(
+        `while [ ! -f '${gate}' ]; do sleep 0.05; done\n${WRITES_IMPL_INDEX}`,
+      );
+      const builder = new ScipIndexBuilder({
+        repoPath: repo,
+        cacheRoot: cache,
+        env: { DIFIT_SCIP_JAVA: fake.path, PATH: '' },
+        maxLoaded: 0,
+      });
+      builders.push(builder);
+      const events: ScipBuildState[] = [];
+      builder.onChange((_, state) => events.push(state));
+
+      await builder.useStored(sha);
+      expect((await builder.getIndex(sha))?.knowsRelations).toBe(false);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let holding = false;
+      reads.before = async (path) => {
+        if (!path.endsWith('index.lookup.gz')) return;
+        holding = true;
+        await held;
+      };
+      const late = builder.getIndex(sha);
+      await waitFor(() => holding);
+      reads.before = undefined;
+      writeFileSync(gate, '');
+      await waitFor(() => events.length === 2);
+      release();
+
+      expect(events[1]).toEqual({ status: 'ready' });
+      expect((await late)?.knowsRelations).toBe(true);
+    },
+  );
+
+  posixOnly(
+    'keeps the index stored without implementations when indexing again fails',
+    async () => {
+      const repo = createRepo();
+      const sha = commit(repo, JAVA_PROJECT);
+      const cache = tempDir('difit-scip-cache-');
+      storeWithoutRelations(cache, sha);
+      const fake = fakeScipJava('exit 3');
+      const { builder, events } = newBuilder(repo, fake.path, cache);
+
+      await builder.useStored(sha);
+      await builder.getIndex(sha);
+      await waitFor(() => calls(fake.log).length > 0);
+      await waitFor(() => !readdirSync(join(cache, sha)).some((name) => name.startsWith('work-')));
+      expect((await builder.getIndex(sha))?.knowsRelations).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(calls(fake.log)).toHaveLength(1);
+      expect(builder.state(sha)).toEqual({ status: 'ready', withoutRelations: true });
+      expect(events).toEqual([[sha, 'ready']]);
+    },
+  );
 
   posixOnly('shares one build between requests for the same commit', async () => {
     const repo = createRepo();
@@ -628,7 +788,7 @@ describe('ScipIndexBuilder', () => {
 
     await expect(builder.request(sha)).resolves.toEqual({ status: 'ready' });
     expect(events.map(([, status]) => status)).toEqual(['building', 'ready']);
-    expect(readdirSync(join(cache, sha))).toEqual(['index.lookup.gz']);
+    expect(readdirSync(join(cache, sha))).toEqual(['index.lookup.v2.gz']);
   });
 
   posixOnly('removes work trees left by difit processes that are gone', async () => {
@@ -686,7 +846,7 @@ describe('ScipIndexBuilder', () => {
 
     const later = newBuilder(repo, fake.path, cache);
     await later.builder.request(sha);
-    writeFileSync(join(cache, sha, 'index.lookup.gz'), 'garbage');
+    writeFileSync(join(cache, sha, 'index.lookup.v2.gz'), 'garbage');
     await expect(later.builder.getIndex(sha)).resolves.toBeNull();
     expect(later.builder.state(sha)).toEqual({ status: 'none' });
     await expect(later.builder.request(sha)).resolves.toEqual({ status: 'ready' });
@@ -888,7 +1048,7 @@ describe('ScipIndexBuilder cache limit', () => {
     seed(cache, C, { 'index.lookup.gz': 400 }, 300);
     const { builder } = limitedBuilder(cache, { bytes: 1000 });
 
-    await expect(builder.request(C)).resolves.toEqual({ status: 'ready' });
+    await expect(builder.request(C)).resolves.toEqual({ status: 'ready', withoutRelations: true });
 
     expect(stored(cache)).toEqual([B, C]);
   });
@@ -1019,7 +1179,7 @@ describe('ScipIndexBuilder cache limit', () => {
     await Promise.all([first, second]);
 
     expect(stored(cache)).toEqual([B]);
-    expect(builder.state(B)).toEqual({ status: 'ready' });
+    expect(builder.state(B)).toEqual({ status: 'ready', withoutRelations: true });
     expect(events).not.toContainEqual([B, 'none']);
   });
 
@@ -1050,7 +1210,7 @@ describe('ScipIndexBuilder cache limit', () => {
       tool: fakeScipJava(WRITES_INDEX).path,
     });
     await builder.request(sha);
-    const indexPath = join(cache, sha, 'index.lookup.gz');
+    const indexPath = join(cache, sha, 'index.lookup.v2.gz');
     utimesSync(indexPath, 100, 100);
     seed(cache, A, { 'index.lookup.gz': 400 }, 200);
     seed(cache, B, { 'index.lookup.gz': 1 }, 300);
@@ -1072,11 +1232,62 @@ describe('ScipIndexBuilder cache limit', () => {
     await built.builder.request(sha);
     const { builder } = limitedBuilder(cache, unlimited, { repo });
     await expect(builder.request(sha)).resolves.toEqual({ status: 'ready' });
-    const indexPath = join(cache, sha, 'index.lookup.gz');
+    const indexPath = join(cache, sha, 'index.lookup.v2.gz');
     utimesSync(indexPath, 100, 100);
 
     expect(await builder.getIndex(sha)).not.toBeNull();
     await waitFor(() => statSync(indexPath).mtimeMs > 100_000, 2000);
+  });
+
+  posixOnly('removes indexes over the limit once a commit is indexed again', async () => {
+    const repo = createRepo();
+    const sha = commit(repo, JAVA_PROJECT);
+    const cache = tempDir('difit-scip-cache-');
+    storeWithoutRelations(cache, sha);
+    seed(cache, A, { 'index.lookup.gz': 400 }, 100);
+    const limit = { bytes: statSync(join(cache, sha, 'index.lookup.gz')).size + 400 };
+    const { builder, events } = limitedBuilder(cache, limit, {
+      repo,
+      tool: fakeScipJava(WRITES_IMPL_INDEX).path,
+    });
+
+    await builder.useStored(sha);
+    await builder.getIndex(sha);
+    await waitFor(() => events.length === 2);
+
+    await waitFor(() => stored(cache).length === 1);
+    expect(stored(cache)).toEqual([sha]);
+    expect(readdirSync(join(cache, sha)).sort()).toEqual(['index.lookup.gz', 'index.lookup.v2.gz']);
+  });
+
+  posixOnly('does not index again a commit the cleanup removed while it waited', async () => {
+    const repo = createRepo();
+    const running = commit(repo, JAVA_PROJECT);
+    const stale = commit(repo, { 'src/main/java/demo/B.java': 'package demo;\nclass B {}\n' });
+    const cache = tempDir('difit-scip-cache-');
+    storeWithoutRelations(cache, stale);
+    seed(cache, A, { 'index.lookup.v2.gz': 400 }, 100);
+    const gate = join(tempDir('difit-scip-gate-'), 'open');
+    const fake = fakeScipJava(
+      `while [ ! -f '${gate}' ]; do sleep 0.05; done\n${WRITES_IMPL_INDEX}`,
+    );
+    const { builder, events } = limitedBuilder(cache, { bytes: 0 }, { repo, tool: fake.path });
+
+    const first = builder.request(running);
+    await waitFor(() => calls(fake.log).length === 1);
+    await builder.useStored(stale);
+    await builder.getIndex(stale);
+    await builder.request(A);
+    expect(builder.state(stale).status).toBe('none');
+    writeFileSync(gate, '');
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    expect(calls(fake.log)).toHaveLength(1);
+    expect(events.filter(([sha]) => sha === stale)).toEqual([
+      [stale, 'ready'],
+      [stale, 'none'],
+    ]);
   });
 
   posixOnly('builds again a commit whose index the cleanup removed', async () => {

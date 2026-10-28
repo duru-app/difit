@@ -221,6 +221,7 @@ describe('symbol peek of a commit review', () => {
       references: [{ path: SERVICE, line: 17, text: sourceLine(SERVICE, 17), caller: IN_FIND }],
       truncated: false,
       source: 'index',
+      indexCommit: head,
     });
     expect((await peek({ ...FIND_BY_ID, ref: head })).body.source).toBe('index');
     expect(tool.pids()).toHaveLength(1);
@@ -656,6 +657,7 @@ describe('symbol peek of a commit review', () => {
       const unchanged = await peek({ ...RENAMED_CALLER, ref: fixup });
       expect(unchanged.body).toMatchObject({
         source: 'index',
+        indexCommit: head,
         definitions: [{ path: SERVICE, line: 16 }],
         references: [{ path: SERVICE, line: 23 }],
       });
@@ -725,8 +727,8 @@ describe('symbol peek of a commit review', () => {
       await settleSymbolIndex?.();
 
       expect(tool.pids()).toHaveLength(2);
-      expect(existsSync(join(home, 'difit', 'scip-index', head, 'index.lookup.gz'))).toBe(false);
-      expect(existsSync(join(home, 'difit', 'scip-index', fixup, 'index.lookup.gz'))).toBe(true);
+      expect(existsSync(join(home, 'difit', 'scip-index', head, 'index.lookup.v2.gz'))).toBe(false);
+      expect(existsSync(join(home, 'difit', 'scip-index', fixup, 'index.lookup.v2.gz'))).toBe(true);
     });
 
     posixOnly(
@@ -790,7 +792,7 @@ describe('symbol peek of a commit review', () => {
       await settle();
 
       expect(tool.pids()).toHaveLength(1);
-      expect(existsSync(join(home, 'difit', 'scip-index', fixup, 'index.lookup.gz'))).toBe(true);
+      expect(existsSync(join(home, 'difit', 'scip-index', fixup, 'index.lookup.v2.gz'))).toBe(true);
     });
   });
 

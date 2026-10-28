@@ -174,6 +174,11 @@ export interface SymbolSearchResponse {
   // when name search answered a click in a Java file; /api/live announces each later change as
   // a `symbolIndexChanged` event.
   index?: SymbolIndexState & { commit: string };
+  // Of an answer from an index: the full sha of the commit whose index answered, an ancestor's
+  // when the clicked commit borrowed it.
+  indexCommit?: string;
+  // Of an answer from an index stored before implementations and callers were kept.
+  indexWithoutRelations?: true;
   // Why a click that name search answered did not use an index, sent only when the commit (or
   // HEAD, for a review of uncommitted changes) could be indexed.
   unindexed?: 'not-java' | 'not-commit';

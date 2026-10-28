@@ -115,17 +115,23 @@ export function SymbolPeekModal({
 
   // A change heard after the search started is newer than the answer's own word on the index.
   const answered = search.status === 'done' ? search : undefined;
-  const indexCommit = answered?.result.index?.commit;
+  const shownIndex = answered?.result.index;
+  const indexCommit = shownIndex?.commit ?? answered?.result.indexCommit;
   const indexUpdate = indexCommit ? indexUpdates.byCommit.get(indexCommit) : undefined;
   const index =
-    indexCommit && indexUpdate && answered && indexUpdate.seq > answered.seq
-      ? { commit: indexCommit, ...indexUpdate.state }
-      : answered?.result.index;
+    shownIndex && indexUpdate && answered && indexUpdate.seq > answered.seq
+      ? { commit: shownIndex.commit, ...indexUpdate.state }
+      : shownIndex;
 
   useEffect(() => {
-    const status = indexUpdate?.state.status;
-    if (status !== 'ready' && status !== 'failed') return;
-    if (!indexUpdate || indexUpdate.seq <= searchedAtSeq.current) return;
+    if (!answered || !indexUpdate || indexUpdate.seq <= searchedAtSeq.current) return;
+    const { state } = indexUpdate;
+    const fromIndex = answered.result.indexCommit !== undefined;
+    const changed = fromIndex
+      ? state.status === 'ready' &&
+        (state.withoutRelations === true) !== (answered.result.indexWithoutRelations === true)
+      : state.status === 'ready' || state.status === 'failed';
+    if (!changed) return;
     const controller = new AbortController();
     const seq = latestUpdateSeq.current;
     searchedAtSeq.current = seq;
@@ -138,7 +144,7 @@ export function SymbolPeekModal({
       () => {},
     );
     return () => controller.abort();
-  }, [indexUpdate, request]);
+  }, [answered, indexUpdate, request]);
 
   return (
     <div

@@ -54,7 +54,10 @@ interface ScipIndexBuilderOptions {
   inUse?: () => Promise<Iterable<string>>;
 }
 
-const COMPACT_FILE = 'index.lookup.gz';
+const COMPACT_FILE = 'index.lookup.v2.gz';
+// Versions of difit before format 2 keep reading and writing this file, so it is never removed
+// for being older; it answers until the commit is indexed again.
+const FORMAT_1_FILE = 'index.lookup.gz';
 const LOG_FILE = 'build.log';
 const LOG_TAIL_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
@@ -320,9 +323,17 @@ class BuildError extends Error {
   }
 }
 
+interface StoredIndex {
+  // Null when the file is damaged or of a format this version does not read.
+  index: ScipIndex | null;
+  path: string;
+}
+
 interface QueuedBuild {
   sha: string;
   run: () => Promise<void>;
+  // A commit indexed again while its older index keeps answering; its state stays `ready`.
+  quiet: boolean;
 }
 
 export interface IndexRequestOptions {
@@ -342,7 +353,7 @@ export class ScipIndexBuilder {
   private readonly states = new Map<string, ScipBuildState>();
   private readonly jobs = new Map<string, Promise<ScipBuildState>>();
   private readonly loaded = new Map<string, ScipIndex>();
-  private readonly loading = new Map<string, Promise<ScipIndex | null>>();
+  private readonly loading = new Map<string, Promise<StoredIndex | null>>();
   private readonly listeners = new Set<(sha: string, state: ScipBuildState) => void>();
   private readonly requestedSinceTrimStarted = new Set<string>();
   private readonly children = new Set<ChildProcess>();
@@ -351,6 +362,7 @@ export class ScipIndexBuilder {
   private readonly waiting: QueuedBuild[] = [];
   private readonly urgent = new Set<string>();
   private readonly indexability = new Map<string, Promise<Indexability>>();
+  private readonly reindexed = new Set<string>();
   private building: Promise<void> | null = null;
   private runningSha: string | null = null;
   private stopping: Promise<void> | null = null;
@@ -436,8 +448,8 @@ export class ScipIndexBuilder {
       return true;
     }
     if (!FULL_SHA.test(sha) || this.jobs.has(sha)) return false;
-    if (!(await this.exists(this.compactPath(sha))) || this.jobs.has(sha)) return false;
-    const ready: ScipBuildState = { status: 'ready' };
+    const ready = await this.storedState(sha);
+    if (!ready || this.jobs.has(sha)) return false;
     this.requestedSinceTrimStarted.add(sha);
     this.jobs.set(sha, Promise.resolve(ready));
     this.setState(sha, ready);
@@ -455,27 +467,74 @@ export class ScipIndexBuilder {
     if (cached) {
       this.remember(sha, cached);
       void this.markUsed(sha);
+      if (!cached.knowsRelations) this.reindex(sha);
       return cached;
     }
     if (this.state(sha).status !== 'ready') return null;
-    let load = this.loading.get(sha);
-    if (!load) {
-      load = readScipIndex(this.compactPath(sha)).finally(() => this.loading.delete(sha));
-      this.loading.set(sha, load);
+    let stored = await this.load(sha);
+    const state = this.state(sha);
+    if (
+      stored?.index?.knowsRelations === false &&
+      state.status === 'ready' &&
+      !state.withoutRelations
+    ) {
+      stored = await this.load(sha);
     }
-    const index = await load;
+    const index = stored?.index ?? null;
     if (index) {
       if (this.state(sha).status === 'ready') {
         this.remember(sha, index);
         void this.markUsed(sha);
+        if (!index.knowsRelations) this.reindex(sha);
       }
     } else if (this.state(sha).status === 'ready') {
       // Removed or damaged on disk; a later request builds it again.
-      await rm(this.compactPath(sha), { force: true });
+      if (stored) await rm(stored.path, { force: true });
       this.jobs.delete(sha);
       this.setState(sha, { status: 'none' });
     }
     return index;
+  }
+
+  private load(sha: string): Promise<StoredIndex | null> {
+    let load = this.loading.get(sha);
+    if (!load) {
+      load = this.readStored(sha).finally(() => this.loading.delete(sha));
+      this.loading.set(sha, load);
+    }
+    return load;
+  }
+
+  // An index stored without implementations and callers keeps answering while the commit is
+  // indexed again behind the other builds; listeners hear `ready` once the new one is in place.
+  // A failure leaves the older index and is not retried in this run.
+  private reindex(sha: string): void {
+    if (this.reindexed.has(sha) || this.abort.signal.aborted) return;
+    this.reindexed.add(sha);
+    void (async () => {
+      this.tool ??= findScipJava(this.env, this.platform);
+      const tool = await this.tool;
+      if (!tool || this.abort.signal.aborted) return;
+      const result = await this.enqueue(
+        sha,
+        async () => {
+          // Removed from the cache, or built again by a request, while this waited.
+          const state = this.state(sha);
+          if (state.status !== 'ready' || !state.withoutRelations) return { status: 'none' };
+          return this.build(sha, tool, { replace: true });
+        },
+        { quiet: true },
+      );
+      if (result.status !== 'ready') return;
+      this.loaded.delete(sha);
+      if (this.state(sha).status !== 'ready') return;
+      const ready: ScipBuildState = { status: 'ready' };
+      this.jobs.set(sha, Promise.resolve(ready));
+      this.setState(sha, ready);
+      await this.trimCache(sha);
+    })().catch((error: unknown) => {
+      console.error('Error indexing a commit again:', error);
+    });
   }
 
   stop(): Promise<void> {
@@ -506,6 +565,24 @@ export class ScipIndexBuilder {
     return join(this.cacheRoot, sha, COMPACT_FILE);
   }
 
+  private format1Path(sha: string): string {
+    return join(this.cacheRoot, sha, FORMAT_1_FILE);
+  }
+
+  private async storedState(sha: string): Promise<ScipBuildState | null> {
+    if (await this.exists(this.compactPath(sha))) return { status: 'ready' };
+    if (await this.exists(this.format1Path(sha)))
+      return { status: 'ready', withoutRelations: true };
+    return null;
+  }
+
+  private async readStored(sha: string): Promise<StoredIndex | null> {
+    for (const path of [this.compactPath(sha), this.format1Path(sha)]) {
+      if (await this.exists(path)) return { index: await readScipIndex(path), path };
+    }
+    return null;
+  }
+
   private setState(sha: string, state: ScipBuildState): void {
     this.states.set(sha, state);
     for (const listener of this.listeners) listener(sha, state);
@@ -524,9 +601,11 @@ export class ScipIndexBuilder {
   // file's modification time.
   private async markUsed(sha: string): Promise<void> {
     const now = new Date();
-    try {
-      await utimes(this.compactPath(sha), now, now);
-    } catch {}
+    for (const path of [this.compactPath(sha), this.format1Path(sha)]) {
+      try {
+        await utimes(path, now, now);
+      } catch {}
+    }
   }
 
   private trimCache(requested: string): Promise<void> {
@@ -654,9 +733,10 @@ export class ScipIndexBuilder {
   private async prepareAndBuild(sha: string): Promise<ScipBuildState> {
     if (!FULL_SHA.test(sha) || this.abort.signal.aborted) return { status: 'none' };
     this.sweep ??= this.sweepStaleWork();
-    if (await this.exists(this.compactPath(sha))) {
-      this.setState(sha, { status: 'ready' });
-      return this.state(sha);
+    const stored = await this.storedState(sha);
+    if (stored) {
+      this.setState(sha, stored);
+      return stored;
     }
     const indexability = await this.indexable(sha);
     if (this.abort.signal.aborted) return { status: 'none' };
@@ -676,17 +756,24 @@ export class ScipIndexBuilder {
     return this.state(sha);
   }
 
-  private enqueue(sha: string, build: () => Promise<ScipBuildState>): Promise<ScipBuildState> {
+  private enqueue(
+    sha: string,
+    build: () => Promise<ScipBuildState>,
+    { quiet = false }: { quiet?: boolean } = {},
+  ): Promise<ScipBuildState> {
     return new Promise((resolvePromise, reject) => {
       const queued: QueuedBuild = {
         sha,
+        quiet,
         run: () => {
           this.runningSha = sha;
-          this.setState(sha, { status: 'building', startedAt: Date.now() });
+          if (!quiet) this.setState(sha, { status: 'building', startedAt: Date.now() });
           return build().then(resolvePromise, reject);
         },
       };
+      const firstQuiet = this.waiting.findIndex((waiting) => waiting.quiet);
       if (this.urgent.has(sha)) this.waiting.splice(this.urgentCount(), 0, queued);
+      else if (!quiet && firstQuiet !== -1) this.waiting.splice(firstQuiet, 0, queued);
       else this.waiting.push(queued);
       this.building ??= this.drain();
       this.announceQueue();
@@ -701,9 +788,9 @@ export class ScipIndexBuilder {
 
   private announceQueue(): void {
     let ahead = this.runningSha;
-    for (const { sha } of this.waiting) {
+    for (const { sha, quiet } of this.waiting) {
       const current = this.state(sha);
-      if (ahead && (current.status !== 'queued' || current.after !== ahead)) {
+      if (!quiet && ahead && (current.status !== 'queued' || current.after !== ahead)) {
         this.setState(sha, { status: 'queued', after: ahead });
       }
       ahead = sha;
@@ -724,12 +811,17 @@ export class ScipIndexBuilder {
     if (queued) this.announceQueue();
   }
 
-  private async build(sha: string, tool: string): Promise<ScipBuildState> {
+  private async build(
+    sha: string,
+    tool: string,
+    { replace = false }: { replace?: boolean } = {},
+  ): Promise<ScipBuildState> {
     const dir = join(this.cacheRoot, sha);
     const compactPath = this.compactPath(sha);
     const logPath = join(dir, LOG_FILE);
     // Another difit process may have finished this commit while this one waited.
-    if (await this.exists(compactPath)) return { status: 'ready' };
+    const stored = replace ? null : await this.storedState(sha);
+    if (stored) return stored;
     if (this.abort.signal.aborted) return { status: 'none' };
 
     let work: string | null = null;

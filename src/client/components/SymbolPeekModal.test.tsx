@@ -610,6 +610,49 @@ describe('SymbolPeekModal with a commit index', () => {
     expect(symbolRequests()).toHaveLength(1);
   });
 
+  it('does not ask again when the stored index it is answered from is heard ready first', async () => {
+    const { rerender } = render(modal());
+    await waitFor(() => expect(answers).toHaveLength(1));
+
+    rerender(modal(updates(ready, 1)));
+    await answer({ ...byIndex, indexCommit: commit }, 1);
+    await shownRows();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(symbolRequests()).toHaveLength(1);
+  });
+
+  it('asks again over an index answer once the index that answered is rebuilt', async () => {
+    const { rerender } = render(modal());
+    await answer({ ...byIndex, indexCommit: commit, indexWithoutRelations: true }, 1);
+    await shownRows();
+    fireEvent.click(screen.getByText('src/use.ts:1'));
+
+    rerender(modal(updates(ready, 1, 'b'.repeat(40))));
+    expect(symbolRequests()).toHaveLength(1);
+
+    rerender(modal(updates(ready, 2)));
+    await answer(
+      {
+        ...byIndex,
+        indexCommit: commit,
+        references: [
+          {
+            path: 'src/use.ts',
+            line: 1,
+            text: 'const two = addOne(1);',
+            caller: 'semanticdb maven . . demo/Use#run().',
+          },
+        ],
+      },
+      2,
+    );
+
+    expect(await screen.findByRole('button', { name: '호출하는 곳 펼치기' })).toBeInTheDocument();
+    expect(selectedItem()).toContain('src/use.ts:1');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   const LIBRARY_SYMBOL = 'semanticdb maven jdk 8 java/util/Optional#orElse().';
   const OPTIONAL_SOURCE = [
     'package java.util;',
@@ -986,6 +1029,25 @@ describe('SymbolPeekModal with a commit index', () => {
       );
 
       expect(await screen.findByText('호출하는 곳을 찾지 못했습니다.')).toBeInTheDocument();
+    });
+
+    it('keeps the expanded callers and the selected caller when the same index is heard again', async () => {
+      const { rerender } = render(modal(updates(ready, 1)));
+      await answer({ ...withCallers, indexCommit: commit }, 1);
+      fireEvent.click(
+        await waitFor(() =>
+          within(rowOf('src/use.ts:1')).getByRole('button', { name: '호출하는 곳 펼치기' }),
+        ),
+      );
+      await waitFor(() => expect(rowOf('src/app.ts:2')).toBeInTheDocument());
+      fireEvent.click(within(rowOf('src/app.ts:2')).getByText('src/app.ts:2'));
+
+      rerender(modal(updates(ready, 2)));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(rowOf('src/app.ts:2')).toBeInTheDocument();
+      expect(selectedItem()).toContain('src/app.ts:2');
+      expect(answers).toHaveLength(1);
     });
   });
 

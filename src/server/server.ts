@@ -61,6 +61,7 @@ import { type LineChanges, lineChangesBetween } from './line-changes.js';
 import { acceptLiveSockets, isLiveSocketRequest } from './live-socket.js';
 import { runGit } from './run-git.js';
 import { ScipIndexBuilder, indexStateForClient, readBuildLog } from './scip-build.js';
+import type { ScipIndex } from './scip-index.js';
 import {
   type SymbolPosition,
   answerFromScipIndex,
@@ -147,6 +148,15 @@ function parseIntAtLeast(value: unknown, min: number): number | undefined {
   if (typeof value !== 'string' || !/^\d{1,9}$/.test(value)) return undefined;
   const parsed = Number(value);
   return parsed >= min ? parsed : undefined;
+}
+
+function answeredBy(
+  index: ScipIndex,
+  commit: string,
+): Pick<SymbolSearchResponse, 'indexCommit' | 'indexWithoutRelations'> {
+  return index.knowsRelations
+    ? { indexCommit: commit }
+    : { indexCommit: commit, indexWithoutRelations: true };
 }
 
 function createDiffCacheKey(selection: DiffSelection, ignoreWhitespace: boolean) {
@@ -869,13 +879,14 @@ export async function startServer(options: ServerOptions): Promise<{
           const index = await symbolIndex?.getIndex(commit);
           if (!index) return null;
           askedIndex = true;
-          return await answerFromScipIndex(
+          const answer = await answerFromScipIndex(
             index,
             name,
             ref,
             at,
             commitFiles(repositoryPath, commit, disconnected.signal),
           );
+          return answer && { ...answer, ...answeredBy(index, commit) };
         } catch (error) {
           if (!disconnected.signal.aborted) console.error('Error reading the symbol index:', error);
           return null;
@@ -907,7 +918,9 @@ export async function startServer(options: ServerOptions): Promise<{
                   changes,
                 )
               : null;
-          if (answer) return { answer };
+          if (answer && index && ancestor.ready) {
+            return { answer: { ...answer, ...answeredBy(index, ancestor.ready) } };
+          }
           return ancestor.building ? { waitingFor: ancestor.building } : null;
         } catch (error) {
           if (!disconnected.signal.aborted) console.error('Error reading the symbol index:', error);
