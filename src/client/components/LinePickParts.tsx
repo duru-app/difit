@@ -1,9 +1,27 @@
 import { MessageSquare, Plus } from 'lucide-react';
 
-import type { CommentThread, LineNumber } from '../../types/diff';
-import { coversBothSides } from '../../utils/commentPosition';
+import type { CommentThread, DiffSide, SidedLine } from '../../types/diff';
+import { coversBothSides, startOfLine } from '../../utils/commentPosition';
 import type { LinePickStore } from '../contexts/LinePickContext';
 import { rangeLabel } from '../utils/linePick';
+
+const SIDE_NAMES: Record<DiffSide, string> = { old: '지운 줄', new: '남은 줄' };
+
+function pickedRangesLabel(ranges: readonly SidedLine[]): string {
+  const sides = (['old', 'new'] as const).filter((side) =>
+    ranges.some((range) => range.side === side),
+  );
+  if (sides.length < 2) return ranges.map(({ line }) => rangeLabel(line)).join(', ');
+  return sides
+    .map((side) => {
+      const labels = ranges
+        .filter((range) => range.side === side)
+        .sort((a, b) => startOfLine(a.line) - startOfLine(b.line))
+        .map(({ line }) => rangeLabel(line));
+      return `${SIDE_NAMES[side]} ${labels.join(', ')}`;
+    })
+    .join(' · ');
+}
 
 export function PickControls({
   store,
@@ -11,7 +29,7 @@ export function PickControls({
   canHover,
 }: {
   store: Pick<LinePickStore, 'addMode' | 'setAddMode'>;
-  ranges: readonly LineNumber[];
+  ranges: readonly SidedLine[];
   canHover: boolean;
 }) {
   return (
@@ -22,7 +40,7 @@ export function PickControls({
           className="min-w-0 font-mono [overflow-wrap:anywhere]"
           style={{ color: 'var(--color-yellow-path-text)' }}
         >
-          {ranges.map(rangeLabel).join(', ')}
+          {pickedRangesLabel(ranges)}
         </span>
       )}
       <button
@@ -46,18 +64,6 @@ export function PickControls({
   );
 }
 
-export function PickNotice({ notice }: { notice: string | null }) {
-  if (!notice) return null;
-  return (
-    <div
-      role="status"
-      className="fixed bottom-4 left-1/2 z-50 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-md border border-github-border bg-github-bg-tertiary px-3 py-1.5 text-center text-xs text-github-text-primary shadow-lg"
-    >
-      {notice}
-    </div>
-  );
-}
-
 // Under a range of a thread other than the one its card sits under.
 export function ThreadMarker({
   thread,
@@ -68,9 +74,7 @@ export function ThreadMarker({
 }) {
   if (thread.line === undefined) return null;
   const cardSide = coversBothSides(thread.side, thread.extraLines)
-    ? thread.side === 'old'
-      ? '지운 줄 '
-      : '남은 줄 '
+    ? `${SIDE_NAMES[thread.side ?? 'new']} `
     : '';
   return (
     <div className="mx-4 my-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-l-[3px] border-yellow-400 px-2 py-0.5 text-xs text-github-text-secondary">

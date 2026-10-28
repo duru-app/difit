@@ -17,7 +17,7 @@ import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { codeCellAttributes, quoteSelection } from '../utils/codeSelection';
-import { extraRangeEndsAt, pickHolds, rangesOfPick, threadHoldsLine } from '../utils/linePick';
+import { extraRangeEndsAt, pickHolds, threadHoldsLine } from '../utils/linePick';
 import {
   computeWordLevelDiff,
   shouldComputeWordDiff,
@@ -31,7 +31,7 @@ import { DirectEditForm } from './DirectEditForm';
 import { EditHunkButton } from './EditLineButton';
 import { EnhancedPrismSyntaxHighlighter } from './EnhancedPrismSyntaxHighlighter';
 import { FixupBoxRows, FixupOverlayRow } from './FixupOverlayCard';
-import { goToThreadCard, PickControls, PickNotice, ThreadMarker } from './LinePickParts';
+import { goToThreadCard, PickControls, ThreadMarker } from './LinePickParts';
 import {
   type FoldedLines,
   FoldedLinesRow,
@@ -193,12 +193,12 @@ export function SideBySideDiffChunk({
     cursor ? cursorLineOf(chunk.lines[cursor.lineIndex], cursor.side) : null,
   );
   const pick = onAddComment ? linePick.pick : null;
-  const pickedRanges = useMemo(() => (pick ? rangesOfPick(pick) : []), [pick]);
+  const { ranges: rangesFor } = linePick;
+  const pickedRanges = useMemo(() => (pick ? rangesFor('split') : []), [pick, rangesFor]);
   const formRange = pickedRanges.at(-1);
-  const commentingLine =
-    pick && formRange !== undefined
-      ? { side: pick.side, lineNumber: formRange, quote: linePick.quote }
-      : null;
+  const commentingLine = formRange
+    ? { side: formRange.side, lineNumber: formRange.line, quote: linePick.quote }
+    : null;
   const [hoveredLine, setHoveredLine] = useState<LineSelection | null>(null);
   const overlay = useFixupOverlay();
   const directEditing = useDirectEditing(chunk.lines, threads);
@@ -206,7 +206,7 @@ export function SideBySideDiffChunk({
   const folds = lockFoldsUnderForms(
     foldedLines,
     chunk.lines,
-    pick ? pickedRanges.map((lineNumber) => ({ side: pick.side, lineNumber })) : null,
+    pickedRanges.map(({ side, line }) => ({ side, lineNumber: line })),
     editing,
   );
   const foldOf = (sideLine: SideBySideLine | undefined) =>
@@ -219,7 +219,7 @@ export function SideBySideDiffChunk({
   const containerRef = useRef<HTMLDivElement>(null);
   const codeSelection = useCodeSelection(containerRef, 'split');
 
-  const { open: openPick, start: startPick } = linePick;
+  const { open: openPick, openBetween: openPickBetween, start: startPick } = linePick;
 
   // Handle comment trigger from keyboard navigation
   useEffect(() => {
@@ -240,7 +240,7 @@ export function SideBySideDiffChunk({
     [openPick],
   );
 
-  const openShiftClickComment = (selection: LineSelection) => linePick.extend(selection);
+  const openShiftClickComment = (selection: LineSelection) => linePick.extend(selection, 'split');
 
   const startCommentDrag = (selection: LineSelection, fromLineNumber = false) => {
     if (!onAddComment) return;
@@ -323,20 +323,13 @@ export function SideBySideDiffChunk({
       // Defer so the click event fired after mouseup doesn't immediately
       // close the newly opened (still empty) comment form
       setTimeout(() => {
-        const actualEndLine =
-          startLine && endLine && endLine.side === startLine.side
-            ? endLine.lineNumber
-            : startLine?.lineNumber;
+        const end = endLine ?? startLine;
         const clickedLineNumber =
-          dragFromLineNumber.current && startLine?.lineNumber === actualEndLine;
-        if (startLine && actualEndLine !== undefined && !clickedLineNumber) {
-          if (startLine.lineNumber === actualEndLine) {
-            handleAddComment(startLine.side, startLine.lineNumber);
-          } else {
-            const min = Math.min(startLine.lineNumber, actualEndLine);
-            const max = Math.max(startLine.lineNumber, actualEndLine);
-            handleAddComment(startLine.side, [min, max]);
-          }
+          dragFromLineNumber.current &&
+          startLine?.side === end?.side &&
+          startLine?.lineNumber === end?.lineNumber;
+        if (startLine && end && !clickedLineNumber) {
+          openPickBetween(startLine, end, 'split');
         }
         setIsDragging(false);
         setStartLine(null);
@@ -348,7 +341,7 @@ export function SideBySideDiffChunk({
     return () => {
       document.removeEventListener('mouseup', handleGlobalMouseUp);
     };
-  }, [isDragging, startLine, endLine, handleAddComment]);
+  }, [isDragging, startLine, endLine, openPickBetween]);
 
   const handleCancelComment = linePick.close;
 
@@ -367,8 +360,8 @@ export function SideBySideDiffChunk({
       ...(extraLines.length > 0
         ? [
             {
-              lines: extraLines.map((line) => ({ side, line })),
-              contents: extraLines.map((line) => linePick.contentOf(side, line)),
+              lines: extraLines,
+              contents: extraLines.map((range) => linePick.contentOf(range.side, range.line)),
             },
           ]
         : []),
@@ -420,6 +413,15 @@ export function SideBySideDiffChunk({
     return 'full';
   };
 
+  const { between: linesBetween } = linePick;
+  const draggedOn = useMemo(() => {
+    const dragged =
+      isDragging && startLine && endLine ? linesBetween(startLine, endLine, 'split') : [];
+    const numbersOn = (side: DiffSide) =>
+      dragged.filter((line) => line.side === side).map(({ lineNumber }) => lineNumber);
+    return { old: numbersOn('old'), new: numbersOn('new') };
+  }, [isDragging, startLine, endLine, linesBetween]);
+
   const getSelectedLineStyle = (side: DiffSide, sideLine: SideBySideLine): string => {
     const lineNumber = side === 'old' ? sideLine.oldLineNumber : sideLine.newLineNumber;
     if (!lineNumber) {
@@ -427,22 +429,17 @@ export function SideBySideDiffChunk({
     }
 
     // Show selection during drag
-    if (isDragging && startLine && endLine && startLine.side === side && endLine.side === side) {
-      const min = Math.min(startLine.lineNumber, endLine.lineNumber);
-      const max = Math.max(startLine.lineNumber, endLine.lineNumber);
-      if (lineNumber >= min && lineNumber <= max) {
-        let classes =
-          'after:bg-blue-100 after:absolute after:inset-0 after:opacity-30 after:border-l-4 after:border-blue-500 after:pointer-events-none';
-        // Add top border for first line
-        if (lineNumber === min) {
-          classes += ' after:border-t-2';
-        }
-        // Add bottom border for last line
-        if (lineNumber === max) {
-          classes += ' after:border-b-2';
-        }
-        return classes;
+    const dragged = draggedOn[side];
+    if (dragged.includes(lineNumber)) {
+      let classes =
+        'after:bg-blue-100 after:absolute after:inset-0 after:opacity-30 after:border-l-4 after:border-blue-500 after:pointer-events-none';
+      if (lineNumber === dragged[0]) {
+        classes += ' after:border-t-2';
       }
+      if (lineNumber === dragged.at(-1)) {
+        classes += ' after:border-b-2';
+      }
+      return classes;
     }
 
     if (pickHolds(pick, side, lineNumber)) {
@@ -772,16 +769,10 @@ export function SideBySideDiffChunk({
 
                     // Handle dragging
                     if (isDragging && startLine) {
-                      if (startLine.side === 'old' && sideLine.oldLineNumber) {
-                        setEndLine({
-                          side: 'old',
-                          lineNumber: sideLine.oldLineNumber,
-                        });
-                      } else if (startLine.side === 'new' && sideLine.newLineNumber) {
-                        setEndLine({
-                          side: 'new',
-                          lineNumber: sideLine.newLineNumber,
-                        });
+                      if (isInOldSide && sideLine.oldLineNumber) {
+                        setEndLine({ side: 'old', lineNumber: sideLine.oldLineNumber });
+                      } else if (isInNewSide && sideLine.newLineNumber) {
+                        setEndLine({ side: 'new', lineNumber: sideLine.newLineNumber });
                       }
                     }
                   }}
@@ -1047,7 +1038,6 @@ export function SideBySideDiffChunk({
                           }`}
                         >
                           <div className={`w-1/2`}>
-                            <PickNotice notice={linePick.notice} />
                             <CommentForm
                               onSubmit={handleSubmitComment}
                               onCancel={handleCancelComment}

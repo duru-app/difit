@@ -665,16 +665,38 @@ describe.each(['unified', 'split'] as const)(
       expect(picked()).toEqual(['f10();', '// new 40']);
     });
 
-    it('refuses a deleted line next to kept lines and says why', () => {
-      renderViewer(open);
+    it('adds a deleted line to kept lines with Ctrl and puts the card under the lower one', async () => {
+      const onAddComment = vi.fn<NonNullable<DiffViewerBodyProps['onAddComment']>>(async () => {});
+      renderViewer({ ...open, onAddComment });
 
       ctrlClick('f10();');
       ctrlClick('// old 40', 'old');
 
-      expect(screen.getByRole('status')).toHaveTextContent(
-        '지운 줄과 남은 줄은 지적 하나에 함께 고를 수 없습니다',
+      expect(picked()).toEqual(['f10();', mode === 'unified' ? '// old 40' : '// new 40']);
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.getByTestId('picked-ranges')).toHaveTextContent('지운 줄 L40 · 남은 줄 L11');
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Same mistake' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      await vi.waitFor(() =>
+        expect(onAddComment).toHaveBeenCalledWith(40, 'Same mistake', '// old 40', 'old', {
+          lines: [{ side: 'new', line: 11 }],
+          contents: ['f10();'],
+        }),
       );
-      expect(picked()).toEqual(['f10();']);
+    });
+
+    it('picks the rows between a deleted line and a kept one with Shift', () => {
+      renderViewer(open);
+
+      fireEvent.click(numberCell('// old 10', 'old'));
+      fireEvent.click(numberCell('f10();'), { shiftKey: true });
+
+      expect(picked()).toEqual(
+        mode === 'unified' ? ['// old 10', '// new 10', 'f10();'] : ['// new 10', 'f10();'],
+      );
+      expect(screen.getByTestId('picked-ranges')).toHaveTextContent(
+        '지운 줄 L10 · 남은 줄 L10-L11',
+      );
     });
 
     it('adds lines with plain clicks while 줄 더하기 is on', () => {

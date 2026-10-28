@@ -1,124 +1,237 @@
 import type {
   CommentThread,
+  DiffLine,
   DiffSide,
   LineNumber,
   LineSelection,
   SidedLine,
 } from '../../types/diff';
 
-// The lines a comment being written sits on, all on one side.
+// The lines a comment being written sits on, on either side.
 export interface LinePick {
-  side: DiffSide;
-  // Ascending, each once.
-  lines: readonly number[];
+  // Each once, the old side's first, each side ascending.
+  lines: readonly LineSelection[];
   // Where Shift+click grows from.
-  anchor: number;
+  anchor: LineSelection;
   // What the last Shift+click added; the next one replaces it.
-  span: readonly number[];
+  span: readonly LineSelection[];
   // Lines were added one at a time, so Shift+click keeps the others.
   adding: boolean;
 }
 
-export type PickChange = { pick: LinePick | null } | { mixedSides: true };
+export type PickLayout = 'unified' | 'split';
 
-const between = (from: number, to: number, shown: readonly number[]) => {
-  const low = Math.min(from, to);
-  const high = Math.max(from, to);
-  return [...new Set([from, to, ...shown.filter((line) => line >= low && line <= high)])].sort(
-    (a, b) => a - b,
-  );
+interface PickRow {
+  old?: number;
+  new?: number;
+  unchanged: boolean;
+}
+
+// The rows of a file's diff as one layout draws them, top to bottom.
+export interface PickRows {
+  layout: PickLayout;
+  rows: readonly PickRow[];
+  rowOf: ReadonlyMap<string, number>;
+}
+
+const keyOf = ({ side, lineNumber }: LineSelection) => `${side}:${lineNumber}`;
+
+const sameSelection = (a: LineSelection, b: LineSelection) =>
+  a.side === b.side && a.lineNumber === b.lineNumber;
+
+const has = (lines: readonly LineSelection[], line: LineSelection) =>
+  lines.some((picked) => sameSelection(picked, line));
+
+const inPickOrder = (a: LineSelection, b: LineSelection) =>
+  a.side === b.side ? a.lineNumber - b.lineNumber : a.side === 'old' ? -1 : 1;
+
+const union = (a: readonly LineSelection[], b: readonly LineSelection[]) =>
+  [...a, ...b.filter((line) => !has(a, line))].sort(inPickOrder);
+
+const sameLines = (a: readonly LineSelection[], b: readonly LineSelection[]) =>
+  a.length === b.length && a.every((line) => has(b, line));
+
+function splitRows(lines: readonly DiffLine[]): PickRow[] {
+  const rows: PickRow[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    index++;
+    if (!line) continue;
+    if (line.type !== 'delete') {
+      rows.push({
+        old: line.oldLineNumber,
+        new: line.newLineNumber,
+        unchanged: line.type === 'normal',
+      });
+      continue;
+    }
+    const deleted = [line];
+    const added: DiffLine[] = [];
+    for (let next = lines[index]; next?.type === 'delete'; next = lines[++index])
+      deleted.push(next);
+    for (let next = lines[index]; next?.type === 'add'; next = lines[++index]) added.push(next);
+    for (let k = 0; k < Math.max(deleted.length, added.length); k++) {
+      rows.push({
+        old: deleted[k]?.oldLineNumber,
+        new: added[k]?.newLineNumber,
+        unchanged: false,
+      });
+    }
+  }
+  return rows;
+}
+
+export function pickRows(lines: readonly DiffLine[], layout: PickLayout): PickRows {
+  const rows =
+    layout === 'split'
+      ? splitRows(lines)
+      : lines.map((line) => ({
+          old: line.oldLineNumber,
+          new: line.newLineNumber,
+          unchanged: line.type === 'normal',
+        }));
+  const rowOf = new Map<string, number>();
+  rows.forEach((row, index) => {
+    if (row.old !== undefined) rowOf.set(keyOf({ side: 'old', lineNumber: row.old }), index);
+    if (row.new !== undefined) rowOf.set(keyOf({ side: 'new', lineNumber: row.new }), index);
+  });
+  return { layout, rows, rowOf };
+}
+
+const unifiedLineOf = (row: PickRow): LineSelection | undefined => {
+  if (row.new !== undefined) return { side: 'new', lineNumber: row.new };
+  return row.old === undefined ? undefined : { side: 'old', lineNumber: row.old };
 };
 
-const union = (a: readonly number[], b: readonly number[]) =>
-  [...new Set([...a, ...b])].sort((x, y) => x - y);
-
-const sameLines = (a: readonly number[], b: readonly number[]) =>
-  a.length === b.length && a.every((line, index) => line === b[index]);
+// Every line on the rows from one line to the other, both included. The split view takes the
+// column of the two lines, or both columns when they sit in different ones.
+export function linesBetween(
+  { layout, rows, rowOf }: PickRows,
+  from: LineSelection,
+  to: LineSelection,
+): LineSelection[] {
+  const fromRow = rowOf.get(keyOf(from));
+  const toRow = rowOf.get(keyOf(to));
+  if (fromRow === undefined || toRow === undefined) return union([from], [to]);
+  const lines: LineSelection[] = [];
+  for (const row of rows.slice(Math.min(fromRow, toRow), Math.max(fromRow, toRow) + 1)) {
+    if (layout === 'unified') {
+      const line = unifiedLineOf(row);
+      if (line) lines.push(line);
+      continue;
+    }
+    if (row.old !== undefined && (from.side === 'old' || to.side === 'old')) {
+      lines.push({ side: 'old', lineNumber: row.old });
+    }
+    if (row.new !== undefined && (from.side === 'new' || to.side === 'new')) {
+      lines.push({ side: 'new', lineNumber: row.new });
+    }
+  }
+  return union(lines, [from, to]);
+}
 
 export function pickLines(side: DiffSide, line: LineNumber): LinePick {
   const [start, end] = Array.isArray(line) ? line : [line, line];
-  const lines = Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
-  return { side, lines, anchor: start, span: lines, adding: false };
+  const lines = Array.from({ length: end - start + 1 }, (_, offset) => ({
+    side,
+    lineNumber: start + offset,
+  }));
+  return { lines, anchor: { side, lineNumber: start }, span: lines, adding: false };
 }
 
 // Ctrl/Cmd+click: adds the line, or takes it out, splitting the range it was in. With nothing
 // picked yet, `seed` (the line clicked just before) is picked along with it.
 export function toggleLine(
   pick: LinePick | null,
-  { side, lineNumber }: LineSelection,
+  selection: LineSelection,
   seed?: LineSelection,
-): PickChange {
+): LinePick | null {
   if (!pick) {
-    const lines =
-      seed && seed.side === side && seed.lineNumber !== lineNumber
-        ? union([seed.lineNumber], [lineNumber])
-        : [lineNumber];
-    return { pick: { side, lines, anchor: lineNumber, span: [], adding: true } };
+    const lines = seed ? union([seed], [selection]) : [selection];
+    return { lines, anchor: selection, span: [], adding: true };
   }
-  if (pick.side !== side) return { mixedSides: true };
-  if (!pick.lines.includes(lineNumber)) {
+  if (!has(pick.lines, selection)) {
     return {
-      pick: {
-        ...pick,
-        lines: union(pick.lines, [lineNumber]),
-        anchor: lineNumber,
-        span: [],
-        adding: true,
-      },
-    };
-  }
-  const lines = pick.lines.filter((line) => line !== lineNumber);
-  const last = lines.at(-1);
-  if (last === undefined) return { pick: null };
-  return {
-    pick: {
       ...pick,
-      lines,
-      anchor: lines.includes(pick.anchor) ? pick.anchor : last,
+      lines: union(pick.lines, [selection]),
+      anchor: selection,
       span: [],
       adding: true,
-    },
+    };
+  }
+  const lines = pick.lines.filter((line) => !sameSelection(line, selection));
+  const last = lines.at(-1);
+  if (last === undefined) return null;
+  return {
+    ...pick,
+    lines,
+    anchor: has(lines, pick.anchor) ? pick.anchor : last,
+    span: [],
+    adding: true,
   };
 }
 
 // Shift+click: while lines are being added one at a time, grows the range added last; otherwise
-// picks the lines from `anchor`, the line clicked before, as one range. `shown` are the line
-// numbers on the screen on that side, so lines hidden between two parts of the diff stay out.
+// picks the lines from `anchor`, the line clicked before, as one range. Lines hidden between two
+// parts of the diff stay out.
 export function extendTo(
   pick: LinePick | null,
   anchor: LineSelection | null,
-  { side, lineNumber }: LineSelection,
-  shown: readonly number[],
-): PickChange {
+  selection: LineSelection,
+  rows: PickRows,
+): LinePick | null {
   if (pick?.adding) {
-    if (pick.side !== side) return { mixedSides: true };
-    const kept = pick.lines.filter((line) => !pick.span.includes(line));
-    const span = between(pick.anchor, lineNumber, shown).filter((line) => !kept.includes(line));
-    return { pick: { ...pick, lines: union(kept, span), span } };
+    const kept = pick.lines.filter((line) => !has(pick.span, line));
+    const span = linesBetween(rows, pick.anchor, selection).filter((line) => !has(kept, line));
+    return { ...pick, lines: union(kept, span), span };
   }
-  if (!anchor || anchor.side !== side) {
-    return { pick: pickLines(side, lineNumber) };
-  }
-  const lines = between(anchor.lineNumber, lineNumber, shown);
-  if (pick && pick.side === side && sameLines(pick.lines, lines)) return { pick: null };
-  return { pick: { side, lines, anchor: anchor.lineNumber, span: lines, adding: false } };
+  if (!anchor) return pickLines(selection.side, selection.lineNumber);
+  const lines = linesBetween(rows, anchor, selection);
+  if (pick && sameLines(pick.lines, lines)) return null;
+  return { lines, anchor, span: lines, adding: false };
 }
 
-export function rangesOfPick({ lines }: Pick<LinePick, 'lines'>): LineNumber[] {
-  const ranges: LineNumber[] = [];
-  let start: number | undefined;
-  lines.forEach((line, index) => {
-    start ??= line;
-    const next = lines[index + 1];
-    if (next === line + 1) return;
-    ranges.push(start === line ? line : [start, line]);
-    start = undefined;
+export const samePickLines = (a: LinePick | null, b: LinePick) =>
+  !!a && sameLines(a.lines, b.lines);
+
+// The picked lines as ranges in the order of the rows, the one the card goes under last. An
+// unchanged line picked on both sides counts once, on the new side.
+export function rangesOfPick({ lines }: Pick<LinePick, 'lines'>, rows: PickRows): SidedLine[] {
+  const kept = lines.filter((line) => {
+    if (line.side !== 'old') return true;
+    const row = rows.rows[rows.rowOf.get(keyOf(line)) ?? -1];
+    return !(
+      row?.unchanged &&
+      row.new !== undefined &&
+      has(lines, { side: 'new', lineNumber: row.new })
+    );
   });
-  return ranges;
+  const ranges: Array<SidedLine & { bottom: number }> = [];
+  for (const side of ['old', 'new'] as const) {
+    const numbers = kept
+      .filter((line) => line.side === side)
+      .map(({ lineNumber }) => lineNumber)
+      .sort((a, b) => a - b);
+    let start: number | undefined;
+    numbers.forEach((lineNumber, index) => {
+      start ??= lineNumber;
+      if (numbers[index + 1] === lineNumber + 1) return;
+      ranges.push({
+        side,
+        line: start === lineNumber ? lineNumber : [start, lineNumber],
+        bottom: rows.rowOf.get(keyOf({ side, lineNumber })) ?? -1,
+      });
+      start = undefined;
+    });
+  }
+  return ranges
+    .sort((a, b) => a.bottom - b.bottom || (a.side === b.side ? 0 : a.side === 'old' ? -1 : 1))
+    .map(({ side, line }) => ({ side, line }));
 }
 
 export const pickHolds = (pick: LinePick | null, side: DiffSide, lineNumber: number | undefined) =>
-  !!pick && pick.side === side && lineNumber !== undefined && pick.lines.includes(lineNumber);
+  !!pick && lineNumber !== undefined && has(pick.lines, { side, lineNumber });
 
 const spanOf = (line: LineNumber): [number, number] => (Array.isArray(line) ? line : [line, line]);
 

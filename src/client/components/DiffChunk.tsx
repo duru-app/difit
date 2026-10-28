@@ -19,7 +19,7 @@ import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { quoteSelection } from '../utils/codeSelection';
-import { extraRangeEndsAt, pickHolds, rangesOfPick, threadHoldsLine } from '../utils/linePick';
+import { extraRangeEndsAt, pickHolds, threadHoldsLine } from '../utils/linePick';
 import {
   computeWordLevelDiff,
   shouldComputeWordDiff,
@@ -29,7 +29,7 @@ import {
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
 import { DiffLineRow } from './DiffLineRow';
-import { goToThreadCard, PickControls, PickNotice, ThreadMarker } from './LinePickParts';
+import { goToThreadCard, PickControls, ThreadMarker } from './LinePickParts';
 import { DirectEditForm } from './DirectEditForm';
 import { EditHunkButton } from './EditLineButton';
 import { FixupBoxRows, FixupOverlayRow } from './FixupOverlayCard';
@@ -87,6 +87,15 @@ function lineNumberOn(line: DiffLine, side: DiffSide): number | undefined {
   return side === 'old' ? line.oldLineNumber : line.newLineNumber;
 }
 
+const sameLine = (a: LineSelection, b: LineSelection) =>
+  a.side === b.side && a.lineNumber === b.lineNumber;
+
+function selectionOfRow(line: DiffLine): LineSelection | null {
+  const side: DiffSide = line.type === 'delete' ? 'old' : 'new';
+  const lineNumber = lineNumberOn(line, side);
+  return lineNumber === undefined ? null : { side, lineNumber };
+}
+
 export const DiffChunk = memo(function DiffChunk({
   chunk,
   chunkIndex,
@@ -109,24 +118,22 @@ export const DiffChunk = memo(function DiffChunk({
   onOpenInEditor,
   foldedLines = NO_FOLDS,
 }: DiffChunkProps) {
-  const [startLine, setStartLine] = useState<number | null>(null);
-  const [endLine, setEndLine] = useState<number | null>(null);
-  const [dragSide, setDragSide] = useState<DiffSide | null>(null);
+  const [dragStart, setDragStart] = useState<LineSelection | null>(null);
+  const [dragEnd, setDragEnd] = useState<LineSelection | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const linePick = useLinePick(
     chunk.lines,
     cursor ? cursorLineOf(chunk.lines[cursor.lineIndex], cursor.side) : null,
   );
   const pick = onAddComment ? linePick.pick : null;
-  const pickedRanges = useMemo(() => (pick ? rangesOfPick(pick) : []), [pick]);
+  const { ranges: rangesFor } = linePick;
+  const pickedRanges = useMemo(() => (pick ? rangesFor('unified') : []), [pick, rangesFor]);
   const formRange = pickedRanges.at(-1);
-  const commentingLine =
-    pick && formRange !== undefined
-      ? { side: pick.side, lineNumber: formRange, quote: linePick.quote }
-      : null;
+  const commentingLine = formRange
+    ? { side: formRange.side, lineNumber: formRange.line, quote: linePick.quote }
+    : null;
   const [hoveredLine, setHoveredLine] = useState<number | null>(null);
   const dragFromLineNumber = useRef(false);
-  const dragStartRow = useRef<DiffLine | null>(null);
   const toggleOnClick = useRef<LineSelection | null>(null);
   const overlay = useFixupOverlay();
   const directEditing = useDirectEditing(chunk.lines, threads);
@@ -134,7 +141,7 @@ export const DiffChunk = memo(function DiffChunk({
   const containerRef = useRef<HTMLDivElement>(null);
   const codeSelection = useCodeSelection(containerRef, 'unified');
 
-  const { open: openPick, start: startPick } = linePick;
+  const { open: openPick, openBetween: openPickBetween, start: startPick } = linePick;
 
   // Handle comment trigger from keyboard navigation
   useEffect(() => {
@@ -156,16 +163,14 @@ export const DiffChunk = memo(function DiffChunk({
     [openPick],
   );
 
-  const openShiftClickComment = (selection: LineSelection) => linePick.extend(selection);
+  const openShiftClickComment = (selection: LineSelection) => linePick.extend(selection, 'unified');
 
-  const startCommentDrag = (selection: LineSelection, row: DiffLine, fromLineNumber = false) => {
+  const startCommentDrag = (selection: LineSelection, fromLineNumber = false) => {
     if (!onAddComment) return;
     dragFromLineNumber.current = fromLineNumber;
-    dragStartRow.current = row;
     linePick.setAnchor(selection);
-    setStartLine(selection.lineNumber);
-    setEndLine(selection.lineNumber);
-    setDragSide(selection.side);
+    setDragStart(selection);
+    setDragEnd(selection);
     setIsDragging(true);
   };
 
@@ -173,12 +178,10 @@ export const DiffChunk = memo(function DiffChunk({
     isShiftClick,
     addsLine,
     selection,
-    row,
   }: {
     isShiftClick: boolean;
     addsLine: boolean;
     selection: LineSelection | null;
-    row: DiffLine;
   }) => {
     toggleOnClick.current = null;
     if (!selection) return;
@@ -193,26 +196,12 @@ export const DiffChunk = memo(function DiffChunk({
       return;
     }
 
-    startCommentDrag(selection, row);
+    startCommentDrag(selection);
   };
 
-  // A drag from an unchanged line follows the side of the lines it reaches.
   const extendCommentDrag = (row: DiffLine) => {
-    if (!dragSide) return;
-    const lineNumber = lineNumberOn(row, dragSide);
-    if (lineNumber) {
-      setEndLine(lineNumber);
-      return;
-    }
-    const otherSide: DiffSide = dragSide === 'old' ? 'new' : 'old';
-    const otherStart = dragStartRow.current && lineNumberOn(dragStartRow.current, otherSide);
-    const otherEnd = lineNumberOn(row, otherSide);
-    if (otherStart && otherEnd) {
-      setDragSide(otherSide);
-      setStartLine(otherStart);
-      setEndLine(otherEnd);
-      linePick.setAnchor({ side: otherSide, lineNumber: otherStart });
-    }
+    const selection = selectionOfRow(row);
+    if (selection) setDragEnd(selection);
   };
 
   const handleRowClick = ({
@@ -264,21 +253,17 @@ export const DiffChunk = memo(function DiffChunk({
       // Defer so the click event fired after mouseup doesn't immediately
       // close the newly opened (still empty) comment form
       setTimeout(() => {
-        const actualEndLine = endLine ?? startLine;
-        const clickedLineNumber = dragFromLineNumber.current && startLine === actualEndLine;
-        if (startLine && actualEndLine && dragSide && !clickedLineNumber) {
-          if (startLine === actualEndLine) {
-            handleAddComment(dragSide, startLine);
-          } else {
-            const min = Math.min(startLine, actualEndLine);
-            const max = Math.max(startLine, actualEndLine);
-            handleAddComment(dragSide, [min, max]);
-          }
+        const end = dragEnd ?? dragStart;
+        const clickedLineNumber =
+          dragFromLineNumber.current &&
+          dragStart?.side === end?.side &&
+          dragStart?.lineNumber === end?.lineNumber;
+        if (dragStart && end && !clickedLineNumber) {
+          openPickBetween(dragStart, end, 'unified');
         }
         setIsDragging(false);
-        setStartLine(null);
-        setEndLine(null);
-        setDragSide(null);
+        setDragStart(null);
+        setDragEnd(null);
       }, 0);
     };
 
@@ -286,7 +271,7 @@ export const DiffChunk = memo(function DiffChunk({
     return () => {
       document.removeEventListener('mouseup', handleGlobalMouseUp);
     };
-  }, [isDragging, startLine, endLine, dragSide, handleAddComment]);
+  }, [isDragging, dragStart, dragEnd, openPickBetween]);
 
   const handleCancelComment = linePick.close;
 
@@ -305,8 +290,8 @@ export const DiffChunk = memo(function DiffChunk({
       ...(extraLines.length > 0
         ? [
             {
-              lines: extraLines.map((line) => ({ side, line })),
-              contents: extraLines.map((line) => linePick.contentOf(side, line)),
+              lines: extraLines,
+              contents: extraLines.map((range) => linePick.contentOf(range.side, range.line)),
             },
           ]
         : []),
@@ -350,27 +335,26 @@ export const DiffChunk = memo(function DiffChunk({
     }
   };
 
-  const getSelectedLineStyle = (line: DiffLine): string => {
+  const { between: linesBetween } = linePick;
+  const draggedRows = useMemo(() => {
+    if (!isDragging || !dragStart || !dragEnd) return [];
+    const dragged = linesBetween(dragStart, dragEnd, 'unified');
+    return chunk.lines.flatMap((row, index) => {
+      const selection = selectionOfRow(row);
+      return selection && dragged.some((line) => sameLine(line, selection)) ? [index] : [];
+    });
+  }, [isDragging, dragStart, dragEnd, linesBetween, chunk.lines]);
+
+  const getSelectedLineStyle = (line: DiffLine, index: number): string => {
     // Show selection during drag
-    const draggedNumber = dragSide && lineNumberOn(line, dragSide);
-    if (isDragging && startLine && endLine && draggedNumber) {
-      const min = Math.min(startLine, endLine);
-      const max = Math.max(startLine, endLine);
-      if (draggedNumber >= min && draggedNumber <= max) {
-        let classes = 'drag-selected';
-        // Add top border for first line
-        if (draggedNumber === min) {
-          classes += ' drag-selected-first';
-        }
-        // Add bottom border for last line
-        if (draggedNumber === max) {
-          classes += ' drag-selected-last';
-        }
-        return classes;
-      }
+    if (draggedRows.includes(index)) {
+      let classes = 'drag-selected';
+      if (index === draggedRows[0]) classes += ' drag-selected-first';
+      if (index === draggedRows.at(-1)) classes += ' drag-selected-last';
+      return classes;
     }
 
-    if (pick && pickHolds(pick, pick.side, lineNumberOn(line, pick.side))) {
+    if (pickHolds(pick, 'old', line.oldLineNumber) || pickHolds(pick, 'new', line.newLineNumber)) {
       return 'comment-selected';
     }
 
@@ -468,7 +452,7 @@ export const DiffChunk = memo(function DiffChunk({
   const folds = lockFoldsUnderForms(
     foldedLines,
     chunk.lines,
-    pick ? pickedRanges.map((lineNumber) => ({ side: pick.side, lineNumber })) : null,
+    pickedRanges.map(({ side, line }) => ({ side, lineNumber: line })),
     editing,
   );
   const selected = codeSelection.selected;
@@ -551,13 +535,13 @@ export const DiffChunk = memo(function DiffChunk({
                   lineId={lineId}
                   isCurrentLine={isCurrentLine || false}
                   hoveredLineIndex={hoveredLine}
-                  selectedLineStyle={getSelectedLineStyle(line)}
+                  selectedLineStyle={getSelectedLineStyle(line, index)}
                   onMouseEnter={() => {
                     setHoveredLine(index);
                   }}
                   onMouseLeave={() => setHoveredLine(null)}
                   onMouseMove={() => {
-                    if (isDragging && startLine) extendCommentDrag(line);
+                    if (isDragging && dragStart) extendCommentDrag(line);
                   }}
                   onCommentButtonMouseDown={
                     onAddComment &&
@@ -571,7 +555,6 @@ export const DiffChunk = memo(function DiffChunk({
                         isShiftClick: e.shiftKey,
                         addsLine,
                         selection,
-                        row: line,
                       });
                     })
                   }
@@ -586,7 +569,7 @@ export const DiffChunk = memo(function DiffChunk({
                     if (e.button !== 0 || e.shiftKey || !selection) return;
                     e.preventDefault();
                     if (e.ctrlKey || e.metaKey || linePick.addMode) return;
-                    startCommentDrag(selection, line, true);
+                    startCommentDrag(selection, true);
                   }}
                   canHover={canHover}
                   onOpenInEditor={
@@ -729,7 +712,6 @@ export const DiffChunk = memo(function DiffChunk({
                           <div
                             className={`${getCommentLayout(line) === 'full' ? 'w-full' : 'w-1/2'}`}
                           >
-                            <PickNotice notice={linePick.notice} />
                             <CommentForm
                               onSubmit={handleSubmitComment}
                               onCancel={handleCancelComment}

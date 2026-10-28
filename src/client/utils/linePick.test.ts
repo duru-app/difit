@@ -1,47 +1,60 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CommentThread } from '../../types/diff';
+import type { CommentThread, DiffLine } from '../../types/diff';
 
 import {
   extendTo,
   extraRangeEndsAt,
   type LinePick,
   pickLines,
-  type PickChange,
+  pickRows,
+  type PickRows,
   rangesOfPick,
   threadHoldsLine,
   toggleLine,
 } from './linePick';
 
 const at = (lineNumber: number, side: 'old' | 'new' = 'new') => ({ side, lineNumber });
-const picked = (change: PickChange): LinePick | null => {
-  if ('mixedSides' in change) throw new Error('mixed sides');
-  return change.pick;
-};
-const rangesAfter = (change: PickChange) => {
-  const pick = picked(change);
-  return pick ? rangesOfPick(pick) : null;
-};
+const normal = (oldLineNumber: number, newLineNumber = oldLineNumber): DiffLine => ({
+  type: 'normal',
+  content: '',
+  oldLineNumber,
+  newLineNumber,
+});
+const deleted = (oldLineNumber: number): DiffLine => ({
+  type: 'delete',
+  content: '',
+  oldLineNumber,
+});
+const added = (newLineNumber: number): DiffLine => ({ type: 'add', content: '', newLineNumber });
+
 // Lines on the screen: 10-15, 36-41 and 72-82, with hidden lines between.
-const SHOWN = [
-  ...Array.from({ length: 6 }, (_, i) => 10 + i),
-  ...Array.from({ length: 6 }, (_, i) => 36 + i),
-  ...Array.from({ length: 11 }, (_, i) => 72 + i),
-];
+const ROWS = pickRows(
+  [
+    ...Array.from({ length: 6 }, (_, i) => 10 + i),
+    ...Array.from({ length: 6 }, (_, i) => 36 + i),
+    ...Array.from({ length: 11 }, (_, i) => 72 + i),
+  ].map((line) => normal(line)),
+  'unified',
+);
+const rangesAfter = (pick: LinePick | null, rows: PickRows = ROWS) =>
+  pick
+    ? rangesOfPick(pick, rows).map(({ side, line }) => (side === 'new' ? line : { old: line }))
+    : null;
 
 describe('picking separate lines for one comment', () => {
   it('starts with the clicked line, and with the line clicked before it when there is one', () => {
     expect(rangesAfter(toggleLine(null, at(40)))).toEqual([40]);
     expect(rangesAfter(toggleLine(null, at(40), at(12)))).toEqual([12, 40]);
-    expect(rangesAfter(toggleLine(null, at(40), at(12, 'old')))).toEqual([40]);
+    expect(rangesAfter(toggleLine(null, at(40), at(12, 'old')))).toEqual([{ old: 12 }, 40]);
   });
 
   it('adds lines one at a time and joins neighbours into one range', () => {
-    let pick = picked(toggleLine(null, at(40), at(12)));
-    pick = picked(toggleLine(pick, at(77)));
-    pick = picked(toggleLine(pick, at(78)));
+    let pick = toggleLine(null, at(40), at(12));
+    pick = toggleLine(pick, at(77));
+    pick = toggleLine(pick, at(78));
 
-    expect(rangesOfPick(pick!)).toEqual([12, 40, [77, 78]]);
+    expect(rangesAfter(pick)).toEqual([12, 40, [77, 78]]);
   });
 
   it('takes a picked line out again, splitting the range it was in', () => {
@@ -52,45 +65,88 @@ describe('picking separate lines for one comment', () => {
   });
 
   it('grows the range added last with Shift and keeps the others', () => {
-    let pick = picked(toggleLine(null, at(40), at(12)));
-    pick = picked(toggleLine(pick, at(77)));
-    pick = picked(extendTo(pick, at(12), at(80), SHOWN));
+    let pick = toggleLine(null, at(40), at(12));
+    pick = toggleLine(pick, at(77));
+    pick = extendTo(pick, at(12), at(80), ROWS);
 
-    expect(rangesOfPick(pick!)).toEqual([12, 40, [77, 80]]);
-    expect(rangesAfter(extendTo(pick, at(12), at(79), SHOWN))).toEqual([12, 40, [77, 79]]);
+    expect(rangesAfter(pick)).toEqual([12, 40, [77, 80]]);
+    expect(rangesAfter(extendTo(pick, at(12), at(79), ROWS))).toEqual([12, 40, [77, 79]]);
   });
 
   it('keeps a line added with Ctrl when a Shift range covered it and then shrank', () => {
-    let pick = picked(toggleLine(null, at(38)));
-    pick = picked(toggleLine(pick, at(40)));
-    pick = picked(extendTo(pick, null, at(36), SHOWN));
-    expect(rangesOfPick(pick!)).toEqual([[36, 40]]);
+    let pick = toggleLine(null, at(38));
+    pick = toggleLine(pick, at(40));
+    pick = extendTo(pick, null, at(36), ROWS);
+    expect(rangesAfter(pick)).toEqual([[36, 40]]);
 
-    expect(rangesAfter(extendTo(pick, null, at(41), SHOWN))).toEqual([38, [40, 41]]);
+    expect(rangesAfter(extendTo(pick, null, at(41), ROWS))).toEqual([38, [40, 41]]);
   });
 
   it('leaves lines hidden between two parts of the diff out of a Shift range', () => {
-    const pick = picked(toggleLine(null, at(12)));
+    const pick = toggleLine(null, at(12));
 
-    expect(rangesAfter(extendTo(pick, null, at(38), SHOWN))).toEqual([
+    expect(rangesAfter(extendTo(pick, null, at(38), ROWS))).toEqual([
       [12, 15],
       [36, 38],
     ]);
   });
 
   it('picks one range from the line clicked before when nothing was added one at a time', () => {
-    expect(rangesAfter(extendTo(null, at(10), at(12), SHOWN))).toEqual([[10, 12]]);
-    expect(rangesAfter(extendTo(pickLines('new', [77, 80]), at(10), at(12), SHOWN))).toEqual([
+    expect(rangesAfter(extendTo(null, at(10), at(12), ROWS))).toEqual([[10, 12]]);
+    expect(rangesAfter(extendTo(pickLines('new', [77, 80]), at(10), at(12), ROWS))).toEqual([
       [10, 12],
     ]);
-    expect(rangesAfter(extendTo(null, null, at(12), SHOWN))).toEqual([12]);
+    expect(rangesAfter(extendTo(null, null, at(12), ROWS))).toEqual([12]);
+  });
+});
+
+describe('picking deleted and kept lines for one comment', () => {
+  const lines = [normal(9), deleted(10), deleted(11), added(10), normal(12, 11)];
+  const unified = pickRows(lines, 'unified');
+  const split = pickRows(lines, 'split');
+
+  it('adds a deleted line to kept lines with Ctrl', () => {
+    expect(rangesAfter(toggleLine(toggleLine(null, at(10)), at(11, 'old')), unified)).toEqual([
+      { old: 11 },
+      10,
+    ]);
   });
 
-  it('refuses a deleted line next to kept lines, and the other way round', () => {
-    const pick = picked(toggleLine(null, at(12)));
+  it('picks every row between the two clicks in the unified view, whichever side', () => {
+    expect(rangesAfter(extendTo(null, at(10, 'old'), at(11), unified), unified)).toEqual([
+      { old: [10, 11] },
+      [10, 11],
+    ]);
+    expect(rangesAfter(extendTo(null, at(9), at(11), unified), unified)).toEqual([
+      { old: [10, 11] },
+      [9, 11],
+    ]);
+  });
 
-    expect(toggleLine(pick, at(12, 'old'))).toEqual({ mixedSides: true });
-    expect(extendTo(pick, at(12), at(14, 'old'), SHOWN)).toEqual({ mixedSides: true });
+  it('picks both columns between a left and a right click in the split view', () => {
+    expect(rangesAfter(extendTo(null, at(10, 'old'), at(11), split), split)).toEqual([
+      { old: [10, 11] },
+      [10, 11],
+    ]);
+    expect(rangesAfter(extendTo(null, at(9, 'old'), at(11, 'old'), split), split)).toEqual([
+      { old: [9, 11] },
+    ]);
+  });
+
+  it('counts an unchanged line picked in both columns once, on the new side', () => {
+    expect(rangesAfter(toggleLine(toggleLine(null, at(9, 'old')), at(9)), split)).toEqual([9]);
+    expect(rangesAfter(toggleLine(null, at(9, 'old')), split)).toEqual([{ old: 9 }]);
+  });
+
+  it('puts the range on the bottom row last, the new side when both end on one row', () => {
+    expect(rangesAfter(toggleLine(toggleLine(null, at(10)), at(10, 'old')), split)).toEqual([
+      { old: 10 },
+      10,
+    ]);
+    expect(rangesAfter(toggleLine(toggleLine(null, at(9)), at(11, 'old')), split)).toEqual([
+      9,
+      { old: 11 },
+    ]);
   });
 });
 

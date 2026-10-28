@@ -1424,7 +1424,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
       rows.filter((row) => row.matches(DRAGGED) || row.querySelector(DRAGGED)).map(contentOf),
   });
 
-  it('keeps a drag from a deleted line to the old side', async () => {
+  it('takes every row a drag from a deleted line passes, on both sides', async () => {
     const { onAddComment, rows } = renderChunk(mode, { chunk: renumbered });
     const { rowOf, dragged } = pickRows(rows);
 
@@ -1438,12 +1438,10 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     await waitFor(() => {
-      expect(onAddComment).toHaveBeenCalledWith(
-        [19, 21],
-        'Keep these',
-        ['// first note', '// second note', 'guard();'].join('\n'),
-        'old',
-      );
+      expect(onAddComment).toHaveBeenCalledWith(23, 'Keep these', 'guard();', 'new', {
+        lines: [{ side: 'old', line: [19, 20] }],
+        contents: ['// first note\n// second note'],
+      });
     });
   });
 
@@ -1504,7 +1502,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
   });
 
   it.runIf(mode === 'unified')(
-    'takes the old side when a drag from an unchanged line reaches deleted lines',
+    'takes both sides when a drag from an unchanged line reaches deleted lines',
     async () => {
       const { onAddComment, rows } = renderChunk(mode, { chunk: renumbered });
       const { rowOf, dragged } = pickRows(rows);
@@ -1519,10 +1517,11 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
 
       await waitFor(() => {
         expect(onAddComment).toHaveBeenCalledWith(
-          [18, 20],
+          [19, 20],
           'These go',
-          ['kept();', '// first note', '// second note'].join('\n'),
+          ['// first note', '// second note'].join('\n'),
           'old',
+          { lines: [{ side: 'new', line: 22 }], contents: ['kept();'] },
         );
       });
     },

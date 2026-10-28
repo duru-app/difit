@@ -9,13 +9,20 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 
-import type { DiffLine, DiffSide, LineNumber, LineSelection } from '../../types/diff';
-import { extendTo, type LinePick, pickLines, type PickChange, toggleLine } from '../utils/linePick';
+import type { DiffLine, DiffSide, LineNumber, LineSelection, SidedLine } from '../../types/diff';
+import {
+  extendTo,
+  type LinePick,
+  linesBetween,
+  pickLines,
+  type PickLayout,
+  pickRows,
+  rangesOfPick,
+  samePickLines,
+  toggleLine,
+} from '../utils/linePick';
 
-const NOTICE_MS = 2500;
 const FLASH_MS = 1400;
-
-const MIXED_SIDES_NOTICE = '지운 줄과 남은 줄은 지적 하나에 함께 고를 수 없습니다';
 
 export interface LinePickStore {
   // The lines the open comment form is on; null while no form is open.
@@ -23,13 +30,16 @@ export interface LinePickStore {
   quote?: string;
   // Plain clicks on line numbers add and take out lines, for screens without Ctrl.
   addMode: boolean;
-  notice: string | null;
   flashedThreadId: string | null;
   start: (side: DiffSide, line: LineNumber, quote?: string) => void;
   // Like start, but closes the form when it is already open on exactly these lines.
   open: (side: DiffSide, line: LineNumber) => void;
+  // Like open, on every line of the rows from one line to the other.
+  openBetween: (from: LineSelection, to: LineSelection, layout: PickLayout) => void;
   toggle: (selection: LineSelection) => void;
-  extend: (selection: LineSelection) => void;
+  extend: (selection: LineSelection, layout: PickLayout) => void;
+  between: (from: LineSelection, to: LineSelection, layout: PickLayout) => LineSelection[];
+  ranges: (layout: PickLayout) => SidedLine[];
   // The line clicked last, where a Shift+click starts.
   setAnchor: (selection: LineSelection) => void;
   setAddMode: (on: boolean) => void;
@@ -41,7 +51,7 @@ export interface LinePickStore {
 const lineNumberOn = (line: DiffLine, side: DiffSide) =>
   side === 'old' ? line.oldLineNumber : line.newLineNumber;
 
-const sameSelection = (a: LineSelection | null, b: LineSelection | null) =>
+const sameAnchor = (a: LineSelection | null, b: LineSelection | null) =>
   !!a && !!b && a.side === b.side && a.lineNumber === b.lineNumber;
 
 // `cursorLine` is the line under the keyboard cursor: a Ctrl+click picks the line clicked before
@@ -54,40 +64,27 @@ function useLinePickState(
   const [quote, setQuote] = useState<string | undefined>();
   const [anchor, setAnchor] = useState<LineSelection | null>(null);
   const [addMode, setAddMode] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [flashedThreadId, setFlashedThreadId] = useState<string | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const cursorLineRef = useRef(cursorLine);
   cursorLineRef.current = cursorLine;
 
   useEffect(
     () => () => {
-      clearTimeout(noticeTimer.current);
       clearTimeout(flashTimer.current);
     },
     [],
   );
 
-  const shownOn = useCallback(
-    (side: DiffSide) =>
-      lines.flatMap((line) => {
-        const lineNumber = lineNumberOn(line, side);
-        return lineNumber === undefined ? [] : [lineNumber];
-      }),
+  const rows = useMemo(
+    () => ({ unified: pickRows(lines, 'unified'), split: pickRows(lines, 'split') }),
     [lines],
   );
 
-  const apply = useCallback((change: PickChange) => {
-    if ('mixedSides' in change) {
-      setNotice(MIXED_SIDES_NOTICE);
-      clearTimeout(noticeTimer.current);
-      noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
-      return;
-    }
-    setPick(change.pick);
+  const apply = useCallback((next: LinePick | null) => {
+    setPick(next);
     setQuote(undefined);
-    if (!change.pick) setAddMode(false);
+    if (!next) setAddMode(false);
   }, []);
 
   const close = useCallback(() => {
@@ -104,20 +101,31 @@ function useLinePickState(
   const open = useCallback(
     (side: DiffSide, line: LineNumber) => {
       const next = pickLines(side, line);
-      const same =
-        quote === undefined &&
-        pick?.side === side &&
-        pick.lines.length === next.lines.length &&
-        pick.lines.every((lineNumber, index) => lineNumber === next.lines[index]);
-      if (same) close();
+      if (quote === undefined && samePickLines(pick, next)) close();
       else start(side, line);
     },
     [pick, quote, close, start],
   );
 
+  const between = useCallback(
+    (from: LineSelection, to: LineSelection, layout: PickLayout) =>
+      linesBetween(rows[layout], from, to),
+    [rows],
+  );
+
+  const openBetween = useCallback(
+    (from: LineSelection, to: LineSelection, layout: PickLayout) => {
+      const lines = between(from, to, layout);
+      const next = { lines, anchor: from, span: lines, adding: false };
+      if (quote === undefined && samePickLines(pick, next)) close();
+      else apply(next);
+    },
+    [pick, quote, close, apply, between],
+  );
+
   const toggle = useCallback(
     (selection: LineSelection) => {
-      const seed = sameSelection(anchor, cursorLineRef.current) ? (anchor ?? undefined) : undefined;
+      const seed = sameAnchor(anchor, cursorLineRef.current) ? (anchor ?? undefined) : undefined;
       apply(toggleLine(pick, selection, seed));
       setAnchor(selection);
     },
@@ -125,11 +133,16 @@ function useLinePickState(
   );
 
   const extend = useCallback(
-    (selection: LineSelection) => {
-      apply(extendTo(pick, anchor, selection, shownOn(selection.side)));
+    (selection: LineSelection, layout: PickLayout) => {
+      apply(extendTo(pick, anchor, selection, rows[layout]));
       if (!pick?.adding) setAnchor(selection);
     },
-    [pick, anchor, shownOn, apply],
+    [pick, anchor, rows, apply],
+  );
+
+  const ranges = useCallback(
+    (layout: PickLayout) => (pick ? rangesOfPick(pick, rows[layout]) : []),
+    [pick, rows],
   );
 
   const contentOf = useCallback(
@@ -157,12 +170,14 @@ function useLinePickState(
       pick,
       quote,
       addMode,
-      notice,
       flashedThreadId,
       start,
       open,
+      openBetween,
       toggle,
       extend,
+      between,
+      ranges,
       setAnchor,
       setAddMode,
       close,
@@ -173,12 +188,14 @@ function useLinePickState(
       pick,
       quote,
       addMode,
-      notice,
       flashedThreadId,
       start,
       open,
+      openBetween,
       toggle,
       extend,
+      between,
+      ranges,
       close,
       contentOf,
       flash,
