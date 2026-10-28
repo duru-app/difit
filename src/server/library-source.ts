@@ -226,7 +226,7 @@ function headAbove(lines: string[], line: number): string {
 }
 
 // scip-java numbers the overloads of a method in declaration order, instance methods before
-// static ones: "()" is the first, "(+1)" the second. A constructor has no return type.
+// static ones: "()" is the first, "(+1)" the second.
 function methodLine(
   lines: string[],
   from: number,
