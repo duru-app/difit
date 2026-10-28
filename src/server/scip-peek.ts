@@ -273,6 +273,8 @@ export async function answerFromScipIndex(
     references: toMatches(shownReferences),
     truncated: definitions.length > MAX_DEFINITIONS || references.length > MAX_REFERENCES,
     source: 'index',
-    ...(found.external ? { library: externalSymbolDisplayName(found.symbol) } : {}),
+    ...(found.external
+      ? { library: externalSymbolDisplayName(found.symbol), librarySymbol: found.symbol }
+      : {}),
   };
 }

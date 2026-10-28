@@ -22,10 +22,12 @@ const commitDirectEdit = vi.hoisted(() => vi.fn());
 const commitDirectReword = vi.hoisted(() => vi.fn());
 
 const searchSymbol = vi.hoisted(() => vi.fn());
+const findLibrarySource = vi.hoisted(() => vi.fn());
 const reviewCommits = vi.hoisted(() => ({ list: [] as unknown[] }));
 
 vi.mock('./direct-edit.js', () => ({ commitDirectEdit, commitDirectReword }));
 vi.mock('./symbol-search.js', () => ({ searchSymbol }));
+vi.mock('./library-source.js', () => ({ findLibrarySource, sourceLocations: () => ({}) }));
 
 const TEST_CLIENT_GONE_GRACE_MS = vi.hoisted(() => 1000);
 vi.mock('./client-presence.js', async (importOriginal) => ({
@@ -1856,6 +1858,7 @@ describe('Server Integration Tests', () => {
 
     beforeEach(async () => {
       searchSymbol.mockReset();
+      findLibrarySource.mockReset();
       const result = await startServer({
         selection: { targetCommitish: 'HEAD', baseCommitish: 'HEAD^' },
         preferredPort: 9085,
@@ -1922,6 +1925,30 @@ describe('Server Integration Tests', () => {
       const response = await fetch(`http://localhost:${port}/api/symbol?name=parseDiff&ref=HEAD`);
 
       expect(response.status).toBe(404);
+    });
+
+    it('answers where the source of a library declaration was found', async () => {
+      const symbol = 'semanticdb maven jdk 8 java/util/Optional#orElse().';
+      const source = { found: false, missing: { kind: 'jdk', indexed: '8' } };
+      findLibrarySource.mockResolvedValue(source);
+
+      const response = await fetch(
+        `http://localhost:${port}/api/library-source?${new URLSearchParams({ symbol }).toString()}`,
+      );
+
+      expect(await response.json()).toEqual(source);
+      expect(findLibrarySource).toHaveBeenCalledWith(symbol, expect.anything());
+    });
+
+    it.each([
+      ['a missing symbol', ''],
+      ['an empty symbol', 'symbol='],
+      ['an overlong symbol', `symbol=${'a'.repeat(4097)}`],
+    ])('refuses %s as a library symbol', async (_label, query) => {
+      const response = await fetch(`http://localhost:${port}/api/library-source?${query}`);
+
+      expect(response.status).toBe(400);
+      expect(findLibrarySource).not.toHaveBeenCalled();
     });
   });
 

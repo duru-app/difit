@@ -56,6 +56,7 @@ import { commitDirectEdit, commitDirectReword, type EditedView } from './direct-
 import { chooseFixupTarget } from './fixup-target.js';
 import { FileWatcherService } from './file-watcher.js';
 import { GitDiffParser } from './git-diff.js';
+import { findLibrarySource, sourceLocations } from './library-source.js';
 import { type LineChanges, lineChangesBetween } from './line-changes.js';
 import { acceptLiveSockets, isLiveSocketRequest } from './live-socket.js';
 import { runGit } from './run-git.js';
@@ -87,6 +88,7 @@ import {
   type RewordRejection,
   type RewordRequest,
   type RewordResponse,
+  type LibrarySourceResponse,
   type SymbolIndexLogResponse,
   type SymbolSearchResponse,
   type ThreadAwaitingAgent,
@@ -132,6 +134,7 @@ const LOOPBACK_HOST_HEADERS = new Set([...LOOPBACK_ADDRESSES, '[::1]']);
 const MAX_DIFF_CACHE_ENTRIES = 8;
 const INDEXED_ANCESTOR_DEPTH = 50;
 const MAX_LINE_CHANGES = 16;
+const MAX_SYMBOL_LENGTH = 4096;
 
 function parseIntAtLeast(value: unknown, min: number): number | undefined {
   if (typeof value !== 'string' || !/^\d{1,9}$/.test(value)) return undefined;
@@ -895,6 +898,21 @@ export async function startServer(options: ServerOptions): Promise<{
       if (disconnected.signal.aborted) return;
       console.error('Error searching symbol:', error);
       res.status(404).json({ error: 'Could not search this revision' });
+    }
+  });
+
+  app.get('/api/library-source', async (req, res) => {
+    const { symbol } = req.query;
+    if (typeof symbol !== 'string' || symbol.length === 0 || symbol.length > MAX_SYMBOL_LENGTH) {
+      res.status(400).json({ error: 'Invalid symbol' });
+      return;
+    }
+    try {
+      const body: LibrarySourceResponse = await findLibrarySource(symbol, sourceLocations());
+      res.json(body);
+    } catch (error) {
+      console.error('Error reading library source:', error);
+      res.status(500).json({ error: 'Failed to read library source' });
     }
   });
 

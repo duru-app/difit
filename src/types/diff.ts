@@ -164,6 +164,8 @@ export interface SymbolSearchResponse {
   // The declaration lives only in this library, outside the repository, e.g.
   // `java.util.Optional#orElse()`.
   library?: string;
+  // The SCIP symbol of that declaration, which /api/library-source takes.
+  librarySymbol?: string;
   // How the index of the clicked commit, or of the ancestor whose index it waits for, stands
   // when name search answered a click in a Java file; /api/live announces each later change as
   // a `symbolIndexChanged` event.
@@ -179,6 +181,27 @@ export interface SymbolIndexLogResponse {
   // What is kept of the build log, without terminal color codes.
   text: string;
 }
+
+// Where the source of a library declaration was read from: the src.zip of an installed JDK,
+// whose major version may differ from the `indexed` one the code was compiled against, or a
+// -sources.jar in the Gradle or Maven cache.
+type LibrarySourceOrigin =
+  | { kind: 'jdk'; installed: string | null; indexed: string }
+  | { kind: 'gradle' | 'maven'; jar: string };
+
+// Why no source was shown: no installed JDK has a src.zip (`sourcePackage` is the system
+// package that would install a missing one), no cache holds a -sources.jar of the artifact,
+// the archive found does not hold the file, or the symbol names no JDK or Maven artifact.
+type LibrarySourceMissing =
+  | { kind: 'jdk'; indexed: string; sourcePackage?: string }
+  | { kind: 'jar'; artifact: string }
+  | { kind: 'file'; archive: string; path: string }
+  | { kind: 'unknown' };
+
+// GET /api/library-source?symbol=
+export type LibrarySourceResponse =
+  | { found: true; path: string; line: number; text: string; origin: LibrarySourceOrigin }
+  | { found: false; missing: LibrarySourceMissing };
 
 export type LineNumber = number | [number, number];
 
