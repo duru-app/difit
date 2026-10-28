@@ -785,6 +785,43 @@ describe('SymbolPeekModal with a commit index', () => {
     expect(await screen.findByText('라이브러리 소스를 읽지 못했습니다.')).toBeInTheDocument();
   });
 
+  it('lists the implementations between the declarations and the uses', async () => {
+    files['src/impl.ts'] = '\n\nclass Impl { addOne(n) { return n + 1; } }\n';
+    try {
+      render(modal());
+      await answer(
+        {
+          ...byIndex,
+          implementations: [
+            { path: 'src/impl.ts', line: 3, text: 'class Impl { addOne(n) { return n + 1; } }' },
+          ],
+        },
+        1,
+      );
+
+      const list = await screen.findByRole('navigation');
+      expect(
+        within(list)
+          .getAllByRole('heading')
+          .map((heading) => heading.textContent),
+      ).toEqual(['선언 1', '구현 1', '쓰인 곳 1']);
+      fireEvent.click(within(list).getByText('src/impl.ts:3'));
+      expect(selectedItem()).toContain('src/impl.ts:3');
+      expect(await shownRows()).toContainEqual(expect.stringContaining('class Impl'));
+    } finally {
+      delete files['src/impl.ts'];
+    }
+  });
+
+  it('shows no implementations without any in the answer', async () => {
+    render(modal());
+    await answer(byIndex, 1);
+
+    const list = await screen.findByRole('navigation');
+    await waitFor(() => expect(within(list).getByText('쓰인 곳 1')).toBeInTheDocument());
+    expect(within(list).queryByText(/^구현/)).toBeNull();
+  });
+
   it('marks only the uses that were found by name in an index answer', async () => {
     render(modal());
     await answer(

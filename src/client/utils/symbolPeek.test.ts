@@ -196,6 +196,13 @@ describe('reselect', () => {
     expect(reselect({ path: 'Gone.java', line: 1, text: 'run();' }, withLibrary)).toEqual(library);
     expect(reselect(library, result(['A.java']))).toMatchObject({ path: 'A.java' });
   });
+
+  it('keeps an implementation selected, and takes it first when there is no declaration', () => {
+    const implementation = { path: 'Impl.java', line: 3, text: 'class Impl {' };
+    const answer = { ...result(['A.java']), implementations: [implementation] };
+    expect(reselect(implementation, answer)).toEqual(implementation);
+    expect(reselect(null, answer)).toEqual(implementation);
+  });
 });
 
 describe('fetchLibrarySource', () => {

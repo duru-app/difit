@@ -115,7 +115,7 @@ export function reselect(
   current: PeekSelection | null,
   result: SymbolSearchResponse,
 ): PeekSelection | null {
-  const matches = [...result.definitions, ...result.references];
+  const matches = [...result.definitions, ...(result.implementations ?? []), ...result.references];
   if (!isLibraryDeclaration(current)) {
     const same = matches.find((match) => isSameMatch(match, current));
     if (same) return same;
