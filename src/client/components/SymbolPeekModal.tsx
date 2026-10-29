@@ -76,6 +76,7 @@ export function SymbolPeekModal({
 }: SymbolPeekModalProps) {
   const [search, setSearch] = useState<SearchState>({ status: 'loading' });
   const [selected, setSelected] = useState<PeekSelection | null>(null);
+  const [missingSources, setMissingSources] = useState<ReadonlySet<string>>(() => new Set());
   // Until the user picks an item, or looks up a name in it, a new answer chooses the selection
   // afresh.
   const autoPicked = useRef(true);
@@ -146,6 +147,18 @@ export function SymbolPeekModal({
     return () => controller.abort();
   }, [answered, indexUpdate, request]);
 
+  useEffect(() => {
+    if (!autoPicked.current || !answered || !isLibraryDeclaration(selected)) return;
+    const implementation = answered.result.implementations?.[0];
+    if (implementation && missingSources.has(selected.librarySymbol)) setSelected(implementation);
+  }, [answered, missingSources, selected]);
+
+  const noteMissingSource = useCallback(
+    (symbol: string) =>
+      setMissingSources((known) => (known.has(symbol) ? known : new Set(known).add(symbol))),
+    [],
+  );
+
   return (
     <div
       hidden={hidden}
@@ -211,6 +224,7 @@ export function SymbolPeekModal({
                 key={selected.librarySymbol}
                 symbol={selected.librarySymbol}
                 syntaxTheme={syntaxTheme}
+                onMissing={noteMissingSource}
               />
             ) : (
               selected && (
@@ -585,23 +599,28 @@ function missingReason(missing: LibrarySourceMissing): React.ReactNode {
 interface LibrarySourceViewProps {
   symbol: string;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
+  onMissing: (symbol: string) => void;
 }
 
-function LibrarySourceView({ symbol, syntaxTheme }: LibrarySourceViewProps) {
+function LibrarySourceView({ symbol, syntaxTheme, onMissing }: LibrarySourceViewProps) {
   const [source, setSource] = useState<LibrarySourceResponse | null | undefined>(undefined);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchLibrarySource(symbol, controller.signal).then(
       (fetched) => {
-        if (!controller.signal.aborted) setSource(fetched);
+        if (controller.signal.aborted) return;
+        setSource(fetched);
+        if (!fetched.found) onMissing(symbol);
       },
       () => {
-        if (!controller.signal.aborted) setSource(null);
+        if (controller.signal.aborted) return;
+        setSource(null);
+        onMissing(symbol);
       },
     );
     return () => controller.abort();
-  }, [symbol]);
+  }, [symbol, onMissing]);
 
   if (source === undefined) return <Notice>라이브러리 소스를 찾는 중…</Notice>;
   if (source === null) return <Notice>라이브러리 소스를 읽지 못했습니다.</Notice>;

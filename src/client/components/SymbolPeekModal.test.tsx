@@ -841,6 +841,59 @@ describe('SymbolPeekModal with a commit index', () => {
     expect(await screen.findByText('라이브러리 소스를 읽지 못했습니다.')).toBeInTheDocument();
   });
 
+  describe('a library declaration implemented in the repository', () => {
+    const implementation = { path: 'src/impl.ts', line: 2, text: 'orElse(other) {' };
+    const implemented: SymbolSearchResponse = { ...byLibrary, implementations: [implementation] };
+
+    beforeEach(() => {
+      files['src/impl.ts'] = 'class Impl {\norElse(other) {\n}\n}\n';
+    });
+
+    afterEach(() => {
+      delete files['src/impl.ts'];
+    });
+
+    it('opens the first implementation when the library source is missing', async () => {
+      librarySource = { found: false, missing: { kind: 'jar', artifact: 'org.example:lib:1.0' } };
+      render(modal());
+      await answer(implemented, 1);
+
+      await waitFor(() => expect(selectedItem()).toContain('src/impl.ts:2'));
+      expect(await shownRows()).toContainEqual(expect.stringContaining('orElse(other) {'));
+    });
+
+    it('keeps the library declaration whose source is found', async () => {
+      librarySource = libraryFound({ kind: 'gradle', jar: 'x-1.0-sources.jar' });
+      render(modal());
+      await answer(implemented, 1);
+
+      expect(
+        await screen.findByText(
+          (_, element) => element?.textContent === 'java/util/Optional.java · x-1.0-sources.jar',
+        ),
+      ).toBeInTheDocument();
+      expect(selectedItem()).toContain('java.util.Optional#orElse()');
+    });
+
+    it('says why the source is missing when the library declaration is picked', async () => {
+      librarySource = { found: false, missing: { kind: 'jar', artifact: 'org.example:lib:1.0' } };
+      render(modal());
+      await answer(implemented, 1);
+      await waitFor(() => expect(selectedItem()).toContain('src/impl.ts:2'));
+
+      fireEvent.click(
+        within(screen.getByRole('navigation')).getByText('java.util.Optional#orElse()'),
+      );
+
+      expect(
+        await screen.findByText(
+          'Gradle 캐시와 Maven 저장소에 org.example:lib:1.0의 소스 jar가 없습니다.',
+        ),
+      ).toBeInTheDocument();
+      expect(selectedItem()).toContain('java.util.Optional#orElse()');
+    });
+  });
+
   it('lists the implementations between the declarations and the uses', async () => {
     files['src/impl.ts'] = '\n\nclass Impl { addOne(n) { return n + 1; } }\n';
     try {
