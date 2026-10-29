@@ -126,17 +126,23 @@ export function isLibraryDeclaration(
 }
 
 // Keeps the selected place when the answer still has it; otherwise the library declaration
-// comes first, as it stands for the declaration the answer lacks.
+// comes first, as it stands for the declaration the answer lacks, unless its source is known to
+// be missing and the repository implements it.
 export function reselect(
   current: PeekSelection | null,
   result: SymbolSearchResponse,
+  missingSources: Pick<ReadonlySet<string>, 'has'> = new Set(),
 ): PeekSelection | null {
   const matches = [...result.definitions, ...(result.implementations ?? []), ...result.references];
   if (!isLibraryDeclaration(current)) {
     const same = matches.find((match) => isSameMatch(match, current));
     if (same) return same;
   }
-  if (result.librarySymbol) return { librarySymbol: result.librarySymbol };
+  const { librarySymbol } = result;
+  if (librarySymbol) {
+    const implementation = result.implementations?.[0];
+    return implementation && missingSources.has(librarySymbol) ? implementation : { librarySymbol };
+  }
   return matches[0] ?? null;
 }
 

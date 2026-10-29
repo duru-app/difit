@@ -76,7 +76,10 @@ export function SymbolPeekModal({
 }: SymbolPeekModalProps) {
   const [search, setSearch] = useState<SearchState>({ status: 'loading' });
   const [selected, setSelected] = useState<PeekSelection | null>(null);
-  const [missingSources, setMissingSources] = useState<ReadonlySet<string>>(() => new Set());
+  const [missingSources, setMissingSources] = useState<ReadonlyMap<string, LibrarySourceResponse>>(
+    () => new Map(),
+  );
+  const missingSourcesRef = useRef(missingSources);
   // Until the user picks an item, or looks up a name in it, a new answer chooses the selection
   // afresh.
   const autoPicked = useRef(true);
@@ -105,7 +108,7 @@ export function SymbolPeekModal({
         if (controller.signal.aborted) return;
         setSearch({ status: 'done', result, seq });
         autoPicked.current = true;
-        setSelected(reselect(null, result));
+        setSelected(reselect(null, result, missingSourcesRef.current));
       },
       () => {
         if (!controller.signal.aborted) setSearch({ status: 'failed' });
@@ -140,7 +143,9 @@ export function SymbolPeekModal({
       (result) => {
         if (controller.signal.aborted) return;
         setSearch({ status: 'done', result, seq });
-        setSelected((current) => reselect(autoPicked.current ? null : current, result));
+        setSelected((current) =>
+          reselect(autoPicked.current ? null : current, result, missingSourcesRef.current),
+        );
       },
       () => {},
     );
@@ -148,14 +153,15 @@ export function SymbolPeekModal({
   }, [answered, indexUpdate, request]);
 
   useEffect(() => {
+    missingSourcesRef.current = missingSources;
     if (!autoPicked.current || !answered || !isLibraryDeclaration(selected)) return;
-    const implementation = answered.result.implementations?.[0];
-    if (implementation && missingSources.has(selected.librarySymbol)) setSelected(implementation);
+    const next = reselect(null, answered.result, missingSources);
+    if (!isLibraryDeclaration(next)) setSelected(next);
   }, [answered, missingSources, selected]);
 
   const noteMissingSource = useCallback(
-    (symbol: string) =>
-      setMissingSources((known) => (known.has(symbol) ? known : new Set(known).add(symbol))),
+    (symbol: string, missing: LibrarySourceResponse) =>
+      setMissingSources((known) => new Map(known).set(symbol, missing)),
     [],
   );
 
@@ -224,6 +230,7 @@ export function SymbolPeekModal({
                 key={selected.librarySymbol}
                 symbol={selected.librarySymbol}
                 syntaxTheme={syntaxTheme}
+                known={missingSources.get(selected.librarySymbol)}
                 onMissing={noteMissingSource}
               />
             ) : (
@@ -599,28 +606,28 @@ function missingReason(missing: LibrarySourceMissing): React.ReactNode {
 interface LibrarySourceViewProps {
   symbol: string;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
-  onMissing: (symbol: string) => void;
+  known?: LibrarySourceResponse;
+  onMissing: (symbol: string, missing: LibrarySourceResponse) => void;
 }
 
-function LibrarySourceView({ symbol, syntaxTheme, onMissing }: LibrarySourceViewProps) {
-  const [source, setSource] = useState<LibrarySourceResponse | null | undefined>(undefined);
+function LibrarySourceView({ symbol, syntaxTheme, known, onMissing }: LibrarySourceViewProps) {
+  const [source, setSource] = useState<LibrarySourceResponse | null | undefined>(known);
 
   useEffect(() => {
+    if (known) return;
     const controller = new AbortController();
     fetchLibrarySource(symbol, controller.signal).then(
       (fetched) => {
         if (controller.signal.aborted) return;
         setSource(fetched);
-        if (!fetched.found) onMissing(symbol);
+        if (!fetched.found) onMissing(symbol, fetched);
       },
       () => {
-        if (controller.signal.aborted) return;
-        setSource(null);
-        onMissing(symbol);
+        if (!controller.signal.aborted) setSource(null);
       },
     );
     return () => controller.abort();
-  }, [symbol, onMissing]);
+  }, [symbol, known, onMissing]);
 
   if (source === undefined) return <Notice>라이브러리 소스를 찾는 중…</Notice>;
   if (source === null) return <Notice>라이브러리 소스를 읽지 못했습니다.</Notice>;

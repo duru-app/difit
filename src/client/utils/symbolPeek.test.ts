@@ -215,6 +215,20 @@ describe('reselect', () => {
     expect(reselect(null, answer)).toEqual({ librarySymbol: symbol });
     expect(reselect(implementation, answer)).toEqual(implementation);
   });
+
+  it('takes the first implementation over a library declaration whose source is missing', () => {
+    const symbol = 'semanticdb maven jdk 8 java/lang/Runnable#run().';
+    const implementation = { path: 'Impl.java', line: 3, text: 'public void run() {' };
+    const answer = {
+      ...result(['A.java']),
+      librarySymbol: symbol,
+      implementations: [implementation],
+    };
+    expect(reselect(null, answer, new Set([symbol]))).toEqual(implementation);
+    expect(
+      reselect(null, { ...result(['A.java']), librarySymbol: symbol }, new Set([symbol])),
+    ).toEqual({ librarySymbol: symbol });
+  });
 });
 
 describe('fetchLibrarySource', () => {

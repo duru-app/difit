@@ -891,6 +891,29 @@ describe('SymbolPeekModal with a commit index', () => {
         ),
       ).toBeInTheDocument();
       expect(selectedItem()).toContain('java.util.Optional#orElse()');
+      expect(libraryRequests()).toHaveLength(1);
+    });
+
+    it('keeps the library declaration when its source could not be read', async () => {
+      render(modal());
+      await answer(implemented, 1);
+
+      expect(await screen.findByText('라이브러리 소스를 읽지 못했습니다.')).toBeInTheDocument();
+      expect(selectedItem()).toContain('java.util.Optional#orElse()');
+    });
+
+    it('stays on the implementation when the index answers again', async () => {
+      librarySource = { found: false, missing: { kind: 'jar', artifact: 'org.example:lib:1.0' } };
+      const { rerender } = render(modal());
+      await answer({ ...implemented, indexCommit: commit, indexWithoutRelations: true }, 1);
+      await waitFor(() => expect(selectedItem()).toContain('src/impl.ts:2'));
+
+      rerender(modal(updates(ready, 2)));
+      await answer({ ...implemented, indexCommit: commit }, 2);
+      await waitFor(() => expect(symbolRequests()).toHaveLength(2));
+
+      expect(selectedItem()).toContain('src/impl.ts:2');
+      expect(libraryRequests()).toHaveLength(1);
     });
   });
 
