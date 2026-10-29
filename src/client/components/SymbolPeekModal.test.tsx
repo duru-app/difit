@@ -916,11 +916,14 @@ describe('SymbolPeekModal with a commit index', () => {
       });
       observer.observe(document.body, { childList: true, subtree: true });
 
-      rerender(modal(updates(ready, 2)));
-      await answer({ ...implemented, indexCommit: commit }, 2);
-      await waitFor(() => expect(symbolRequests()).toHaveLength(2));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      observer.disconnect();
+      try {
+        rerender(modal(updates(ready, 2)));
+        await answer({ ...implemented, indexCommit: commit }, 2);
+        await waitFor(() => expect(symbolRequests()).toHaveLength(2));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } finally {
+        observer.disconnect();
+      }
 
       expect(selectedItem()).toContain('src/impl.ts:2');
       expect(libraryRequests()).toHaveLength(1);

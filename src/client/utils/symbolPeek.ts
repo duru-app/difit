@@ -127,7 +127,8 @@ export function isLibraryDeclaration(
 
 // Keeps the selected place when the answer still has it; otherwise the library declaration
 // comes first, as it stands for the declaration the answer lacks, unless its source is known to
-// be missing and the repository implements it. A library declaration passed in is kept.
+// be missing and the repository implements it. When the current selection is a library
+// declaration, the answer's library declaration stays selected even then.
 export function reselect(
   current: PeekSelection | null,
   result: SymbolSearchResponse,
