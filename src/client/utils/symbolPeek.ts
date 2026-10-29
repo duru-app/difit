@@ -127,7 +127,7 @@ export function isLibraryDeclaration(
 
 // Keeps the selected place when the answer still has it; otherwise the library declaration
 // comes first, as it stands for the declaration the answer lacks, unless its source is known to
-// be missing and the repository implements it.
+// be missing and the repository implements it. A library declaration passed in is kept.
 export function reselect(
   current: PeekSelection | null,
   result: SymbolSearchResponse,
@@ -141,7 +141,8 @@ export function reselect(
   const { librarySymbol } = result;
   if (librarySymbol) {
     const implementation = result.implementations?.[0];
-    return implementation && missingSources.has(librarySymbol) ? implementation : { librarySymbol };
+    const skip = !isLibraryDeclaration(current) && missingSources.has(librarySymbol);
+    return implementation && skip ? implementation : { librarySymbol };
   }
   return matches[0] ?? null;
 }

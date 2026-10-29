@@ -225,6 +225,9 @@ describe('reselect', () => {
       implementations: [implementation],
     };
     expect(reselect(null, answer, new Set([symbol]))).toEqual(implementation);
+    expect(reselect({ librarySymbol: symbol }, answer, new Set([symbol]))).toEqual({
+      librarySymbol: symbol,
+    });
     expect(
       reselect(null, { ...result(['A.java']), librarySymbol: symbol }, new Set([symbol])),
     ).toEqual({ librarySymbol: symbol });

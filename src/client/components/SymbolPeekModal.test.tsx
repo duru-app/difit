@@ -899,6 +899,7 @@ describe('SymbolPeekModal with a commit index', () => {
       await answer(implemented, 1);
 
       expect(await screen.findByText('라이브러리 소스를 읽지 못했습니다.')).toBeInTheDocument();
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(selectedItem()).toContain('java.util.Optional#orElse()');
     });
 
@@ -907,13 +908,40 @@ describe('SymbolPeekModal with a commit index', () => {
       const { rerender } = render(modal());
       await answer({ ...implemented, indexCommit: commit, indexWithoutRelations: true }, 1);
       await waitFor(() => expect(selectedItem()).toContain('src/impl.ts:2'));
+      const shownTexts: string[] = [];
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) shownTexts.push(node.textContent ?? '');
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
 
       rerender(modal(updates(ready, 2)));
       await answer({ ...implemented, indexCommit: commit }, 2);
       await waitFor(() => expect(symbolRequests()).toHaveLength(2));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      observer.disconnect();
 
       expect(selectedItem()).toContain('src/impl.ts:2');
       expect(libraryRequests()).toHaveLength(1);
+      expect(shownTexts.filter((text) => text.includes('소스 jar가 없습니다'))).toEqual([]);
+    });
+
+    it('keeps the library declaration picked by the user when the index answers again', async () => {
+      librarySource = { found: false, missing: { kind: 'jar', artifact: 'org.example:lib:1.0' } };
+      const { rerender } = render(modal());
+      await answer({ ...implemented, indexCommit: commit, indexWithoutRelations: true }, 1);
+      await waitFor(() => expect(selectedItem()).toContain('src/impl.ts:2'));
+      fireEvent.click(
+        within(screen.getByRole('navigation')).getByText('java.util.Optional#orElse()'),
+      );
+
+      rerender(modal(updates(ready, 2)));
+      await answer({ ...implemented, indexCommit: commit }, 2);
+      await waitFor(() => expect(symbolRequests()).toHaveLength(2));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(selectedItem()).toContain('java.util.Optional#orElse()');
     });
   });
 

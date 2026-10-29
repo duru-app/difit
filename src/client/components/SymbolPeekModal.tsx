@@ -59,6 +59,8 @@ interface SymbolPeekModalProps {
   indexUpdates?: SymbolIndexUpdates;
 }
 
+type MissingLibrarySource = Extract<LibrarySourceResponse, { found: false }>;
+
 // `seq` is the count of index changes heard when the search started.
 type SearchState =
   | { status: 'loading' }
@@ -76,7 +78,7 @@ export function SymbolPeekModal({
 }: SymbolPeekModalProps) {
   const [search, setSearch] = useState<SearchState>({ status: 'loading' });
   const [selected, setSelected] = useState<PeekSelection | null>(null);
-  const [missingSources, setMissingSources] = useState<ReadonlyMap<string, LibrarySourceResponse>>(
+  const [missingSources, setMissingSources] = useState<ReadonlyMap<string, MissingLibrarySource>>(
     () => new Map(),
   );
   const missingSourcesRef = useRef(missingSources);
@@ -153,17 +155,17 @@ export function SymbolPeekModal({
   }, [answered, indexUpdate, request]);
 
   useEffect(() => {
-    missingSourcesRef.current = missingSources;
     if (!autoPicked.current || !answered || !isLibraryDeclaration(selected)) return;
     const next = reselect(null, answered.result, missingSources);
     if (!isLibraryDeclaration(next)) setSelected(next);
   }, [answered, missingSources, selected]);
 
-  const noteMissingSource = useCallback(
-    (symbol: string, missing: LibrarySourceResponse) =>
-      setMissingSources((known) => new Map(known).set(symbol, missing)),
-    [],
-  );
+  const noteMissingSource = useCallback((symbol: string, missing: MissingLibrarySource) => {
+    if (missingSourcesRef.current.has(symbol)) return;
+    const known = new Map(missingSourcesRef.current).set(symbol, missing);
+    missingSourcesRef.current = known;
+    setMissingSources(known);
+  }, []);
 
   return (
     <div
@@ -606,8 +608,8 @@ function missingReason(missing: LibrarySourceMissing): React.ReactNode {
 interface LibrarySourceViewProps {
   symbol: string;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
-  known?: LibrarySourceResponse;
-  onMissing: (symbol: string, missing: LibrarySourceResponse) => void;
+  known?: MissingLibrarySource;
+  onMissing: (symbol: string, missing: MissingLibrarySource) => void;
 }
 
 function LibrarySourceView({ symbol, syntaxTheme, known, onMissing }: LibrarySourceViewProps) {
