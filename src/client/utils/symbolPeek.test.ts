@@ -203,6 +203,18 @@ describe('reselect', () => {
     expect(reselect(implementation, answer)).toEqual(implementation);
     expect(reselect(null, answer)).toEqual(implementation);
   });
+
+  it('takes the declaration only a library holds ahead of the implementations', () => {
+    const symbol = 'semanticdb maven jdk 8 java/lang/Runnable#run().';
+    const implementation = { path: 'Impl.java', line: 3, text: 'public void run() {' };
+    const answer = {
+      ...result(['A.java']),
+      librarySymbol: symbol,
+      implementations: [implementation],
+    };
+    expect(reselect(null, answer)).toEqual({ librarySymbol: symbol });
+    expect(reselect(implementation, answer)).toEqual(implementation);
+  });
 });
 
 describe('fetchLibrarySource', () => {
