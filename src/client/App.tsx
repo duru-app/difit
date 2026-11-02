@@ -94,11 +94,12 @@ import {
   type DirectEditFailure,
   type FixupOverlayState,
 } from './contexts/FixupOverlayContext';
+import { DiffLineLinkProvider, type DiffLineLinks } from './contexts/DiffLineLinkContext';
 import { PickedThreadProvider } from './contexts/PickedThreadContext';
 import { WordHighlightProvider } from './contexts/WordHighlightContext';
 import { useAppearanceSettings } from './hooks/useAppearanceSettings';
 import { useDiffComments } from './hooks/useDiffComments';
-import { useExpandedLines, type MergedChunk } from './hooks/useExpandedLines';
+import { rangesAroundNewLines, useExpandedLines, type MergedChunk } from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation';
 import { useChunkChangeKinds } from './hooks/useChunkChangeKinds';
@@ -117,6 +118,7 @@ import { useViewport } from './hooks/useViewport';
 import { fetchClientSettings, saveClientSettings } from './services/userSettings';
 import { hasMultipleCommentAuthors } from './utils/commentAuthors';
 import { copyTextToClipboard } from './utils/clipboard';
+import { createDiffPathResolver, type DiffLineTarget, linesOf } from './utils/diffLineLinks';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import {
   getElementId,
@@ -172,6 +174,25 @@ const DIFF_MIN_WIDTH = 640;
 // The panel not resized last gives way first. The one resized last keeps a factor of 1, because
 // flex lets a lone item with a factor below 1 absorb only that fraction of the overflow.
 const YIELDING_PANEL_SHRINK = 1000;
+const LINE_LINK_CONTEXT = 3;
+const LINE_LINK_MAX_LINES = 200;
+const LINE_LINK_WAIT_MS = 1000;
+const LINE_LINK_FLASH_MS = 1400;
+const LINE_LINK_FLASH_ATTRIBUTE = 'data-line-link-flash';
+
+const flashRows = (elementIds: readonly string[], deadline: number) => {
+  requestAnimationFrame(() => {
+    const rows = elementIds.flatMap((id) => document.getElementById(id)?.closest('tr') ?? []);
+    if (rows.length === 0) {
+      if (Date.now() < deadline) flashRows(elementIds, deadline);
+      return;
+    }
+    rows.forEach((row) => row.setAttribute(LINE_LINK_FLASH_ATTRIBUTE, ''));
+    setTimeout(() => {
+      rows.forEach((row) => row.removeAttribute(LINE_LINK_FLASH_ATTRIBUTE));
+    }, LINE_LINK_FLASH_MS);
+  });
+};
 
 const parseDiffViewMode = (value: unknown): DiffViewMode | null => {
   switch (value) {
@@ -2218,6 +2239,72 @@ function App() {
     fixupSpread,
   ]);
 
+  const pendingLineLinkRef = useRef<{ target: DiffLineTarget; side: DiffSide } | null>(null);
+  const [lineLinkRequest, setLineLinkRequest] = useState(0);
+  const openDiffLineLink = (target: DiffLineTarget) => {
+    const file = diffData?.files.find(({ path }) => path === target.file);
+    if (!file) return;
+    const side: DiffSide = file.status === 'deleted' ? 'old' : 'new';
+    jumpWithinReview({ kind: 'line', file: file.path, line: target.line, side, cursor: true });
+    const pending = { target, side };
+    pendingLineLinkRef.current = pending;
+    setCollapsedFiles((prev) => {
+      if (!prev.has(file.path)) return prev;
+      const next = new Set(prev);
+      next.delete(file.path);
+      return next;
+    });
+    ensureFileRendered(file.path);
+    setLineLinkRequest((count) => count + 1);
+    const giveUp = () => {
+      setTimeout(() => {
+        if (pendingLineLinkRef.current !== pending) return;
+        pendingLineLinkRef.current = null;
+        scrollFileIntoDiffContainer(file.path);
+      }, LINE_LINK_WAIT_MS);
+    };
+    const shown = linesOf(target, LINE_LINK_MAX_LINES);
+    openLines(file, rangesAroundNewLines(file, shown, LINE_LINK_CONTEXT)).then(giveUp, giveUp);
+  };
+  const openDiffLineLinkRef = useRef(openDiffLineLink);
+  openDiffLineLinkRef.current = openDiffLineLink;
+  const resolveDiffPath = useMemo(
+    () => createDiffPathResolver(diffData?.files.map(({ path }) => path) ?? []),
+    [diffData],
+  );
+  const diffLineLinks = useMemo<DiffLineLinks>(
+    () => ({
+      resolve: resolveDiffPath,
+      open: (target) => openDiffLineLinkRef.current(target),
+    }),
+    [resolveDiffPath],
+  );
+  useEffect(() => {
+    const pending = pendingLineLinkRef.current;
+    if (!pending) return;
+    const { target, side } = pending;
+    if (!renderedFilePaths.has(target.file) || collapsedFiles.has(target.file)) return;
+    const elementIdOf = (line: number) => {
+      const position = findLinePlacePosition({ file: target.file, line, side }, navigableFiles);
+      return position && { position, id: getElementId(position, diffMode) };
+    };
+    const first = elementIdOf(target.line);
+    if (!first) return;
+    pendingLineLinkRef.current = null;
+    setCursorPosition(first.position);
+    scrollFileIntoDiffContainer(target.file, first.id);
+    const ids = linesOf(target, LINE_LINK_MAX_LINES).flatMap((line) => elementIdOf(line)?.id ?? []);
+    flashRows(ids, Date.now() + LINE_LINK_WAIT_MS);
+  }, [
+    lineLinkRequest,
+    renderedFilePaths,
+    collapsedFiles,
+    navigableFiles,
+    diffMode,
+    setCursorPosition,
+    scrollFileIntoDiffContainer,
+  ]);
+
   const handleOpenInEditor = useCallback(
     async (filePath: string, lineNumber: number) => {
       try {
@@ -2816,117 +2903,119 @@ function App() {
           )}
 
           <PickedThreadProvider value={pickedThread?.id ?? null}>
-            <main
-              ref={diffScrollContainerRef}
-              className={`flex-1 overflow-y-auto ${showMobileCommentsBar ? 'pb-16' : ''}`}
-              style={
-                isMobile
-                  ? undefined
-                  : { minWidth: `min(${DIFF_MIN_WIDTH}px, calc(100% - ${reservedPanelWidth}px))` }
-              }
-            >
-              {diffData.files.map((file, fileIndex) => {
-                const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
-                const mergedChunks =
-                  getMergedChunksForVersion(mergedChunksState, diffDataVersion, file.path) ??
-                  EMPTY_MERGED_CHUNKS;
-                const isRendered = renderedFilePaths.has(file.path);
-                return (
-                  <div
-                    key={file.path}
-                    id={getFileElementId(file.path)}
-                    data-file-path={file.path}
-                    data-rendered={isRendered ? 'true' : 'false'}
-                    ref={(node) => registerLazyFileContainer(file.path, node)}
-                    className="mb-6"
-                    onMouseEnter={() => {
-                      hoveredFileIndexRef.current = fileIndex;
-                    }}
-                    onMouseLeave={() => {
-                      if (hoveredFileIndexRef.current === fileIndex) {
-                        hoveredFileIndexRef.current = null;
-                      }
-                    }}
-                  >
-                    {isRendered ? (
-                      <DiffViewer
-                        file={file}
-                        threads={fileThreads}
-                        showAuthorBadges={showAuthorBadges}
-                        diffMode={diffMode}
-                        reviewedFiles={viewedFiles}
-                        isChangedSinceViewed={changedSinceViewedFiles.has(file.path)}
-                        onToggleReviewed={handleViewedButtonToggle}
-                        collapsedFiles={collapsedFiles}
-                        onToggleCollapsed={toggleFileCollapsed}
-                        onToggleAllCollapsed={toggleAllFilesCollapsed}
-                        onAddComment={takesComments ? handleAddComment : undefined}
-                        onAddFileComment={takesComments ? handleAddFileComment : undefined}
-                        onResolveThread={resolveThread}
-                        onReplyToThread={handleReplyToThread}
-                        onRemoveMessage={removeMessage}
-                        onUpdateMessage={updateMessage}
-                        onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
-                        syntaxTheme={settings.syntaxTheme}
-                        baseCommitish={diffData.baseCommitish}
-                        targetCommitish={diffData.targetCommitish}
-                        cursor={cursor?.fileIndex === fileIndex ? cursor : null}
-                        isFocused={cursor?.fileIndex === fileIndex}
-                        fileIndex={fileIndex}
-                        onLineClick={handleLineClick}
-                        commentTrigger={
-                          commentTrigger?.fileIndex === fileIndex ? commentTrigger : null
+            <DiffLineLinkProvider value={diffLineLinks}>
+              <main
+                ref={diffScrollContainerRef}
+                className={`flex-1 overflow-y-auto ${showMobileCommentsBar ? 'pb-16' : ''}`}
+                style={
+                  isMobile
+                    ? undefined
+                    : { minWidth: `min(${DIFF_MIN_WIDTH}px, calc(100% - ${reservedPanelWidth}px))` }
+                }
+              >
+                {diffData.files.map((file, fileIndex) => {
+                  const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
+                  const mergedChunks =
+                    getMergedChunksForVersion(mergedChunksState, diffDataVersion, file.path) ??
+                    EMPTY_MERGED_CHUNKS;
+                  const isRendered = renderedFilePaths.has(file.path);
+                  return (
+                    <div
+                      key={file.path}
+                      id={getFileElementId(file.path)}
+                      data-file-path={file.path}
+                      data-rendered={isRendered ? 'true' : 'false'}
+                      ref={(node) => registerLazyFileContainer(file.path, node)}
+                      className="mb-6"
+                      onMouseEnter={() => {
+                        hoveredFileIndexRef.current = fileIndex;
+                      }}
+                      onMouseLeave={() => {
+                        if (hoveredFileIndexRef.current === fileIndex) {
+                          hoveredFileIndexRef.current = null;
                         }
-                        onCommentTriggerHandled={handleCommentTriggerHandled}
-                        mergedChunks={mergedChunks}
-                        openLines={openLines}
-                        prefetchFileContent={prefetchFileContent}
-                        isExpandLoading={isExpandLoading}
-                        diffVersion={diffDataVersion}
-                        fixupOverlay={fixupOverlay}
-                        foldCommentChanges={foldCommentChanges}
-                      />
-                    ) : (
-                      <div className="bg-github-bg-secondary border border-github-border rounded-md px-4 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-xs uppercase tracking-wide text-github-text-muted">
-                              Deferred Rendering
+                      }}
+                    >
+                      {isRendered ? (
+                        <DiffViewer
+                          file={file}
+                          threads={fileThreads}
+                          showAuthorBadges={showAuthorBadges}
+                          diffMode={diffMode}
+                          reviewedFiles={viewedFiles}
+                          isChangedSinceViewed={changedSinceViewedFiles.has(file.path)}
+                          onToggleReviewed={handleViewedButtonToggle}
+                          collapsedFiles={collapsedFiles}
+                          onToggleCollapsed={toggleFileCollapsed}
+                          onToggleAllCollapsed={toggleAllFilesCollapsed}
+                          onAddComment={takesComments ? handleAddComment : undefined}
+                          onAddFileComment={takesComments ? handleAddFileComment : undefined}
+                          onResolveThread={resolveThread}
+                          onReplyToThread={handleReplyToThread}
+                          onRemoveMessage={removeMessage}
+                          onUpdateMessage={updateMessage}
+                          onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
+                          syntaxTheme={settings.syntaxTheme}
+                          baseCommitish={diffData.baseCommitish}
+                          targetCommitish={diffData.targetCommitish}
+                          cursor={cursor?.fileIndex === fileIndex ? cursor : null}
+                          isFocused={cursor?.fileIndex === fileIndex}
+                          fileIndex={fileIndex}
+                          onLineClick={handleLineClick}
+                          commentTrigger={
+                            commentTrigger?.fileIndex === fileIndex ? commentTrigger : null
+                          }
+                          onCommentTriggerHandled={handleCommentTriggerHandled}
+                          mergedChunks={mergedChunks}
+                          openLines={openLines}
+                          prefetchFileContent={prefetchFileContent}
+                          isExpandLoading={isExpandLoading}
+                          diffVersion={diffDataVersion}
+                          fixupOverlay={fixupOverlay}
+                          foldCommentChanges={foldCommentChanges}
+                        />
+                      ) : (
+                        <div className="bg-github-bg-secondary border border-github-border rounded-md px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-xs uppercase tracking-wide text-github-text-muted">
+                                Deferred Rendering
+                              </div>
+                              <FilePathText
+                                path={file.path}
+                                className="text-sm font-mono text-github-text-primary"
+                              />
                             </div>
-                            <FilePathText
-                              path={file.path}
-                              className="text-sm font-mono text-github-text-primary"
-                            />
+                            <button
+                              type="button"
+                              onClick={() => ensureFileRendered(file.path)}
+                              className="px-3 py-1.5 text-xs rounded border border-github-border text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary"
+                            >
+                              Load now
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => ensureFileRendered(file.path)}
-                            className="px-3 py-1.5 text-xs rounded border border-github-border text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary"
-                          >
-                            Load now
-                          </button>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <FixupOnlySections
-                groups={fixupSpread.fixupOnly}
-                threadsByFixupFile={threadsByFixupOnlyFile}
-                firstFileIndex={diffData.files.length}
-                fixupOverlay={fixupOverlay}
-                diffMode={diffMode}
-                showAuthorBadges={showAuthorBadges}
-                syntaxTheme={settings.syntaxTheme}
-                onAddComment={takesComments ? handleAddFixupOnlyComment : undefined}
-                onResolveThread={resolveThread}
-                onReplyToThread={handleReplyToThread}
-                onRemoveMessage={removeMessage}
-                onUpdateMessage={updateMessage}
-                onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
-              />
-            </main>
+                      )}
+                    </div>
+                  );
+                })}
+                <FixupOnlySections
+                  groups={fixupSpread.fixupOnly}
+                  threadsByFixupFile={threadsByFixupOnlyFile}
+                  firstFileIndex={diffData.files.length}
+                  fixupOverlay={fixupOverlay}
+                  diffMode={diffMode}
+                  showAuthorBadges={showAuthorBadges}
+                  syntaxTheme={settings.syntaxTheme}
+                  onAddComment={takesComments ? handleAddFixupOnlyComment : undefined}
+                  onResolveThread={resolveThread}
+                  onReplyToThread={handleReplyToThread}
+                  onRemoveMessage={removeMessage}
+                  onUpdateMessage={updateMessage}
+                  onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
+                />
+              </main>
+            </DiffLineLinkProvider>
           </PickedThreadProvider>
 
           {!isMobile && (

@@ -60,6 +60,7 @@ This is useful for review findings, explanations, and any context the user shoul
 - Use `position.side: "old"` for lines that exist only on the deleted side.
 - Use range comments for issues that span multiple lines.
 - Use `"scope": "file"` in place of `line` for a remark about the whole file rather than any of its lines, with `side: "old"` only when the diff deletes the file.
+- When a body or reply points at another place in the diff, write it as `path:line` or `path:start-end` (for example `src/cli/comment.ts:88`); difit turns it into a link to that line of the new file.
 - Never copy secrets, tokens, passwords, API keys, private keys, or other credential-like material from the diff into `--comment` bodies or any command-line arguments.
 
 ## Including Untracked Files
