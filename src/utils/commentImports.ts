@@ -11,6 +11,9 @@ import {
   type ExtraLineRange,
   type DiffCommentMessage,
   type DiffSelection,
+  type FixupLineRange,
+  type FixupLines,
+  type LineNumber,
   type ReplyChoice,
   type ReplyCommentImport,
   type ThreadCommentImport,
@@ -297,6 +300,68 @@ function normalizeAnswer(value: unknown): ChoiceAnswer | undefined {
   return { messageId: value.messageId, choice: value.choice };
 }
 
+const isLineNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+function normalizeFixupLineRange(value: unknown): FixupLineRange {
+  if (!isRecord(value) || (value.side !== 'old' && value.side !== 'new')) {
+    throw new Error('Invalid comment import field: fixupLines');
+  }
+  const { line, code } = value;
+  const isRange =
+    Array.isArray(line) &&
+    line.length === 2 &&
+    isLineNumber(line[0]) &&
+    isLineNumber(line[1]) &&
+    line[0] <= line[1];
+  if ((!isLineNumber(line) && !isRange) || typeof code !== 'string') {
+    throw new Error('Invalid comment import field: fixupLines');
+  }
+  return { side: value.side, line: line as LineNumber, code };
+}
+
+function normalizeFixupLines(value: unknown): FixupLines | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    !isRecord(value) ||
+    !isNonEmptyString(value.fixupSha) ||
+    !isNonEmptyString(value.patchId) ||
+    !isNonEmptyString(value.filePath) ||
+    (value.oldPath !== undefined && !isNonEmptyString(value.oldPath)) ||
+    !Array.isArray(value.ranges) ||
+    value.ranges.length === 0
+  ) {
+    throw new Error('Invalid comment import field: fixupLines');
+  }
+  return {
+    fixupSha: value.fixupSha,
+    patchId: value.patchId,
+    filePath: value.filePath,
+    ...(value.oldPath === undefined ? {} : { oldPath: value.oldPath }),
+    ranges: value.ranges.map(normalizeFixupLineRange),
+  };
+}
+
+const cloneFixupLines = ({
+  fixupSha,
+  patchId,
+  filePath,
+  oldPath,
+  ranges,
+}: FixupLines): FixupLines => ({
+  fixupSha,
+  patchId,
+  filePath,
+  ...(oldPath === undefined ? {} : { oldPath }),
+  ranges: ranges.map(({ side, line, code }) => ({
+    side,
+    line: Array.isArray(line) ? [line[0], line[1]] : line,
+    code,
+  })),
+});
+
 function cloneChoice(choice: ReplyChoice): ReplyChoice {
   return {
     id: choice.id,
@@ -324,7 +389,7 @@ function normalizeFixPending(value: unknown): true | undefined {
   return true;
 }
 
-type ReplyFields = Pick<DiffCommentMessage, 'choices' | 'answer' | 'fixPending'>;
+type ReplyFields = Pick<DiffCommentMessage, 'choices' | 'answer' | 'fixupLines' | 'fixPending'>;
 
 function replyFields(source: ReplyFields): ReplyFields {
   return {
@@ -332,6 +397,7 @@ function replyFields(source: ReplyFields): ReplyFields {
     ...(source.answer === undefined
       ? {}
       : { answer: { messageId: source.answer.messageId, choice: source.answer.choice } }),
+    ...(source.fixupLines === undefined ? {} : { fixupLines: cloneFixupLines(source.fixupLines) }),
     ...(source.fixPending ? { fixPending: true } : {}),
   };
 }
@@ -364,10 +430,11 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
     value.type === 'thread' &&
     (value.choices !== undefined ||
       value.answer !== undefined ||
+      value.fixupLines !== undefined ||
       normalizeFixPending(value.fixPending) !== undefined)
   ) {
     throw new Error(
-      'Invalid comment import field: choices, answer and fixPending belong on a reply',
+      'Invalid comment import field: choices, answer, fixupLines and fixPending belong on a reply',
     );
   }
   if (value.choices !== undefined && normalizeFixPending(value.fixPending) !== undefined) {
@@ -385,6 +452,7 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
     ...replyFields({
       choices: normalizeChoices(value.choices),
       answer: normalizeAnswer(value.answer),
+      fixupLines: normalizeFixupLines(value.fixupLines),
       fixPending: normalizeFixPending(value.fixPending),
     }),
   };

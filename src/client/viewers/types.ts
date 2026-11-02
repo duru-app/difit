@@ -1,7 +1,6 @@
 import type { ComponentType } from 'react';
 
 import type {
-  ChoiceAnswer,
   CommentThread,
   DiffFile,
   DiffSide,
@@ -9,6 +8,7 @@ import type {
   DiffViewMode,
   ExpandedRange,
   LineNumber,
+  ReviewerReplyFields,
 } from '../../types/diff';
 import type { AppearanceSettings } from '../components/SettingsModal';
 import type { CursorPosition } from '../hooks/keyboardNavigation';
@@ -36,7 +36,7 @@ export type DiffViewerBodyProps = {
     extra?: ExtraCommentLines,
   ) => Promise<void>;
   onResolveThread: (threadId: string) => void;
-  onReplyToThread: (threadId: string, body: string, answer?: ChoiceAnswer) => Promise<void>;
+  onReplyToThread: (threadId: string, body: string, fields?: ReviewerReplyFields) => Promise<void>;
   onRemoveMessage: (threadId: string, messageId: string) => void;
   onUpdateMessage: (threadId: string, messageId: string, newBody: string) => void;
   onOpenInEditor?: (filePath: string, lineNumber: number) => void;

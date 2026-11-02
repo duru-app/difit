@@ -67,8 +67,9 @@ const sameAnchor = (a: LineSelection | null, b: LineSelection | null) =>
   !!a && !!b && a.side === b.side && a.lineNumber === b.lineNumber;
 
 // `cursorLine` is the line under the keyboard cursor: a Ctrl+click picks the line clicked before
-// it too while the cursor still sits there.
-function useLinePickState(
+// it too while the cursor still sits there. Lines numbered apart from the file's diff, such as a
+// fixup card's, take a pick of their own from here instead of the file's shared one.
+export function useLinePickState(
   lines: readonly DiffLine[],
   cursorLine: LineSelection | null,
 ): LinePickStore {

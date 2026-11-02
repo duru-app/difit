@@ -4561,6 +4561,70 @@ describe('App Component - Commits of the review', () => {
     }
   });
 
+  it('saves a reply written on a line of the card, and goes back to that line from the reply', async () => {
+    const fixupLines = {
+      fixupSha: 'f'.repeat(40),
+      patchId: 'patch-1',
+      filePath: 'test.ts',
+      ranges: [{ side: 'new' as const, line: 1, code: 'const a = 1;' }],
+    };
+    fixupsFor.current = [
+      {
+        sha: 'f'.repeat(40),
+        shortSha: 'fffffff',
+        patchId: 'patch-1',
+        authoredAt: '2026-01-01T00:00:00Z',
+        subject: 'fixup! second step',
+        threadIds: ['c1'],
+        files: [{ path: 'test.ts', status: 'modified', chunks: file.chunks }],
+      },
+    ];
+    const asked = createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' });
+    mockComments = [
+      {
+        ...asked,
+        messages: [
+          ...asked.messages,
+          { ...asked.messages[0]!, id: 'r1', body: '이 줄은?', fixupLines },
+        ],
+      },
+    ];
+    const replyToThread = vi.fn();
+    const defaultComments = vi.mocked(useDiffComments).getMockImplementation()!;
+    vi.mocked(useDiffComments).mockImplementation((...args) => ({
+      ...defaultComments(...args),
+      replyToThread,
+    }));
+
+    try {
+      renderApp();
+      const card = await screen.findByTestId('fixup-overlay-card');
+      const cell = card.querySelector<HTMLElement>('[data-line-number-cell]')!;
+      fireEvent.mouseDown(cell, { button: 0 });
+      fireEvent.mouseUp(cell);
+      fireEvent.click(cell.closest('tbody')!);
+      const form = await within(card).findByRole('form', { name: 'fixup 줄에 답글' });
+      fireEvent.change(within(form).getByPlaceholderText('이 줄에 답글...'), {
+        target: { value: '여기도 봐 주세요' },
+      });
+      fireEvent.click(within(form).getByRole('button', { name: '답글' }));
+
+      await waitFor(() =>
+        expect(replyToThread).toHaveBeenCalledWith({
+          threadId: 'c1',
+          body: '여기도 봐 주세요',
+          fixupLines,
+        }),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'fffffff · test.ts · 남은 줄 L1' }));
+
+      await waitFor(() => expect(cell.closest('tr')).toHaveAttribute('data-line-link-flash'));
+    } finally {
+      vi.mocked(useDiffComments).mockImplementation(defaultComments);
+    }
+  });
+
   it('unfolds a viewed file on the commit it opens to show a comment picked from the list', async () => {
     mockViewedFiles = new Set(['test.ts']);
     mockComments = [pinnedThread('const a = 1;')];

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 import {
   type BaseMode,
-  type ChoiceAnswer,
+  type ReviewerReplyFields,
   type CommentImport,
   type DiffCommentCodeSnapshot,
   type DiffContextStorage,
@@ -50,10 +50,9 @@ interface AddCommitThreadParams {
 
 type AddThreadParams = AddFileThreadParams | AddCommitThreadParams;
 
-interface ReplyToThreadParams {
+interface ReplyToThreadParams extends ReviewerReplyFields {
   threadId: string;
   body: string;
-  answer?: ChoiceAnswer;
 }
 
 interface UseDiffCommentsReturn {
@@ -390,7 +389,7 @@ export function useDiffComments(
   );
 
   const replyToThread = useCallback(
-    ({ threadId, body, answer }: ReplyToThreadParams) => {
+    ({ threadId, body, answer, fixupLines }: ReplyToThreadParams) => {
       const now = new Date().toISOString();
       const newThreads = threads.map((thread) =>
         thread.id === threadId
@@ -406,6 +405,7 @@ export function useDiffComments(
                   createdAt: now,
                   updatedAt: now,
                   ...(answer ? { answer } : {}),
+                  ...(fixupLines ? { fixupLines } : {}),
                 },
               ],
             }

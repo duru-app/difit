@@ -2,7 +2,7 @@ import { Check, ChevronDown, ChevronRight, Copy, Edit2, MessageSquare, Trash2 } 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
-  type ChoiceAnswer,
+  type ReviewerReplyFields,
   type AnchorStaleReason,
   type DiffCommentMessage,
   type ShownThread,
@@ -26,6 +26,7 @@ import { runsOffTheTopOf, visibleTopOf } from '../utils/domUtils';
 
 import { CommentBodyRenderer } from './CommentBodyRenderer';
 import { CommentForm } from './CommentForm';
+import { FixupLinesButton } from './FixupLineReply';
 import { ReplyChoices } from './ReplyChoices';
 import type { AppearanceSettings } from './SettingsModal';
 
@@ -128,6 +129,7 @@ function ThreadMessageItem({
               </div>
             )}
 
+            {message.fixupLines && <FixupLinesButton lines={message.fixupLines} />}
             <CommentBodyRenderer
               body={message.body}
               originalCode={originalCode}
@@ -248,7 +250,7 @@ interface CommentThreadCardProps {
   review?: ThreadReviewControls;
   showAuthorBadges?: boolean;
   onResolveThread: (threadId: string) => void;
-  onReplyToThread: (threadId: string, body: string, answer?: ChoiceAnswer) => Promise<void>;
+  onReplyToThread: (threadId: string, body: string, fields?: ReviewerReplyFields) => Promise<void>;
   onRemoveMessage: (threadId: string, messageId: string) => void;
   onUpdateMessage: (threadId: string, messageId: string, newBody: string) => void;
   // Absent when this comment cannot be answered by editing the code here.
@@ -513,7 +515,7 @@ export function CommentThreadCard({
                   message={{ ...message, choices: message.choices }}
                   later={thread.messages.slice(index + 2)}
                   onPick={async (body, answer) => {
-                    await onReplyToThread(thread.id, body, answer);
+                    await onReplyToThread(thread.id, body, { answer });
                     if (isResolved) recordDecision(thread.id, 'unresolved', '');
                   }}
                 />

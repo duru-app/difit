@@ -1304,8 +1304,7 @@ describe('CommentThreadCard', () => {
       await user.click(radio(/묶음/));
 
       expect(onReplyToThread).toHaveBeenCalledWith('thread-1', '고름: B — 묶음', {
-        messageId: 'message-2',
-        choice: 'B',
+        answer: { messageId: 'message-2', choice: 'B' },
       });
     });
 

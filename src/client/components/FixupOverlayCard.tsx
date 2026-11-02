@@ -24,7 +24,9 @@ import {
 import { useCanHover } from '../hooks/useCanHover';
 import { type ChangedPart, changedParts, type EditRange } from '../utils/directEdit';
 import { fixupFileElementId } from '../utils/domUtils';
+import { fixupLineElementId } from '../utils/fixupLines';
 import {
+  type AnsweredThread,
   type FixupBox,
   type FixupFile,
   type FixupFileRef,
@@ -37,11 +39,13 @@ import {
 import { DiffCodeLine } from './DiffCodeLine';
 import { DirectEditForm } from './DirectEditForm';
 import { EditHunkButton, EditLineButton } from './EditLineButton';
+import { fixupLineOf, useFixupLineReply } from './FixupLineReply';
 import type { AppearanceSettings } from './SettingsModal';
 
 interface FixupOverlayCardProps {
   fixup: ThreadFixup;
   threadId: string;
+  replyThread: AnsweredThread;
   filePath: string | undefined;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   // The fixups on the thread's cards an edit here approves; empty when the card takes no edits.
@@ -99,22 +103,26 @@ interface ChunksEditing {
 
 function FixupChunksTable({
   chunks,
-  fixupSha,
+  fixup,
   file,
   syntaxTheme,
   editing,
   laterEdits,
+  replyThreads,
 }: {
   chunks: DiffChunk[];
-  fixupSha: string;
+  fixup: Pick<ThreadFixup, 'sha' | 'patchId'>;
   file: FixupFile;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   editing?: ChunksEditing;
   laterEdits?: ReadonlyMap<number, FixupFileRef>;
+  replyThreads: readonly AnsweredThread[];
 }) {
   const { revealFixupFile } = useFixupOverlay();
   const canHover = useCanHover();
   const [hovered, setHovered] = useState<string | null>(null);
+  const replying = useFixupLineReply({ fixup, file, chunks, threads: replyThreads });
+  const fixupSha = fixup.sha;
   return (
     <FileLevelTokensProvider value={NO_PRECOMPUTED_TOKENS}>
       {chunks.map((chunk, chunkIndex) =>
@@ -135,14 +143,42 @@ function FixupChunksTable({
                       : laterEdits?.get(line.newLineNumber);
                   const isEditHovered =
                     editing !== undefined && hovered === rowKey && lineNumber !== undefined;
+                  const picked = fixupLineOf(line);
                   return (
                     <Fragment key={lineIndex}>
                       <tr
-                        className={getOverlayLineClass(line)}
-                        onMouseEnter={editing && canHover ? () => setHovered(rowKey) : undefined}
+                        id={
+                          picked
+                            ? fixupLineElementId(
+                                fixupSha,
+                                file.path,
+                                picked.side,
+                                picked.lineNumber,
+                              )
+                            : undefined
+                        }
+                        className={`${getOverlayLineClass(line)} ${
+                          picked && replying?.isPicked(picked) ? 'comment-selected' : ''
+                        }`}
+                        onMouseEnter={() => {
+                          if (editing && canHover) setHovered(rowKey);
+                          if (picked) replying?.hover(picked);
+                        }}
                         onMouseLeave={editing && canHover ? () => setHovered(null) : undefined}
                       >
-                        <td className="w-[var(--line-number-width)] min-w-[var(--line-number-width)] max-w-[var(--line-number-width)] px-2 max-md:px-0.5 max-md:text-[11px] text-right text-github-text-muted select-none align-top">
+                        <td
+                          data-line-number-cell
+                          onMouseDown={
+                            replying && picked
+                              ? (event) => replying.press(picked, event)
+                              : undefined
+                          }
+                          className={`w-[var(--line-number-width)] min-w-[var(--line-number-width)] max-w-[var(--line-number-width)] px-2 max-md:px-0.5 max-md:text-[11px] text-right text-github-text-muted select-none align-top ${
+                            replying && picked
+                              ? 'cursor-pointer hover:text-github-text-primary'
+                              : ''
+                          }`}
+                        >
                           {line.newLineNumber ?? line.oldLineNumber ?? ''}
                         </td>
                         <td
@@ -188,6 +224,13 @@ function FixupChunksTable({
                           </td>
                         </tr>
                       )}
+                      {picked && replying?.isFormUnder(picked) && (
+                        <tr>
+                          <td colSpan={2} className="p-0">
+                            {replying.form}
+                          </td>
+                        </tr>
+                      )}
                     </Fragment>
                   );
                 })}
@@ -228,6 +271,7 @@ function AmendedMessage({ message, separated }: { message: MessageAmendment; sep
 function FixupOverlayCard({
   fixup,
   threadId,
+  replyThread,
   filePath,
   syntaxTheme,
   approvedWith,
@@ -293,6 +337,7 @@ function FixupOverlayCard({
   const thisFiles = fixup.files.filter(isThisFile);
   const heldFiles = fixup.files.filter((file) => !isThisFile(file) && isHeldHere(file));
   const otherFiles = fixup.files.filter((file) => !isThisFile(file) && !isHeldHere(file));
+  const replyThreads = [replyThread];
   const changeKind = combineChangeKinds(
     fixup.files.flatMap((file) => file.chunks.map((chunk) => chunk.changeKind)),
   );
@@ -321,11 +366,12 @@ function FixupOverlayCard({
         <FixupChunksTable
           key={file.path}
           chunks={file.chunks}
-          fixupSha={fixup.sha}
+          fixup={fixup}
           file={file}
           syntaxTheme={syntaxTheme}
           editing={editingOf(file)}
           laterEdits={fixupLaterEdits.get(keyOf(file))}
+          replyThreads={replyThreads}
         />
       ))}
       {heldFiles.map((file) => (
@@ -340,11 +386,12 @@ function FixupOverlayCard({
           </div>
           <FixupChunksTable
             chunks={file.chunks}
-            fixupSha={fixup.sha}
+            fixup={fixup}
             file={file}
             syntaxTheme={syntaxTheme}
             editing={editingOf(file)}
             laterEdits={fixupLaterEdits.get(keyOf(file))}
+            replyThreads={replyThreads}
           />
         </div>
       ))}
@@ -420,9 +467,10 @@ function FixupFileBox({
       {isOpen && (
         <FixupChunksTable
           chunks={[chunk]}
-          fixupSha={fixup.sha}
+          fixup={fixup}
           file={file}
           syntaxTheme={syntaxTheme}
+          replyThreads={threads}
         />
       )}
     </div>
@@ -490,6 +538,7 @@ export function FixupOverlayBlock({ thread, filePath, syntaxTheme }: FixupOverla
       key={fixup.sha}
       fixup={fixup}
       threadId={thread.id}
+      replyThread={'file' in thread ? thread : { ...thread, isOutdated: false }}
       filePath={filePath}
       syntaxTheme={syntaxTheme}
       approvedWith={approvedWith}

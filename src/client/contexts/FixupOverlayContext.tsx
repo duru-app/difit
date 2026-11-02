@@ -5,9 +5,11 @@ import type {
   DiffSelection,
   DirectEditRejection,
   DirectEditRequest,
+  FixupLines,
   FixupRef,
   ReviewDecision,
   ReviewDecisionKind,
+  ReviewerReplyFields,
   ShownThread,
   ThreadFixup,
   ThreadReviewState,
@@ -67,6 +69,9 @@ export interface FixupOverlayState {
   pickThread: (threadId: string) => void;
   // Picks a thread whose card is drawn in the shown view, without switching the view.
   showThreadCard: (threadId: string) => void;
+  // Null when replies cannot be written here.
+  replyToThread: ((threadId: string, body: string, fields?: ReviewerReplyFields) => void) | null;
+  revealFixupLines: (lines: FixupLines) => void;
 }
 
 export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {
@@ -90,6 +95,8 @@ export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {
   revealFixupFile: () => {},
   pickThread: () => {},
   showThreadCard: () => {},
+  replyToThread: null,
+  revealFixupLines: () => {},
 };
 
 const FixupOverlayContext = createContext<FixupOverlayState>(EMPTY_FIXUP_OVERLAY);

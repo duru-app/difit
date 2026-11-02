@@ -1,11 +1,9 @@
 import { MessageSquare, Plus } from 'lucide-react';
 
-import type { CommentThread, DiffSide, SidedLine } from '../../types/diff';
+import type { CommentThread, SidedLine } from '../../types/diff';
 import { coversBothSides, startOfLine } from '../../utils/commentPosition';
 import type { LinePickStore } from '../contexts/LinePickContext';
-import { rangeLabel } from '../utils/linePick';
-
-const SIDE_NAMES: Record<DiffSide, string> = { old: '지운 줄', new: '남은 줄' };
+import { rangeLabel, SIDE_NAMES } from '../utils/linePick';
 
 function pickedRangesLabel(ranges: readonly SidedLine[]): string {
   const sides = (['old', 'new'] as const).filter((side) =>

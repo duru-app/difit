@@ -290,6 +290,20 @@ export interface ChoiceAnswer {
   choice: string;
 }
 
+// An old range is numbered in the fixup's parent, a new one in the fixup commit.
+export interface FixupLineRange extends SidedLine {
+  code: string;
+}
+
+export interface FixupLines {
+  fixupSha: string;
+  patchId: string;
+  filePath: string;
+  // The file in the fixup's parent when the fixup renamed it.
+  oldPath?: string;
+  ranges: FixupLineRange[];
+}
+
 export interface DiffCommentMessage {
   id: string;
   body: string;
@@ -298,8 +312,11 @@ export interface DiffCommentMessage {
   updatedAt: string;
   choices?: ReplyChoice[];
   answer?: ChoiceAnswer;
+  fixupLines?: FixupLines;
   fixPending?: true;
 }
+
+export type ReviewerReplyFields = Pick<DiffCommentMessage, 'answer' | 'fixupLines'>;
 
 interface DiffCommentThreadBase {
   id: string;
@@ -357,6 +374,7 @@ export type ReplyCommentImport = CommentImportCommon &
     type: 'reply';
     choices?: ReplyChoice[];
     answer?: ChoiceAnswer;
+    fixupLines?: FixupLines;
     fixPending?: true;
   };
 
@@ -479,6 +497,8 @@ interface ThreadAwaitingAgentBase {
   message: string;
   // Present when the latest message picks one of the choices the agent offered.
   answer?: ChoiceAnswer;
+  // Present when the latest message was written on lines of a fixup card.
+  fixupLines?: FixupLines;
   fixupTarget?: string;
 }
 
