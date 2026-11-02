@@ -624,6 +624,33 @@ describe('DiffChunk fixup overlay', () => {
     expect(within(card).queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('marks a line a later fixup changed and links to that fixup file', () => {
+    const revealFixupFile = vi.fn();
+    renderWithOverlay([thread], new Map([['t1', [fixup]]]), {
+      revealFixupFile,
+      fixupLaterEdits: new Map([
+        [
+          'abc1234abc1234:src/example.ts',
+          new Map([[12, { fixupSha: 'ddd4444ddd4444', path: 'src/example.ts' }]]),
+        ],
+      ]),
+    });
+
+    const marker = within(screen.getByTestId('fixup-overlay-card')).getByTestId('fixup-later-edit');
+    expect(marker).toHaveTextContent('수정됨');
+    expect(marker).toHaveAttribute('title', 'ddd4444 에서 다시 수정됨');
+
+    fireEvent.click(marker);
+
+    expect(revealFixupFile).toHaveBeenCalledWith('ddd4444ddd4444', 'src/example.ts');
+  });
+
+  it('marks no line when no later fixup changed one', () => {
+    renderWithOverlay([thread]);
+
+    expect(screen.queryByTestId('fixup-later-edit')).not.toBeInTheDocument();
+  });
+
   it('keeps a stale thread card, with its decision buttons, but draws no overlay card', () => {
     renderWithOverlay([{ ...thread, isOutdated: true, outdatedReason: 'missing' }]);
 
@@ -752,6 +779,26 @@ describe('DiffChunk fixup overlay', () => {
       expect(submit).toHaveBeenLastCalledWith(
         expect.objectContaining({ approvedWith: ['abc1234abc1234', 'def5678def5678'] }),
       );
+    });
+
+    it('keeps the mark of a later fixup clickable next to the pencil on a hovered line', () => {
+      const revealFixupFile = vi.fn();
+      const { card } = editable({
+        revealFixupFile,
+        fixupLaterEdits: new Map([
+          [
+            'abc1234abc1234:src/example.ts',
+            new Map([[12, { fixupSha: 'ddd4444ddd4444', path: 'src/example.ts' }]]),
+          ],
+        ]),
+      });
+      const added = card.querySelectorAll('tr')[1]!;
+
+      fireEvent.mouseEnter(added);
+
+      expect(within(added).getByRole('button', { name: '줄 직접 고치기' })).toBeVisible();
+      fireEvent.click(within(added).getByTestId('fixup-later-edit'));
+      expect(revealFixupFile).toHaveBeenCalledWith('ddd4444ddd4444', 'src/example.ts');
     });
 
     it('edits one line of the card from the pencil on that line', async () => {
