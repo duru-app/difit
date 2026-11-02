@@ -7,7 +7,7 @@ import {
   type ReplyChoice,
   REVIEWER_EDIT_AUTHOR,
 } from '../../types/diff';
-import { isAgentMessage } from '../../utils/reviewDecisions';
+import { isAgentMessage, promisedFixBeforeAnswer } from '../../utils/reviewDecisions';
 
 const PREVIEW_LINES = 3;
 
@@ -45,7 +45,8 @@ export function ReplyChoices({ message, later, onPick }: ReplyChoicesProps) {
   const answers = later.filter((reply) => !isAgentMessage(reply) && reply.answer === undefined);
   const answeredInWords = answers.length > 0;
   const answeredBy = answers.at(-1)?.author === REVIEWER_EDIT_AUTHOR ? '코드를 고쳐' : '글로';
-  const superseded = later.some((reply) => isAgentMessage(reply) && reply.choices?.length);
+  const newerChoices = later.some((reply) => isAgentMessage(reply) && reply.choices?.length);
+  const superseded = newerChoices || promisedFixBeforeAnswer(later);
   const isOpen = !superseded && ((picked === undefined && !answeredInWords) || isChanging);
 
   const pick = async (choice: ReplyChoice) => {
@@ -99,7 +100,7 @@ export function ReplyChoices({ message, later, onPick }: ReplyChoicesProps) {
   );
   const header = superseded ? (
     <span>
-      아래 새 고를 거리로 넘어갔습니다
+      {newerChoices ? '아래 새 고를 거리로 넘어갔습니다' : '에이전트가 고치겠다고 답했습니다'}
       {picked !== undefined && <> · {picked} 고름</>}
     </span>
   ) : isOpen ? (

@@ -576,6 +576,57 @@ describe('commentImports', () => {
     });
   });
 
+  describe('a reply that says a fixup follows', () => {
+    const reply = {
+      type: 'reply',
+      filePath: 'src/example.ts',
+      position: { side: 'new', line: 10 },
+      body: '고치는 중입니다. 테스트 뒤에 fixup 을 올립니다.',
+      fixPending: true,
+    };
+
+    it('stores the mark on the agent reply', () => {
+      const { threads } = mergeCommentImports(
+        [createThread({ id: 'thread-1', body: '이름이 틀렸어요.' })],
+        parseCommentImportValue(JSON.stringify(reply)),
+      );
+
+      expect(threads[0]!.messages[1]).toMatchObject({ author: 'Agent', fixPending: true });
+    });
+
+    it('leaves the mark off when it is false', () => {
+      const { threads } = mergeCommentImports(
+        [createThread({ id: 'thread-1', body: '이름이 틀렸어요.' })],
+        parseCommentImportValue(JSON.stringify({ ...reply, fixPending: false })),
+      );
+
+      expect(threads[0]!.messages[1]).not.toHaveProperty('fixPending');
+    });
+
+    it('refuses choices and the mark on one reply', () => {
+      expect(() =>
+        parseCommentImportValue(
+          JSON.stringify({ ...reply, choices: [{ id: 'A', name: 'A', description: 'a' }] }),
+        ),
+      ).toThrow('a reply takes choices or fixPending, not both');
+    });
+
+    it('takes a false mark on a new thread as no mark', () => {
+      expect(
+        parseCommentImportValue(JSON.stringify({ ...reply, type: 'thread', fixPending: false })),
+      ).toHaveLength(1);
+    });
+
+    it('refuses the mark on a new thread or with a value other than a boolean', () => {
+      expect(() => parseCommentImportValue(JSON.stringify({ ...reply, type: 'thread' }))).toThrow(
+        'fixPending belong on a reply',
+      );
+      expect(() =>
+        parseCommentImportValue(JSON.stringify({ ...reply, fixPending: 'yes' })),
+      ).toThrow('Invalid comment import field: fixPending');
+    });
+  });
+
   describe('choices on a reply and the pick that answers them', () => {
     const choices = [
       { id: 'A', name: '최상위 불리언', description: '가장 단순합니다.' },
@@ -693,7 +744,7 @@ describe('commentImports', () => {
 
     it('takes choices only on a reply', () => {
       expect(() => normalizeCommentImports({ ...askReply, type: 'thread' })).toThrow(
-        'choices and answer belong on a reply',
+        'choices, answer and fixPending belong on a reply',
       );
     });
   });

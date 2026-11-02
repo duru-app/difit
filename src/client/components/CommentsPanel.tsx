@@ -44,6 +44,7 @@ const STATUS_CHIP: Record<CommentPanelStatus, { label: string; className: string
     className:
       'border-github-warning text-github-warning fixup-review:border-github-text-primary fixup-review:text-github-text-primary',
   },
+  fixing: { label: '수정 중', className: 'border-github-accent text-github-accent' },
   answered: { label: '답함', className: 'border-blue-500 text-blue-400' },
   choosing: {
     label: '선택 대기',

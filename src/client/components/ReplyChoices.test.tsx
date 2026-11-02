@@ -201,6 +201,37 @@ describe('ReplyChoices', () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+  it('closes unpicked cards once the agent says a fixup follows', async () => {
+    const user = userEvent.setup();
+    const { onPick } = renderChoices([
+      { ...reply('A로 고치겠습니다.'), author: 'Claude', fixPending: true },
+    ]);
+
+    expect(screen.getByText('에이전트가 고치겠다고 답했습니다')).toBeVisible();
+    await user.click(card('A'));
+
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('points to newer choices that came after a reply saying a fixup follows', () => {
+    renderChoices([
+      { ...reply('A로 고치겠습니다.'), author: 'Claude', fixPending: true },
+      { ...ask, id: 'm4' },
+    ]);
+
+    expect(screen.getByText(/아래 새 고를 거리로 넘어갔습니다/)).toBeVisible();
+  });
+
+  it('keeps the pick changeable when the agent says a fixup follows after it', () => {
+    renderChoices([
+      reply('고름: B — review.overlay.enabled 묶음', { messageId: 'm2', choice: 'B' }),
+      { ...reply('B로 고치겠습니다.'), author: 'Claude', fixPending: true },
+    ]);
+
+    expect(screen.queryByText('에이전트가 고치겠다고 답했습니다')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '다른 걸로 바꾸기' })).toBeInTheDocument();
+  });
+
   it('closes unpicked cards when newer choices come after them', async () => {
     const user = userEvent.setup();
     const { onPick } = renderChoices([{ ...ask, id: 'm4' }]);

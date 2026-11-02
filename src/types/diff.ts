@@ -287,6 +287,7 @@ export interface DiffCommentMessage {
   updatedAt: string;
   choices?: ReplyChoice[];
   answer?: ChoiceAnswer;
+  fixPending?: true;
 }
 
 // New data structures for enhanced comment and viewed state management
@@ -329,6 +330,7 @@ export interface ReplyCommentImport extends CommentImportBase {
   type: 'reply';
   choices?: ReplyChoice[];
   answer?: ChoiceAnswer;
+  fixPending?: true;
 }
 
 export type CommentImport = ThreadCommentImport | ReplyCommentImport;
@@ -411,6 +413,8 @@ export type ThreadReviewState =
   | 'answered'
   // Like answered, with choices in the agent's reply for the reviewer to pick from.
   | 'choosing'
+  // Still the agent's to finish, not the reviewer's turn.
+  | 'fix-pending'
   | 'awaiting-approval'
   | 'approved'
   | 'folded'
