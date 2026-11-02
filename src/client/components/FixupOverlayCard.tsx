@@ -334,10 +334,6 @@ function FixupOverlayCard({
   );
 }
 
-// Read aloud, a line number ending in 2, 4, 5 or 9 ends in a vowel; a path read letter by letter
-// ends in a consonant only after l, m, n or r.
-const objectParticle = (label: string) => (/[2459]$|[^0-9lmnr]$/i.test(label) ? '를' : '을');
-
 function FixupFileBox({
   box,
   syntaxTheme,
@@ -350,10 +346,6 @@ function FixupFileBox({
   const [isOpen, setIsOpen] = useState(!file.isGenerated);
   const isFocused = focusedFixupFile?.fixupSha === fixup.sha && focusedFixupFile.path === file.path;
   if (isFocused && !isOpen) setIsOpen(true);
-  const lastThread = threads[threads.length - 1];
-  const lastLabel = lastThread
-    ? locationLabel(lastThread.file, lastThread.line, lastThread.extraLines, lastThread.side)
-    : '';
   return (
     <div
       id={chunkIndex === 0 ? fixupFileElementId(fixup.sha, file.path) : undefined}
@@ -363,7 +355,7 @@ function FixupFileBox({
       }`}
     >
       <div className="px-3 py-1 text-xs text-github-text-secondary border-b border-github-border">
-        <span className="font-mono">{fixup.shortSha}</span> · 지적{' '}
+        <span className="font-mono">{fixup.shortSha}</span> ·{' '}
         {threads.map((thread, index) => (
           <span key={thread.id}>
             {index > 0 && ', '}
@@ -376,7 +368,7 @@ function FixupFileBox({
             </button>
           </span>
         ))}
-        {objectParticle(lastLabel)} 고치며 함께 수정함 · 승인과 거절은 그 지적 카드에서
+        에서 수정됨
         {file.isGenerated && <span className="ml-2">생성된 파일</span>}
         {!isOpen && (
           <button
