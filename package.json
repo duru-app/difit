@@ -30,6 +30,7 @@
     "dist",
     "!dist/client/site-data",
     "!dist/site",
+    "skills",
     "README.md"
   ],
   "type": "module",

@@ -27,6 +27,7 @@ import {
   registerRunningProcess,
   scheduleBackgroundUpdate,
 } from './self-update.js';
+import { installBundledSkills } from './skills.js';
 import { getPrPatch, getPrCommentImports } from './github.js';
 import {
   BACKGROUND_CHILD_ENV,
@@ -163,6 +164,7 @@ program
       }
 
       registerRunningProcess();
+      installBundledSkills();
 
       try {
         manualCommentImports = parseCommentOptions(options.comment);
