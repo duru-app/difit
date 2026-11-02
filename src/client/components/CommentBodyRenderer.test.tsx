@@ -1,7 +1,9 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
+import { DiffLineLinkProvider } from '../contexts/DiffLineLinkContext';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
+import { createDiffPathResolver } from '../utils/diffLineLinks';
 
 import { CommentBodyRenderer } from './CommentBodyRenderer';
 
@@ -148,5 +150,91 @@ describe('CommentBodyRenderer', () => {
     expect(container.querySelector('strong')).toHaveTextContent('Before');
     expect(container.querySelector('em')).toHaveTextContent('After');
     expect(container).toHaveTextContent('new code');
+  });
+
+  describe('path:line links', () => {
+    const DIFF_PATHS = [
+      'src/client/App.tsx',
+      'src/client/components/CommentThreadCard.tsx',
+      'src/cli/index.ts',
+      'src/server/index.ts',
+    ];
+    const renderInDiff = (body: string) => {
+      const open = vi.fn();
+      const view = render(
+        <DiffLineLinkProvider value={{ resolve: createDiffPathResolver(DIFF_PATHS), open }}>
+          <CommentBodyRenderer body={body} />
+        </DiffLineLinkProvider>,
+      );
+      return { ...view, open };
+    };
+    const lineLinks = () => screen.queryAllByRole('button', { name: /:\d/ });
+
+    it('opens the file and line written in the text', () => {
+      const { open } = renderInDiff('Same problem at src/client/App.tsx:2302, see there.');
+
+      const link = screen.getByRole('button', { name: 'src/client/App.tsx:2302' });
+      fireEvent.click(link);
+
+      expect(open).toHaveBeenCalledWith({ file: 'src/client/App.tsx', line: 2302, endLine: 2302 });
+      expect(screen.getByText(/Same problem at/)).toHaveTextContent(
+        'Same problem at src/client/App.tsx:2302, see there.',
+      );
+    });
+
+    it('opens a range of lines', () => {
+      const { open } = renderInDiff('Look at src/cli/index.ts:10-20');
+
+      fireEvent.click(screen.getByRole('button', { name: 'src/cli/index.ts:10-20' }));
+
+      expect(open).toHaveBeenCalledWith({ file: 'src/cli/index.ts', line: 10, endLine: 20 });
+    });
+
+    it('links inline code that names a line of a diff file', () => {
+      const { open } = renderInDiff('Also in `CommentThreadCard.tsx:120`.');
+
+      const link = screen.getByRole('button', { name: 'CommentThreadCard.tsx:120' });
+      expect(link.querySelector('code')).not.toBeNull();
+      fireEvent.click(link);
+
+      expect(open).toHaveBeenCalledWith({
+        file: 'src/client/components/CommentThreadCard.tsx',
+        line: 120,
+        endLine: 120,
+      });
+    });
+
+    it('links a shortened path only when one diff file ends with it', () => {
+      renderInDiff('client/App.tsx:5 and index.ts:7 and server/index.ts:9');
+
+      expect(lineLinks().map((link) => link.textContent)).toEqual([
+        'client/App.tsx:5',
+        'server/index.ts:9',
+      ]);
+    });
+
+    it('leaves paths outside the diff, code blocks and URLs as plain text', () => {
+      const { container } = renderInDiff(
+        [
+          'Not in the diff: src/other.ts:3 and `src/other.ts:4`.',
+          'A URL: https://github.com/duru-app/difit/blob/main/src/client/App.tsx:12',
+          'A [link](https://example.com) and [src/cli/index.ts:3](https://example.com/x)',
+          'Inline code with more: `see src/cli/index.ts:3`',
+          '',
+          '```',
+          'src/client/App.tsx:2302',
+          '```',
+        ].join('\n'),
+      );
+
+      expect(lineLinks()).toEqual([]);
+      expect(container.querySelector('pre')).toHaveTextContent('src/client/App.tsx:2302');
+    });
+
+    it('links nothing outside a diff', () => {
+      render(<CommentBodyRenderer body="See src/client/App.tsx:2302" />);
+
+      expect(screen.queryByRole('button')).toBeNull();
+    });
   });
 });

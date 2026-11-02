@@ -203,11 +203,13 @@ tr.comment-selected td:first-child::after {
   border-left: 5px solid var(--color-diff-selected-border);
 }
 
-tr.comment-flash td {
+tr.comment-flash td,
+tr[data-line-link-flash] td {
   position: relative;
 }
 
-tr.comment-flash td::after {
+tr.comment-flash td::after,
+tr[data-line-link-flash] td::after {
   content: "";
   position: absolute;
   inset: 0;

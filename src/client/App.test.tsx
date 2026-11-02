@@ -1794,6 +1794,80 @@ describe('App Component - Back and Forward between places in one review', () => 
     await waitFor(() => expect(scrolled).toBe(6000 + 5 * LINE_HEIGHT - 8));
   });
 
+  describe('path:line written in a comment', () => {
+    const lineLink = (name: string) =>
+      within(document.querySelector('main')!).getByRole('button', { name });
+    const serveFileContent = (path: string, count: number) => {
+      const serveDiff = vi.mocked(global.fetch).getMockImplementation()!;
+      vi.mocked(global.fetch).mockImplementation((input, init) =>
+        String(input).startsWith(`/api/blob/${path}?`)
+          ? Promise.resolve({
+              ok: true,
+              text: async () =>
+                Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n'),
+            } as Response)
+          : serveDiff(input, init),
+      );
+    };
+
+    it('goes to that line, flashes it, and Back returns to where the reader was', async () => {
+      mockComments = [
+        createMockThread({ id: 'n1', filePath: 'a.ts', line: 1, body: 'Same at `c.ts:20`.' }),
+      ];
+      renderApp();
+      await screen.findAllByTitle('c.ts');
+      const lengthBefore = window.history.length;
+
+      fireEvent.click(await waitFor(() => lineLink('c.ts:20')));
+
+      await waitFor(() => expect(cursorRow()).toHaveTextContent('line 20'));
+      expect(cursorFile()).toBe('c.ts');
+      await waitFor(() => expect(fileShown()).toBe('c.ts'));
+      await waitFor(() => expect(cursorRow()).toHaveAttribute('data-line-link-flash'));
+      expect(window.history.length).toBe(lengthBefore + 1);
+
+      back();
+      await waitFor(() => expect(fileShown()).toBe('a.ts'));
+    });
+
+    it('unfolds a folded file and opens the hidden lines around the line', async () => {
+      mockViewedFiles = new Set(['b.ts']);
+      filesByPath = { 'b.ts': linedFile('b.ts', 3) };
+      serveFileContent('b.ts', 100);
+      mockComments = [
+        createMockThread({ id: 'n1', filePath: 'a.ts', line: 1, body: 'Look at b.ts:50 too' }),
+      ];
+      renderApp();
+      await screen.findAllByTitle('c.ts');
+      const bHeader = () =>
+        within(
+          document
+            .getElementById(getFileElementId('b.ts'))!
+            .querySelector<HTMLElement>('[data-file-header]')!,
+        );
+      await waitFor(() => expect(bHeader().getByTitle(/^Expand file/)).toBeInTheDocument());
+
+      fireEvent.click(await waitFor(() => lineLink('b.ts:50')));
+
+      await waitFor(() => expect(cursorRow()).toHaveTextContent('line 50'));
+      expect(cursorFile()).toBe('b.ts');
+      expect(bHeader().queryByTitle(/^Expand file/)).toBeNull();
+      await waitFor(() => expect(fileShown()).toBe('b.ts'));
+    });
+
+    it('leaves a path that names no file of the diff as text', async () => {
+      mockComments = [
+        createMockThread({ id: 'n1', filePath: 'a.ts', line: 1, body: 'Unlike d.ts:3 here' }),
+      ];
+      renderApp();
+      await screen.findAllByTitle('c.ts');
+
+      const main = within(document.querySelector('main')!);
+      expect(await main.findByText(/Unlike d\.ts:3 here/)).toBeInTheDocument();
+      expect(main.queryByRole('button', { name: 'd.ts:3' })).toBeNull();
+    });
+  });
+
   it('shows the spot of the entry when Back loads the page afresh', async () => {
     window.history.replaceState(
       {

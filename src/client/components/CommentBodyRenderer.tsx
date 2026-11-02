@@ -1,17 +1,21 @@
 import React, { useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Options as MarkdownOptions } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 
 import { type DiffLine, type ExpandedLine } from '../../types/diff';
 import { hasSuggestionBlock, parseSuggestionBlocks } from '../../utils/suggestionUtils';
+import { useDiffLineLinks } from '../contexts/DiffLineLinkContext';
+import { diffLineTargetOf, remarkDiffLineLinks } from '../utils/diffLineLinks';
 import { extractMarkdownText, isElementWithCodeProps, isSafeUrl } from '../utils/markdownUtils';
 
 import { DiffCodeLine } from './DiffCodeLine';
 import { PrismSyntaxHighlighter } from './PrismSyntaxHighlighter';
 import type { AppearanceSettings } from './SettingsModal';
 
-const COMMENT_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+type RemarkPlugins = NonNullable<MarkdownOptions['remarkPlugins']>;
+
+const COMMENT_REMARK_PLUGINS: RemarkPlugins = [remarkGfm, remarkBreaks];
 
 const transformCommentUrl = (url: string) => (isSafeUrl(url) ? url : '');
 
@@ -86,7 +90,36 @@ function CommentDiffCodeBlock({ code }: { code: string }) {
   );
 }
 
+function DiffLineLinkButton({
+  node,
+  children,
+}: {
+  node?: { properties?: Record<string, unknown> };
+  children?: React.ReactNode;
+}) {
+  const links = useDiffLineLinks();
+  const target = diffLineTargetOf(node?.properties);
+  if (!links || !target) return <>{children}</>;
+  const lines =
+    target.endLine === target.line ? `${target.line}` : `${target.line}-${target.endLine}`;
+  return (
+    <button
+      type="button"
+      title={`Go to ${target.file}:${lines}`}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        links.open(target);
+      }}
+      className="cursor-pointer text-sky-400 hover:text-sky-300 underline underline-offset-4"
+    >
+      {children}
+    </button>
+  );
+}
+
 const getCommentMarkdownComponents = (syntaxTheme?: AppearanceSettings['syntaxTheme']) => ({
+  button: DiffLineLinkButton,
   h1: ({ children }: { children?: React.ReactNode }) => (
     <h1 className="text-lg font-semibold mt-4 mb-2 first:mt-0">{children}</h1>
   ),
@@ -274,6 +307,14 @@ export function CommentBodyRenderer({
     () => getCommentMarkdownComponents(syntaxTheme),
     [syntaxTheme],
   );
+  const resolveDiffPath = useDiffLineLinks()?.resolve;
+  const remarkPlugins = useMemo<RemarkPlugins>(
+    () =>
+      resolveDiffPath
+        ? [...COMMENT_REMARK_PLUGINS, [remarkDiffLineLinks, { resolve: resolveDiffPath }]]
+        : COMMENT_REMARK_PLUGINS,
+    [resolveDiffPath],
+  );
 
   return (
     <div className="text-github-text-primary text-sm leading-6 break-words">
@@ -285,7 +326,7 @@ export function CommentBodyRenderer({
           return (
             <div key={index}>
               <ReactMarkdown
-                remarkPlugins={COMMENT_REMARK_PLUGINS}
+                remarkPlugins={remarkPlugins}
                 urlTransform={transformCommentUrl}
                 components={markdownComponents}
               >
