@@ -50,7 +50,7 @@ difit comment wait --port <port>
 - 띄우자마자 지금 차례인 지적을 모두 찍으므로, 두 번 띄우는 사이에 생긴 지적도 놓치지 않는다. 답한 뒤 다시 띄운다. 답하지 않은 지적은 다시 띄우자마자 또 나온다.
 - 리뷰가 끝나면 아무것도 찍지 않고 0으로 끝난다. 연결이 끊기면 10초 동안 다시 붙고, 그래도 안 되면 오류를 찍고 1로 끝난다.
 
-Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지 소켓(`CLAUDE_CODE_MESSAGING_SOCKET`)을 물려받아, 리뷰어가 화면에서 저장해 새로 에이전트 차례가 된 지적을 그 세션에 메시지로 바로 넣는다. 첫 줄은 `difit review: your turn on <threadId> [<상태>]; read with difit comment get --port <port> --format json`이고, 이어지는 줄은 wait와 같은 JSON이다. 에이전트가 단 코멘트, 리뷰어가 직접 고친 fixup, 승인과 승인 취소는 보내지 않는다. 다만 에이전트가 아직 답하지 않은 지적은 승인이나 승인 취소로 상태가 바뀌면 새 상태로 다시 보낸다. 소켓에 닿지 못하면 stderr에 한 줄 남기고 리뷰를 이어 간다. 이 메시지 형식은 Claude Code 문서에 없어 형식이 바뀌면 조용히 사라질 수 있으므로 wait도 함께 띄워 둔다. 직접 띄운 difit에는 소켓이 없으므로 wait만 쓴다. 이유는 [docs/adr/0005](adr/0005-tell-the-agent-when-it-is-its-turn.md)에 있다.
+Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지 소켓(`CLAUDE_CODE_MESSAGING_SOCKET`)을 물려받아, 리뷰어가 화면에서 저장해 새로 에이전트 차례가 된 지적을 그 세션에 메시지로 바로 넣는다. 첫 줄은 `difit review: your turn on <threadId> [<상태>]; read with difit comment get --port <port> --format json`이고, 이어지는 줄은 wait와 같은 JSON이다. 에이전트가 단 코멘트, 리뷰어가 직접 고친 fixup, 승인과 승인 취소는 보내지 않는다. 다만 에이전트가 아직 답하지 않은 지적은 승인이나 승인 취소로 상태가 바뀌거나 리뷰어가 마지막 답글을 고치면 새 상태나 고친 본문으로 다시 보낸다. 에이전트가 답한 뒤에 리뷰어가 앞선 답글을 고치면 다시 보내지 않는다. `comment get` 텍스트 출력은 고친 답글마다 그 위에 `고친 시각:`을 적는다. 소켓에 닿지 못하면 stderr에 한 줄 남기고 리뷰를 이어 간다. 이 메시지 형식은 Claude Code 문서에 없어 형식이 바뀌면 조용히 사라질 수 있으므로 wait도 함께 띄워 둔다. 직접 띄운 difit에는 소켓이 없으므로 wait만 쓴다. 이유는 [docs/adr/0005](adr/0005-tell-the-agent-when-it-is-its-turn.md)에 있다.
 
 ## 지적에 답하기
 

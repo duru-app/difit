@@ -176,9 +176,13 @@ export function formatAllCommentsPrompt(comments: Comment[]): string {
   return prompts.join('\n=====\n');
 }
 
+const wasEdited = ({ createdAt, updatedAt }: DiffCommentMessage): boolean =>
+  (Date.parse(updatedAt) || 0) > (Date.parse(createdAt) || 0);
+
 export function formatCommentThreadPrompt(
   thread: CommentThread,
   reviewState?: ThreadReviewState,
+  { showEdits = false }: { showEdits?: boolean } = {},
 ): string {
   const sections: string[] = [
     formatCommentLocation(thread.file, thread.line, thread.side, reviewState, thread.extraLines),
@@ -192,6 +196,7 @@ export function formatCommentThreadPrompt(
     if (index > 0) {
       sections.push(`Reply ${index} (${message.author?.trim() || 'Unknown'})`);
     }
+    if (showEdits && wasEdited(message)) sections.push(`고친 시각: ${message.updatedAt}`);
     sections.push(
       formatCommentContent(message.body, thread.codeContent),
       ...formatChoices(message, thread.messages),
@@ -205,11 +210,12 @@ export function formatAllCommentThreadsPrompt(
   threads: CommentThread[],
   context?: CommentPromptDiffContext,
   reviewStates?: ReadonlyMap<string, ThreadReviewState>,
+  options?: { showEdits?: boolean },
 ): string {
   if (threads.length === 0) return '';
 
   const sections = threads.map((thread) =>
-    formatCommentThreadPrompt(thread, reviewStates?.get(thread.id)),
+    formatCommentThreadPrompt(thread, reviewStates?.get(thread.id), options),
   );
   if (context) {
     const header = formatDiffContextHeader(context);
@@ -226,7 +232,9 @@ export function formatCommentsOutput(
   reviewStates?: ReadonlyMap<string, ThreadReviewState>,
 ): string {
   const threads = input.map((item) => ('messages' in item ? item : normalizeLegacyComment(item)));
-  const allPrompts = formatAllCommentThreadsPrompt(threads, undefined, reviewStates);
+  const allPrompts = formatAllCommentThreadsPrompt(threads, undefined, reviewStates, {
+    showEdits: true,
+  });
 
   return [
     '\n📝 Comments from review session:',
