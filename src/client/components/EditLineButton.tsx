@@ -9,7 +9,7 @@ export const EditLineButton: React.FC<EditLineButtonProps> = React.memo(({ onCli
   return (
     <button
       type="button"
-      className="w-7 h-7 flex items-center justify-center rounded border border-github-accent bg-github-bg-secondary text-github-accent transition-all duration-150 hover:scale-110 z-10"
+      className="w-7 h-7 flex items-center justify-center select-none rounded border border-github-accent bg-github-bg-secondary text-github-accent transition-all duration-150 hover:scale-110 z-10"
       data-edit-line-button="true"
       onMouseDown={(e) => {
         e.stopPropagation();
@@ -39,7 +39,7 @@ export function EditHunkButton({
   return (
     <button
       type="button"
-      className={`${alwaysShown ? '' : 'invisible group-focus-within/hunk:visible group-hover/hunk:visible'} absolute right-2 top-1 z-[5] flex items-center gap-1 rounded border border-github-accent bg-github-bg-secondary px-2 py-0.5 text-xs text-github-text-primary`}
+      className={`${alwaysShown ? '' : 'invisible group-focus-within/hunk:visible group-hover/hunk:visible'} absolute right-2 top-1 z-[5] flex select-none items-center gap-1 rounded border border-github-accent bg-github-bg-secondary px-2 py-0.5 text-xs text-github-text-primary`}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
