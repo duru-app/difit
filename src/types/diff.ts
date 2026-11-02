@@ -223,6 +223,12 @@ export type LibrarySourceResponse =
   | { found: true; path: string; line: number; text: string; origin: LibrarySourceOrigin }
   | { found: false; missing: LibrarySourceMissing };
 
+export interface SkillSummary {
+  name: string;
+  description: string;
+  source: 'repository' | 'user' | 'plugin' | 'built-in';
+}
+
 export type LineNumber = number | [number, number];
 
 export interface Comment {
