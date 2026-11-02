@@ -166,6 +166,7 @@ difit includes a review comment system that makes it easy to provide feedback to
 3. **Generate Prompts**: Comments include a "Copy Prompt" button that formats the context for AI coding agents
 4. **Copy All**: Use "Copy All Prompt" to copy all comments in a structured format
 5. **Persistent Storage**: Comments are saved in browser localStorage per commit
+6. **Skills**: Type `/` at the start of a word in a comment or reply to pick a skill the Claude Code session can call. The list comes from `.claude/skills` and `.claude/commands` in the reviewed repository and in `~/.claude`, plus the plugins switched on in `enabledPlugins` of `~/.claude/settings.json`, where the repository's `.claude/settings.json` and then `.claude/settings.local.json` override it. The chosen `/name` goes into the body as plain text.
 
 ### Comment Prompt Format
 
