@@ -330,6 +330,58 @@ describe('listThreadFixups against a real repository', () => {
     expect(fixups).toHaveLength(5);
     expect(calls).toEqual(['revparse', 'revparse', 'raw']);
   });
+
+  it('follows a rename even when the repository turns diff.renames off', async () => {
+    const repo = createRepo();
+    git(repo, 'config', 'diff.renames', 'false');
+    commit(repo, 'base', { 'other.ts': lines(10, 'o') });
+    const original = lines(100, 'line ');
+    const target = commit(repo, 'feat: add storage', { 'Old.java': original });
+    const renamed = original.replace('line 30\n', 'line 30 renamed\n');
+    git(repo, 'mv', 'Old.java', 'New.java');
+    commit(repo, 'fixup! feat\n\nReview-Thread: t1', { 'New.java': renamed });
+    commit(repo, 'fixup! feat\n\nReview-Thread: t2', {
+      'New.java': renamed.replace('line 87\n', 'line 87 renamed\n'),
+    });
+
+    const parser = new GitDiffParser(repo);
+    const fixups = await parser.listThreadFixups({
+      targetCommitish: target,
+      baseCommitish: target,
+    });
+    const filesOf = (index: number) =>
+      fixups[index]?.files.map(({ path, oldPath, status }) => ({ path, oldPath, status }));
+
+    expect(fixups.map((fixup) => fixup.threadIds)).toEqual([['t1'], ['t2']]);
+    expect(filesOf(0)).toEqual([{ path: 'New.java', oldPath: 'Old.java', status: 'renamed' }]);
+    expect(filesOf(1)).toEqual([{ path: 'New.java', oldPath: undefined, status: 'modified' }]);
+    expect(await parser.readThreadFixup(fixups[0]!.sha)).toEqual(fixups[0]);
+  });
+
+  it('follows a rename a merging fixup brings in when diff.renames is off', async () => {
+    const repo = createRepo();
+    git(repo, 'config', 'diff.renames', 'false');
+    commit(repo, 'base', { 'other.ts': lines(10, 'o') });
+    const original = lines(100, 'line ');
+    const target = commit(repo, 'feat: add storage', { 'Old.java': original });
+    git(repo, 'checkout', '-q', '-b', 'side');
+    git(repo, 'mv', 'Old.java', 'New.java');
+    commit(repo, 'rename on side', {
+      'New.java': original.replace('line 30\n', 'line 30 renamed\n'),
+    });
+    git(repo, 'checkout', '-q', 'main');
+    commit(repo, 'main work', { 'other.ts': lines(11, 'o') });
+    merge(repo, 'side', 'merge side\n\nReview-Thread: t-merge');
+
+    const fixups = await new GitDiffParser(repo).listThreadFixups({
+      targetCommitish: target,
+      baseCommitish: target,
+    });
+
+    expect(
+      fixups[0]?.files.map(({ path, oldPath, status }) => ({ path, oldPath, status })),
+    ).toEqual([{ path: 'New.java', oldPath: 'Old.java', status: 'renamed' }]);
+  });
 });
 
 describe('plain changes before each fixup against a real repository', () => {
