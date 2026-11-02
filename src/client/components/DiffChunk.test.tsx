@@ -943,8 +943,8 @@ describe('fixup boxes in a file the comment is not on', () => {
       renderBoxes(mode, [box()], { pickThread });
 
       const fileBox = screen.getByTestId('fixup-file-box');
-      expect(fileBox).toHaveTextContent(
-        'abc1234 · 지적 src/example.ts:12를 고치며 함께 수정함 · 승인과 거절은 그 지적 카드에서',
+      expect(fileBox.firstElementChild).toHaveTextContent(
+        /^abc1234 · src\/example\.ts:12에서 수정됨$/,
       );
       expect(within(fileBox).queryByRole('button', { name: '승인' })).toBeNull();
       expect(within(fileBox).queryByRole('button', { name: '거절' })).toBeNull();
@@ -963,22 +963,22 @@ describe('fixup boxes in a file the comment is not on', () => {
       );
 
       const fileBox = screen.getByTestId('fixup-file-box');
-      expect(fileBox).toHaveTextContent('지적 src/example.ts:12, src/other.ts:3-5를 고치며');
+      expect(fileBox).toHaveTextContent('abc1234 · src/example.ts:12, src/other.ts:3-5에서 수정됨');
 
       fireEvent.click(within(fileBox).getByRole('button', { name: 'src/other.ts:3-5' }));
 
       expect(pickThread).toHaveBeenCalledWith('t2');
     });
 
-    it('names a comment on the whole file by its path, with the particle its last letter takes', () => {
+    it('names a comment on the whole file by its path', () => {
       renderBoxes(mode, [
         box({ threads: [{ id: 't3', file: 'src/config.json' }] }),
         box({ threads: [{ id: 't4', file: 'src/example.ts' }], chunkIndex: 1 }),
       ]);
 
       const [json, ts] = screen.getAllByTestId('fixup-file-box');
-      expect(json).toHaveTextContent('지적 src/config.json을 고치며');
-      expect(ts).toHaveTextContent('지적 src/example.ts를 고치며');
+      expect(json).toHaveTextContent('src/config.json에서 수정됨');
+      expect(ts).toHaveTextContent('src/example.ts에서 수정됨');
     });
 
     it('draws a box once under a line that was replaced', () => {
