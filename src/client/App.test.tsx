@@ -1575,6 +1575,8 @@ describe('App Component - Back and Forward between places in one review', () => 
   };
   const back = () => act(() => window.history.back());
   const forward = () => act(() => window.history.forward());
+  const waitForScroll = (top: number) =>
+    waitFor(() => expect(scrolled).toBe(top), { timeout: 3000 });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1648,13 +1650,13 @@ describe('App Component - Back and Forward between places in one review', () => 
       const lengthBefore = window.history.length;
 
       fireEvent.click(fileListRow('c.ts'));
-      await waitFor(() => expect(scrolled).toBe(6000));
+      await waitForScroll(6000);
       expect(window.history.length).toBe(lengthBefore + 1);
 
       back();
-      await waitFor(() => expect(scrolled).toBe(3000 + 5 * LINE_HEIGHT - 8));
+      await waitForScroll(3000 + 5 * LINE_HEIGHT - 8);
       forward();
-      await waitFor(() => expect(scrolled).toBe(6000));
+      await waitForScroll(6000);
       expect(window.history.length).toBe(lengthBefore + 1);
     },
   );
@@ -1697,10 +1699,10 @@ describe('App Component - Back and Forward between places in one review', () => 
     await scrollTo(3000 + 3 * LINE_HEIGHT);
 
     fireEvent.click(fileListRow('c.ts'));
-    await waitFor(() => expect(scrolled).toBe(6000));
+    await waitForScroll(6000);
     back();
 
-    await waitFor(() => expect(scrolled).toBe(3000 + 3 * LINE_HEIGHT - 8));
+    await waitForScroll(3000 + 3 * LINE_HEIGHT - 8);
   });
 
   it('counts ] and Shift+N as jumps but not j and k, and Back puts the cursor back', async () => {
@@ -1769,7 +1771,7 @@ describe('App Component - Back and Forward between places in one review', () => 
     await waitFor(() => expect(within(bHeader).getByTitle(/^Expand file/)).toBeInTheDocument());
     forward();
 
-    await waitFor(() => expect(scrolled).toBe(3000));
+    await waitForScroll(3000);
     expect(within(bHeader).getByTitle(/^Expand file/)).toBeInTheDocument();
   });
 
@@ -1791,7 +1793,7 @@ describe('App Component - Back and Forward between places in one review', () => 
 
     back();
     await waitFor(() => expect(diffTargets().at(-1)).toBe('abc1234'));
-    await waitFor(() => expect(scrolled).toBe(6000 + 5 * LINE_HEIGHT - 8));
+    await waitForScroll(6000 + 5 * LINE_HEIGHT - 8);
   });
 
   describe('path:line written in a comment', () => {
@@ -1882,7 +1884,7 @@ describe('App Component - Back and Forward between places in one review', () => 
 
     renderApp();
 
-    await waitFor(() => expect(scrolled).toBe(6000));
+    await waitForScroll(6000);
   });
 });
 
