@@ -23,6 +23,7 @@ const REVIEW_STATE_LABEL: Record<ThreadReviewState, string> = {
   'awaiting-fix': '답변 대기',
   answered: '답변 완료',
   choosing: '선택 대기',
+  'fix-pending': '수정 중',
   'awaiting-approval': '승인 대기',
   approved: '승인됨',
   folded: '접힘',
@@ -119,7 +120,12 @@ export function isThreadResolved(threadId: string, decisions: ReviewDecision[]):
 }
 
 type ThreadMessages = {
-  messages?: ReadonlyArray<{ author?: string; createdAt?: string; choices?: unknown[] }>;
+  messages?: ReadonlyArray<{
+    author?: string;
+    createdAt?: string;
+    choices?: unknown[];
+    fixPending?: boolean;
+  }>;
 };
 
 export function isThreadDeleted(threadId: string, decisions: ReviewDecision[]): boolean {
@@ -135,13 +141,25 @@ export function isOpenedByEdit(thread: ThreadMessages): boolean {
 export const isAgentMessage = (message: { author?: string }) =>
   message.author !== REVIEWER_AUTHOR && message.author !== REVIEWER_EDIT_AUTHOR;
 
-function openChoicesAt(messages: ReadonlyArray<{ author?: string; choices?: unknown[] }>): number {
+export function promisedFixBeforeAnswer(
+  later: ReadonlyArray<{ author?: string; fixPending?: boolean }>,
+): boolean {
+  const answeredAt = later.findIndex((message) => !isAgentMessage(message));
+  return (answeredAt < 0 ? later : later.slice(0, answeredAt)).some(
+    (message) => message.fixPending === true,
+  );
+}
+
+function openChoicesAt(
+  messages: ReadonlyArray<{ author?: string; choices?: unknown[]; fixPending?: boolean }>,
+): number {
   const at = messages.reduce(
     (latest, message, index) =>
       isAgentMessage(message) && message.choices?.length ? index : latest,
     -1,
   );
-  return at >= 0 && messages.slice(at + 1).every(isAgentMessage) ? at : -1;
+  const after = messages.slice(at + 1);
+  return at >= 0 && after.every(isAgentMessage) && !promisedFixBeforeAnswer(after) ? at : -1;
 }
 
 // The fixups under judgment are approved together, so the latest approval and those recorded at
@@ -209,7 +227,8 @@ export function deriveThreadReviewState(
     const agentReplied =
       last !== undefined && isAgentMessage(last) && !messages.every(isAgentMessage);
     if (!agentReplied) return 'awaiting-fix';
-    return openChoicesAt(messages) >= 0 ? 'choosing' : 'answered';
+    if (openChoicesAt(messages) >= 0) return 'choosing';
+    return last.fixPending === true ? 'fix-pending' : 'answered';
   }
   return isOpenedByEdit(thread) ? 'withdrawn' : 'rejected';
 }
@@ -217,7 +236,11 @@ export function deriveThreadReviewState(
 // States with no fixup under judgment, where an edit in the viewer can still answer the thread.
 export function isAnswerableByEdit(state: ThreadReviewState): boolean {
   return (
-    state === 'awaiting-fix' || state === 'answered' || state === 'choosing' || state === 'rejected'
+    state === 'awaiting-fix' ||
+    state === 'answered' ||
+    state === 'choosing' ||
+    state === 'fix-pending' ||
+    state === 'rejected'
   );
 }
 
@@ -244,14 +267,16 @@ export function selectOpenThreads<T extends { id: string } & ThreadMessages>(
   });
 }
 
-// open: the agent's move. answered and choosing: the reviewer's move. resolved: nobody's.
-export type CommentPanelStatus = 'open' | 'answered' | 'choosing' | 'resolved';
+// open: the agent's move. fixing: the agent's, after it said a fixup follows. answered and
+// choosing: the reviewer's move. resolved: nobody's.
+export type CommentPanelStatus = 'open' | 'fixing' | 'answered' | 'choosing' | 'resolved';
 
 const COMMENT_PANEL_STATUS: Record<ThreadReviewState, CommentPanelStatus | null> = {
   'awaiting-fix': 'open',
   rejected: 'open',
   answered: 'answered',
   choosing: 'choosing',
+  'fix-pending': 'fixing',
   'awaiting-approval': 'answered',
   // Resolved until the reviewer reopens it; reopened, it stays out of the open count.
   approved: 'answered',

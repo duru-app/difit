@@ -125,6 +125,14 @@ describe('CommentsPanel', () => {
     expect(screen.getByRole('button', { name: '남은 것 3' })).toBeInTheDocument();
   });
 
+  it('marks a comment the agent said it is fixing apart from the open ones', () => {
+    render(<Harness statusById={new Map([...STATUSES, ['b5', 'fixing']])} />);
+
+    const row = screen.getByRole('button', { name: /b\.ts:5/ });
+    expect(row).toHaveTextContent('수정 중');
+    expect(row).not.toHaveTextContent('열림');
+  });
+
   it('shows no pick count when nothing waits for a pick', () => {
     render(<Harness />);
 

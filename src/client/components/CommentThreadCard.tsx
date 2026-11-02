@@ -351,7 +351,9 @@ export function CommentThreadCard({
                 className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${
                   reviewState === 'choosing'
                     ? 'border-github-warning text-github-warning'
-                    : 'border-github-border text-github-text-secondary'
+                    : reviewState === 'fix-pending'
+                      ? 'border-github-accent text-github-accent'
+                      : 'border-github-border text-github-text-secondary'
                 }`}
               >
                 {reviewStateLabel(reviewState)}

@@ -300,20 +300,30 @@ function cloneChoice(choice: ReplyChoice): ReplyChoice {
   };
 }
 
-function choiceFields(source: {
-  choices?: ReplyChoice[];
-  answer?: ChoiceAnswer;
-}): Pick<DiffCommentMessage, 'choices' | 'answer'> {
+function normalizeFixPending(value: unknown): true | undefined {
+  if (value === undefined || value === false) {
+    return undefined;
+  }
+  if (value !== true) {
+    throw new Error('Invalid comment import field: fixPending');
+  }
+  return true;
+}
+
+type ReplyFields = Pick<DiffCommentMessage, 'choices' | 'answer' | 'fixPending'>;
+
+function replyFields(source: ReplyFields): ReplyFields {
   return {
     ...(source.choices === undefined ? {} : { choices: source.choices.map(cloneChoice) }),
     ...(source.answer === undefined
       ? {}
       : { answer: { messageId: source.answer.messageId, choice: source.answer.choice } }),
+    ...(source.fixPending ? { fixPending: true } : {}),
   };
 }
 
-function choicesKey(message: { choices?: ReplyChoice[]; answer?: ChoiceAnswer }): string {
-  return JSON.stringify(choiceFields(message));
+function replyFieldsKey(message: ReplyFields): string {
+  return JSON.stringify(replyFields(message));
 }
 
 function normalizeCommentImportEntry(value: unknown): CommentImport {
@@ -331,8 +341,18 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
 
   const createdAt = normalizeTimestamp(value.createdAt, 'createdAt');
   const updatedAt = normalizeTimestamp(value.updatedAt, 'updatedAt');
-  if (value.type === 'thread' && (value.choices !== undefined || value.answer !== undefined)) {
-    throw new Error('Invalid comment import field: choices and answer belong on a reply');
+  if (
+    value.type === 'thread' &&
+    (value.choices !== undefined ||
+      value.answer !== undefined ||
+      normalizeFixPending(value.fixPending) !== undefined)
+  ) {
+    throw new Error(
+      'Invalid comment import field: choices, answer and fixPending belong on a reply',
+    );
+  }
+  if (value.choices !== undefined && normalizeFixPending(value.fixPending) !== undefined) {
+    throw new Error('Invalid comment import field: a reply takes choices or fixPending, not both');
   }
 
   const normalized = {
@@ -349,9 +369,10 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
       view: normalizeView(value.view),
       fixupTarget: normalizeFixupTarget(value.fixupTarget),
     }),
-    ...choiceFields({
+    ...replyFields({
       choices: normalizeChoices(value.choices),
       answer: normalizeAnswer(value.answer),
+      fixPending: normalizeFixPending(value.fixPending),
     }),
   };
 
@@ -426,7 +447,9 @@ function messageMatchesImport(
     return false;
   }
 
-  return choicesKey(message) === choicesKey(commentImport.type === 'reply' ? commentImport : {});
+  return (
+    replyFieldsKey(message) === replyFieldsKey(commentImport.type === 'reply' ? commentImport : {})
+  );
 }
 
 function rootThreadMatchesImport(
@@ -502,7 +525,7 @@ function createImportedReply(commentImport: ReplyCommentImport, now: string): Di
     author: commentImport.author,
     createdAt,
     updatedAt,
-    ...choiceFields(commentImport),
+    ...replyFields(commentImport),
   };
 }
 
@@ -558,7 +581,7 @@ function cloneMessage(message: DiffCommentMessage): DiffCommentMessage {
     author: message.author,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
-    ...choiceFields(message),
+    ...replyFields(message),
   };
 }
 
@@ -587,7 +610,7 @@ function messagesMatch(left: DiffCommentMessage, right: DiffCommentMessage): boo
   return (
     left.body === right.body &&
     left.createdAt === right.createdAt &&
-    choicesKey(left) === choicesKey(right)
+    replyFieldsKey(left) === replyFieldsKey(right)
   );
 }
 
@@ -712,7 +735,7 @@ export function serializeCommentImports(commentImports: CommentImport[]): string
           }
         : undefined,
       fixupTarget: commentImport.fixupTarget,
-      ...(commentImport.type === 'reply' ? choiceFields(commentImport) : {}),
+      ...(commentImport.type === 'reply' ? replyFields(commentImport) : {}),
     })),
   );
 }

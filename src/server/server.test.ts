@@ -3476,6 +3476,32 @@ describe('Server Integration Tests', () => {
       if (socketDir) await fs.rm(socketDir, { recursive: true, force: true });
     });
 
+    it('shows a thread as being fixed when the agent’s reply says a fixup follows', async () => {
+      const { port } = await startPinned();
+      await postFromPage(port, { threads: [reviewerThread('c1')] });
+      await fetch(`http://localhost:${port}/api/comment-imports${PINNED}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'reply',
+          filePath: 'test.js',
+          position: { side: 'new', line: 3 },
+          author: 'Claude',
+          body: '고치는 중입니다.',
+          fixPending: true,
+        }),
+      });
+      const output = await (
+        await fetch(`http://localhost:${port}/api/comments-output${PINNED}`)
+      ).text();
+      const { threads } = (await (
+        await fetch(`http://localhost:${port}/api/comments-json${PINNED}`)
+      ).json()) as { threads: Array<{ messages: Array<Record<string, unknown>> }> };
+
+      expect(output).toContain('test.js:L3 [수정 중]');
+      expect(threads[0]!.messages[1]).toMatchObject({ body: '고치는 중입니다.', fixPending: true });
+    });
+
     it('hands over the reviewer’s pick among the agent’s choices and keeps both', async () => {
       const { port } = await startPinned();
       await postFromPage(port, { threads: [reviewerThread('c1')] });

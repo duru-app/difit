@@ -13,6 +13,7 @@ import {
   commentPanelStatus,
   deriveThreadReviewState,
   isAgentResponding,
+  isAnswerableByEdit,
   isThreadDeleted,
   isThreadResolved,
   mergeReviewDecisions,
@@ -268,6 +269,64 @@ describe('deriveThreadReviewState', () => {
     ).toBe('answered');
   });
 
+  describe('a reply that says a fixup follows', () => {
+    const promised = [{ author: REVIEWER_AUTHOR }, { author: AGENT_AUTHOR, fixPending: true }];
+
+    it('shows the thread as being fixed, not answered', () => {
+      expect(deriveThreadReviewState('t1', [], [], { messages: promised })).toBe('fix-pending');
+      expect(reviewStateLabel('fix-pending')).toBe('수정 중');
+      expect(isAnswerableByEdit('fix-pending')).toBe(true);
+    });
+
+    it('follows the agent’s latest reply: one without the mark takes it back', () => {
+      expect(
+        deriveThreadReviewState('t1', [], [], {
+          messages: [...promised, { author: AGENT_AUTHOR }],
+        }),
+      ).toBe('answered');
+      expect(
+        deriveThreadReviewState('t1', [], [], {
+          messages: [
+            ...promised,
+            { author: AGENT_AUTHOR },
+            { author: AGENT_AUTHOR, fixPending: true },
+          ],
+        }),
+      ).toBe('fix-pending');
+    });
+
+    it('closes choices the reviewer has not picked from yet', () => {
+      expect(
+        deriveThreadReviewState('t1', [], [], {
+          messages: [
+            { author: REVIEWER_AUTHOR },
+            { author: AGENT_AUTHOR, choices: [{ id: 'A' }] },
+            { author: AGENT_AUTHOR, fixPending: true },
+          ],
+        }),
+      ).toBe('fix-pending');
+    });
+
+    it('moves on when the fixup arrives or the reviewer replies', () => {
+      expect(deriveThreadReviewState('t1', [fixup('aaaa')], [], { messages: promised })).toBe(
+        'awaiting-approval',
+      );
+      expect(
+        deriveThreadReviewState('t1', [], [], {
+          messages: [...promised, { author: REVIEWER_AUTHOR }],
+        }),
+      ).toBe('awaiting-fix');
+    });
+
+    it('does not carry a promise made before the reviewer’s latest reply', () => {
+      expect(
+        deriveThreadReviewState('t1', [], [], {
+          messages: [...promised, { author: REVIEWER_AUTHOR }, { author: AGENT_AUTHOR }],
+        }),
+      ).toBe('answered');
+    });
+  });
+
   it('counts any author other than the reviewer and the reviewer’s edits as the agent', () => {
     expect(
       deriveThreadReviewState('t1', [], [], {
@@ -479,13 +538,19 @@ describe('commentPanelStatus', () => {
     id: string,
     fixups: ThreadFixup[],
     decisions: ReviewDecision[],
-    thread: { messages: { author?: string; choices?: unknown[] }[] } = asked,
+    thread: { messages: { author?: string; choices?: unknown[]; fixPending?: boolean }[] } = asked,
   ) => commentPanelStatus({ id, ...thread }, fixups, decisions);
 
   it('shows it as the reviewer’s pick while the agent’s reply offers choices', () => {
     const offered = { messages: [...asked.messages, { author: AGENT_AUTHOR, choices: [{}] }] };
     expect(status('t1', [], [], offered)).toBe('choosing');
     expect(status('t1', [], [decision('resolved', '')], offered)).toBe('resolved');
+  });
+
+  it('shows it apart from open and answered once the agent said a fixup follows', () => {
+    const promised = { messages: [...asked.messages, { author: AGENT_AUTHOR, fixPending: true }] };
+    expect(status('t1', [], [], promised)).toBe('fixing');
+    expect(status('t1', [], [decision('resolved', '')], promised)).toBe('resolved');
   });
 
   it('shows it as open when the move is the agent: no answer yet, or the fixup was rejected', () => {
@@ -741,6 +806,16 @@ describe('selectThreadsAwaitingAgent', () => {
         message: 'User 0',
       },
     ]);
+  });
+
+  it('leaves a thread whose last agent reply says a fixup follows to the agent, without handing it over', () => {
+    const asked = thread('t1', ['User'], [undefined]);
+    const promised = {
+      ...asked,
+      messages: [asked.messages[0]!, { ...asked.messages[1]!, fixPending: true as const }],
+    };
+    expect(ids([promised], new Map())).toEqual([]);
+    expect(isAgentResponding(promised, new Map(), [])).toBe(false);
   });
 
   it('hands over the reviewer’s pick with the choice it answers', () => {
