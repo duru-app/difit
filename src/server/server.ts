@@ -1507,11 +1507,12 @@ export async function startServer(options: ServerOptions): Promise<{
         return;
       }
       const turnKey = (threads: DiffCommentThread[], waiting: ThreadAwaitingAgent): string => {
-        const lastMessageId = threads.find((t) => t.id === waiting.threadId)?.messages.at(-1)?.id;
+        const last = threads.find((t) => t.id === waiting.threadId)?.messages.at(-1);
         return JSON.stringify([
           waiting.threadId,
           waiting.state,
-          lastMessageId,
+          last?.id,
+          last?.updatedAt,
           waiting.rejectedFixupShas,
         ]);
       };

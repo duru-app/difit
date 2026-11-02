@@ -3700,6 +3700,76 @@ describe('Server Integration Tests', () => {
       expect(JSON.parse(json!)).toMatchObject({ threadId: 'c1', state: 'awaiting-fix' });
     });
 
+    it('sends the reviewer’s comment again when they edit it before the agent answers', async () => {
+      await listenOnSocket();
+      const { port } = await startPinned();
+      const thread = reviewerThread('c1');
+
+      await postFromPage(port, { threads: [thread] });
+      await settle();
+      await postFromPage(port, {
+        threads: [
+          {
+            ...thread,
+            messages: [
+              {
+                ...thread.messages[0]!,
+                body: 'fix c1 이건 남아?',
+                updatedAt: '2026-01-01T00:00:08Z',
+              },
+            ],
+          },
+        ],
+      });
+      await settle();
+
+      expect(received).toHaveLength(2);
+      const [, json] = (
+        JSON.parse(received[1]!.trim().split('\n').at(-1)!).message.content as string
+      ).split('\n');
+      expect(JSON.parse(json!)).toMatchObject({ threadId: 'c1', message: 'fix c1 이건 남아?' });
+    });
+
+    it('marks a comment edited after the agent answered without handing the turn back', async () => {
+      await listenOnSocket();
+      const { port } = await startPinned();
+      const thread = reviewerThread('c1');
+      const reply = {
+        id: 'r1',
+        body: '고쳤습니다.',
+        author: 'Claude',
+        createdAt: '2026-01-01T00:01:00Z',
+        updatedAt: '2026-01-01T00:01:00Z',
+      };
+      await postFromPage(port, { threads: [{ ...thread, messages: [...thread.messages, reply] }] });
+      await settle();
+      received = [];
+
+      await postFromPage(port, {
+        threads: [
+          {
+            ...thread,
+            messages: [
+              {
+                ...thread.messages[0]!,
+                body: 'fix c1 이건 남아?',
+                updatedAt: '2026-01-01T00:02:00Z',
+              },
+              reply,
+            ],
+          },
+        ],
+      });
+      await settle();
+      const output = await (
+        await fetch(`http://localhost:${port}/api/comments-output${PINNED}`)
+      ).text();
+
+      expect(received).toEqual([]);
+      expect(output).toContain('고친 시각: 2026-01-01T00:02:00Z\nfix c1 이건 남아?');
+      expect(output.match(/고친 시각/g)).toHaveLength(1);
+    });
+
     it('tells the Claude Code session the commit to fix into', async () => {
       await listenOnSocket();
       const { port } = await startPinned();
