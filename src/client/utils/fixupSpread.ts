@@ -225,6 +225,31 @@ export function reviewPathsOf(fixupsInLogOrder: readonly ThreadFixup[]): Map<str
   return paths;
 }
 
+// Reviewed path to the fixup file that brought it back to the review base, when that fixup is the
+// last to change the file and is shown.
+export function revertedReviewFiles(
+  fixupsInLogOrder: readonly ThreadFixup[],
+  reviewPaths: ReadonlyMap<string, string>,
+  places: ReadonlyMap<string, FixupFilePlace>,
+  reviewFilePaths: ReadonlySet<string>,
+): Map<string, FixupFileRef> {
+  const lastChange = new Map<string, { ref: FixupFileRef; matchesReviewBase: boolean }>();
+  for (const fixup of fixupsInLogOrder) {
+    for (const file of fixup.files) {
+      const ref = { fixupSha: fixup.sha, path: file.path };
+      const reviewPath = reviewPaths.get(fixupFileKey(ref));
+      if (reviewPath !== undefined && reviewFilePaths.has(reviewPath)) {
+        lastChange.set(reviewPath, { ref, matchesReviewBase: file.matchesReviewBase === true });
+      }
+    }
+  }
+  const reverted = new Map<string, FixupFileRef>();
+  for (const [reviewPath, { ref, matchesReviewBase }] of lastChange) {
+    if (matchesReviewBase && places.has(fixupFileKey(ref))) reverted.set(reviewPath, ref);
+  }
+  return reverted;
+}
+
 // A thread outside the review belongs to the group of the fixup its snapshot was taken on and is
 // placed there once, before any later fixup is spread. A thread whose snapshot names no listed
 // fixup, or whose fixup shows no fixup-only copy of its file, is placed on the latest group so far

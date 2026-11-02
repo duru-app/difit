@@ -473,7 +473,12 @@ export interface ThreadFixup {
   authoredAt: string;
   subject: string;
   threadIds: string[];
-  files: Array<Pick<DiffFile, 'path' | 'oldPath' | 'status' | 'chunks' | 'isGenerated'>>;
+  files: Array<
+    Pick<DiffFile, 'path' | 'oldPath' | 'status' | 'chunks' | 'isGenerated'> & {
+      // True when the file at the fixup is the same as at the review base, both absent included.
+      matchesReviewBase?: true;
+    }
+  >;
   // What the commits answering no thread changed since the fixup before this one, or since the
   // review target for the first; left out when it was not read.
   plainChangesBefore?: PlainFileChange[];

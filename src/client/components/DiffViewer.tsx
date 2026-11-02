@@ -27,7 +27,7 @@ import type { DiffViewerBodyProps } from '../viewers/types';
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
 import { DiffViewerHeader } from './DiffViewerHeader';
-import { FixupOverlayBlock } from './FixupOverlayCard';
+import { FixupBoxes, FixupOverlayBlock } from './FixupOverlayCard';
 import type { AppearanceSettings } from './SettingsModal';
 
 interface DiffViewerProps {
@@ -210,6 +210,8 @@ export const DiffViewer = memo(function DiffViewer({
     [threads],
   );
 
+  const overlay = fixupOverlay ?? EMPTY_FIXUP_OVERLAY;
+  const revertedBy = overlay.fixupRevertedFiles.get(file.path);
   const viewer = getViewerForFile(file);
   const hasBlobContent = baseCommitish !== 'stdin' && targetCommitish !== 'stdin';
   const canExpandHiddenLines = hasBlobContent && (viewer.canExpandHiddenLines?.(file) ?? false);
@@ -260,7 +262,13 @@ export const DiffViewer = memo(function DiffViewer({
   );
 
   useEffect(() => {
-    if (isCollapsed || isExpandLoading || !canExpandHiddenLines || lineThreads.length === 0) {
+    if (
+      isCollapsed ||
+      isExpandLoading ||
+      !canExpandHiddenLines ||
+      lineThreads.length === 0 ||
+      revertedBy
+    ) {
       return;
     }
 
@@ -297,6 +305,7 @@ export const DiffViewer = memo(function DiffViewer({
     isExpandLoading,
     mergedChunks,
     canExpandHiddenLines,
+    revertedBy,
   ]);
 
   const fileLevelTokens = useFileLevelTokens({
@@ -333,8 +342,13 @@ export const DiffViewer = memo(function DiffViewer({
     onCommentTriggerHandled,
   };
 
-  const overlay = fixupOverlay ?? EMPTY_FIXUP_OVERLAY;
-  const fixupRef = overlay.fixupTouchedFiles.get(file.path);
+  const fixupRef = revertedBy ?? overlay.fixupTouchedFiles.get(file.path);
+  const listedThreads = revertedBy ? threads : fileThreads;
+  const revertedBoxes = revertedBy
+    ? [...(overlay.boxesByFile.get(file.path) ?? [])]
+        .sort(([above], [below]) => above - below)
+        .flatMap(([, boxes]) => boxes)
+    : [];
 
   return (
     <div
@@ -351,6 +365,7 @@ export const DiffViewer = memo(function DiffViewer({
         onToggleAllCollapsed={onToggleAllCollapsed}
         onToggleReviewed={onToggleReviewed}
         labels={headerLabels}
+        isRevertedByFixup={revertedBy !== undefined}
         onRevealFixup={
           fixupRef && (() => overlay.revealFixupFile(fixupRef.fixupSha, fixupRef.path))
         }
@@ -366,13 +381,20 @@ export const DiffViewer = memo(function DiffViewer({
       {!isCollapsed && (
         <FileLevelTokensProvider value={fileLevelTokens}>
           <FixupOverlayProvider value={overlay}>
-            {(fileThreads.length > 0 || (isAddingFileComment && onAddFileComment)) && (
+            {(listedThreads.length > 0 ||
+              revertedBoxes.length > 0 ||
+              (isAddingFileComment && onAddFileComment)) && (
               <section
-                aria-label="파일 전체 지적"
+                aria-label={revertedBy ? '이 파일의 지적' : '파일 전체 지적'}
                 className="space-y-2 border-b border-github-border bg-github-bg-secondary px-4 py-2"
               >
-                {fileThreads.map((thread) => (
-                  <div key={thread.id} id={`file-comment-${thread.id}`} className="space-y-1">
+                <FixupBoxes boxes={revertedBoxes} syntaxTheme={syntaxTheme} />
+                {listedThreads.map((thread) => (
+                  <div
+                    key={thread.id}
+                    id={thread.line === undefined ? `file-comment-${thread.id}` : undefined}
+                    className="space-y-1"
+                  >
                     <FixupOverlayBlock
                       thread={thread}
                       filePath={file.path}
@@ -407,9 +429,11 @@ export const DiffViewer = memo(function DiffViewer({
                 )}
               </section>
             )}
-            <div className="overflow-y-auto">
-              <ViewerComponent {...viewerProps} />
-            </div>
+            {!revertedBy && (
+              <div className="overflow-y-auto">
+                <ViewerComponent {...viewerProps} />
+              </div>
+            )}
           </FixupOverlayProvider>
         </FileLevelTokensProvider>
       )}
