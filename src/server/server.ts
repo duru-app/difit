@@ -69,6 +69,7 @@ import {
   commitFiles,
   isJavaPath,
 } from './scip-peek.js';
+import { listSkills, skillLocations } from './skills.js';
 import { searchSymbol } from './symbol-search.js';
 import { parseUserSettingsPatch, readUserConfig, updateUserClientSettings } from './user-config.js';
 
@@ -259,14 +260,14 @@ export async function startServer(options: ServerOptions): Promise<{
 
   // Editing writes commits, so it stays off whenever another machine could reach the server.
   const listensOnLoopbackOnly = !options.host || LOOPBACK_ADDRESSES.has(options.host);
+  // A page whose host name was rebound to this address still sends its own name as Host.
+  const isLocalRequest = (req: { hostname: string }) =>
+    listensOnLoopbackOnly && LOOPBACK_HOST_HEADERS.has(req.hostname);
   // A direct edit carries a whole hunk, which easily passes the default 100kb.
   const parseJson = express.json();
   const parseDirectEditJson = express.json({ limit: '64mb' });
   app.use((req, res, next) => {
-    const directEdit =
-      req.path === '/api/direct-edit' &&
-      listensOnLoopbackOnly &&
-      LOOPBACK_HOST_HEADERS.has(req.hostname);
+    const directEdit = req.path === '/api/direct-edit' && isLocalRequest(req);
     (directEdit ? parseDirectEditJson : parseJson)(req, res, next);
   });
   app.use(express.text()); // For sendBeacon text/plain requests
@@ -1934,8 +1935,7 @@ export async function startServer(options: ServerOptions): Promise<{
       res.status(403).json({ error: 'Direct edit is not available for this review' });
       return;
     }
-    // A page whose host name was rebound to this address still sends its own name as Host.
-    if (!LOOPBACK_HOST_HEADERS.has(req.hostname)) {
+    if (!isLocalRequest(req)) {
       res.status(403).json({ error: 'Direct edit accepts requests to localhost only' });
       return;
     }
@@ -2106,7 +2106,7 @@ export async function startServer(options: ServerOptions): Promise<{
       res.status(403).json({ error: 'Rewording is not available for this review' });
       return;
     }
-    if (!LOOPBACK_HOST_HEADERS.has(req.hostname)) {
+    if (!isLocalRequest(req)) {
       res.status(403).json({ error: 'Rewording accepts requests to localhost only' });
       return;
     }
@@ -2184,6 +2184,19 @@ export async function startServer(options: ServerOptions): Promise<{
   app.get('/api/user-settings', async (_req, res) => {
     const config = await readUserConfig();
     res.json(config);
+  });
+
+  app.get('/api/skills', async (req, res) => {
+    if (!isLocalRequest(req)) {
+      res.json([]);
+      return;
+    }
+    try {
+      res.json(await listSkills(skillLocations(repositoryPath)));
+    } catch (error) {
+      console.error('Error listing skills:', error);
+      res.status(500).json({ error: 'Failed to list skills' });
+    }
   });
 
   app.put('/api/user-settings', async (req, res) => {

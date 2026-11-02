@@ -1769,6 +1769,50 @@ describe('Server Integration Tests', () => {
     });
   });
 
+  describe('Skills API', () => {
+    const originalClaudeDir = process.env.CLAUDE_CONFIG_DIR;
+    let claudeDir: string;
+
+    beforeEach(async () => {
+      claudeDir = await fs.mkdtemp(join(tmpdir(), 'difit-skills-api-'));
+      await fs.mkdir(join(claudeDir, 'skills', 'tdd'), { recursive: true });
+      await fs.writeFile(
+        join(claudeDir, 'skills', 'tdd', 'SKILL.md'),
+        '---\nname: tdd\ndescription: Test first\n---\n',
+      );
+      process.env.CLAUDE_CONFIG_DIR = claudeDir;
+    });
+
+    afterEach(async () => {
+      if (originalClaudeDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = originalClaudeDir;
+      }
+      await fs.rm(claudeDir, { recursive: true, force: true });
+    });
+
+    async function skillsFrom(host?: string) {
+      const result = await startServer({
+        selection: { targetCommitish: 'HEAD', baseCommitish: 'HEAD^' },
+        preferredPort: 9150,
+        ...(host === undefined ? {} : { host }),
+      });
+      servers.push(result.server);
+      const response = await fetch(`http://localhost:${result.port}/api/skills`);
+      return (await response.json()) as { name: string; source: string }[];
+    }
+
+    it('lists the user skills to a client on this machine', async () => {
+      const skills = await skillsFrom();
+      expect(skills).toContainEqual(expect.objectContaining({ name: 'tdd', source: 'user' }));
+    });
+
+    it('lists nothing when the server listens beyond localhost', async () => {
+      expect(await skillsFrom('0.0.0.0')).toEqual([]);
+    });
+  });
+
   describe('Revision options API', () => {
     it('returns available revisions', async () => {
       const result = await startServer({

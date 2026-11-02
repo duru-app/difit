@@ -2,6 +2,7 @@ import React, { type ReactNode, useState } from 'react';
 
 import { CommentBodyRenderer, hasSuggestionInBody } from './CommentBodyRenderer';
 import type { AppearanceSettings } from './SettingsModal';
+import { SkillTextarea } from './SkillTextarea';
 
 interface CommentFormProps {
   onSubmit: (body: string) => Promise<void>;
@@ -130,10 +131,10 @@ export function CommentForm({
           />
         </div>
       ) : (
-        <textarea
-          className="w-full min-h-[60px] mb-2 resize-y bg-github-bg-secondary border border-github-border rounded px-3 py-2 text-github-text-primary text-sm leading-6 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/30 focus:min-h-[80px] disabled:opacity-50"
+        <SkillTextarea
+          className="min-h-[60px] resize-y border border-github-border rounded px-3 py-2 text-github-text-primary text-sm leading-6 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/30 focus:min-h-[80px] disabled:opacity-50"
           value={body}
-          onChange={(e) => setBody(e.target.value)}
+          onValueChange={setBody}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={Math.max(3, body.split('\n').length)}
