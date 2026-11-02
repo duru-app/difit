@@ -206,6 +206,15 @@ npm i -g https://github.com/duru-app/difit/releases/latest/download/difit.tgz
 
 이 기능이 없던 difit(직접 빌드한 것 포함)에서 옮겨 오려면, 떠 있는 difit을 모두 끈 뒤 위의 `npm i -g` 한 줄을 한 번 실행한다. 이 기능이 들어간 릴리스부터는 그 뒤로 다시 깔 일이 없다. npm으로 다시 까는 것은 떠 있는 difit의 파일을 그 자리에서 바꾸므로, 열려 있는 리뷰 화면이 깨질 수 있다.
 
+### 에이전트 스킬
+
+릴리스에는 이 포크의 스킬 `difit`과 `difit-review`가 함께 들어 있다. 릴리스로 깐 difit은 리뷰를 열 때 지금 실행 중인 버전의 스킬을 `~/.claude/skills/difit`과 `~/.claude/skills/difit-review`에 깐다. 그래서 자동 업데이트로 새 버전이 뜨면 스킬도 그 버전 것으로 바뀐다. 내용이 같으면 아무것도 쓰지 않고, 다르면 폴더 안을 통째로 새 것으로 바꾸므로 그 폴더에서 직접 고친 내용은 남지 않는다.
+
+- `CLAUDE_CONFIG_DIR`을 두었으면 `~/.claude` 대신 그 폴더에 깐다. 어느 쪽이든 그 폴더가 없으면 아무것도 하지 않는다
+- 스킬 폴더가 심볼릭 링크이면 건드리지 않는다
+- `DIFIT_DISABLE_SKILL_INSTALL=1`: 스킬을 깔지 않는다
+- 직접 빌드한 버전이나 원래 difit 버전은 스킬을 깔지 않는다
+
 ### 리뷰 흐름
 
 1. **리뷰 열기**: `difit feature main`처럼 브랜치 이름으로 연다. 리뷰는 연 순간의 커밋에 머문다
