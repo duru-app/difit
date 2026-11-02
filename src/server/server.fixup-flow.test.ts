@@ -126,7 +126,7 @@ it('folds the fixup for a comment made on one commit into that commit', async ()
   expect(json.threads[0]?.fixupTarget).toBe(pin);
   const shortPin = git(repo, ['rev-parse', '--short', pin]);
   expect(await text('/api/comments-output')).toContain(
-    `discount.test.js:L3 [수정 중]\n고쳐 넣을 커밋: ${shortPin} test: pin current discount\n`,
+    `discount.test.js:L3 [답변 대기]\n고쳐 넣을 커밋: ${shortPin} test: pin current discount\n`,
   );
   expect(await text('/api/comments-wait')).toContain(`"fixupTarget":"${pin}"`);
 
@@ -356,7 +356,7 @@ it('binds a comment on the whole file to the last commit that changed it and han
   expect(imported.status).toBe(200);
 
   const output = await (await fetch(api('/api/comments-output'))).text();
-  expect(output).toContain('\ndiscount.test.js [수정 중]\n');
+  expect(output).toContain('\ndiscount.test.js [답변 대기]\n');
   expect(output).not.toContain('discount.test.js:');
   const waited = await (await fetch(api('/api/comments-wait'))).text();
   expect(JSON.parse(waited.split('data: ')[1]!)).toEqual([

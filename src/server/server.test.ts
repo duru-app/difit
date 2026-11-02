@@ -1097,7 +1097,7 @@ describe('Server Integration Tests', () => {
 
       const output = await (await fetch(`http://localhost:${port}/api/comments-output`)).text();
 
-      expect(output).toContain('test.js:L10 [수정 중]\nNo answer yet');
+      expect(output).toContain('test.js:L10 [답변 대기]\nNo answer yet');
       expect(output).toContain('test.js:L60 [답변 완료]\nWhy this way?');
       expect(output).toContain('test.js:L20 [승인 대기]\nAnswered');
       expect(output).toContain('test.js:L30 [다시 수정 중]\nRejected');
@@ -1253,7 +1253,7 @@ describe('Server Integration Tests', () => {
       ).text();
 
       expect(output).toContain('test.js:L10\nPlain review');
-      expect(output).not.toContain('[수정 중]');
+      expect(output).not.toContain('[답변 대기]');
     });
 
     it('GET /api/comments-output formats multi-line comments correctly', async () => {
@@ -3286,9 +3286,9 @@ describe('Server Integration Tests', () => {
       });
       expect(json.threads.find((thread) => thread.id === 'c1')).not.toHaveProperty('fixupTarget');
       expect(output).toContain(
-        'test.js:L3 [수정 중]\n고쳐 넣을 커밋: 1111111 first\nfix the first',
+        'test.js:L3 [답변 대기]\n고쳐 넣을 커밋: 1111111 first\nfix the first',
       );
-      expect(output).toContain('test.js:L3 [수정 중]\nfix this');
+      expect(output).toContain('test.js:L3 [답변 대기]\nfix this');
       expect(output.match(/고쳐 넣을 커밋/g)).toHaveLength(1);
       expect(wait).toContain(`"threadId":"c2"`);
       expect(wait.match(/"fixupTarget"/g)).toHaveLength(1);
@@ -3530,7 +3530,7 @@ describe('Server Integration Tests', () => {
       const waited = JSON.parse((await readWait(port)).split('data: ')[1]!.split('\n')[0]!);
       await addReply({ body: 'B로 하겠습니다.' });
 
-      expect(output).toContain('test.js:L3 [고를 차례]');
+      expect(output).toContain('test.js:L3 [선택 대기]');
       expect(output).toContain('- B (recommended): 묶음 — 넓힐 수 있습니다.');
       expect(waited).toEqual([
         expect.objectContaining({ threadId: 'c1', message: '고름: B — 묶음', answer }),
@@ -3555,7 +3555,7 @@ describe('Server Integration Tests', () => {
         {
           threadId: 'c1',
           state: 'awaiting-fix',
-          label: '수정 중',
+          label: '답변 대기',
           filePath: 'test.js',
           position: { side: 'new', line: 3 },
           message: 'fix c1',
@@ -3625,7 +3625,7 @@ describe('Server Integration Tests', () => {
       expect(message.message.role).toBe('user');
       const [first, json] = (message.message.content as string).split('\n');
       expect(first).toBe(
-        `difit review: your turn on c1 [수정 중]; read with difit comment get --port ${port} --format json`,
+        `difit review: your turn on c1 [답변 대기]; read with difit comment get --port ${port} --format json`,
       );
       expect(JSON.parse(json!)).toMatchObject({ threadId: 'c1', state: 'awaiting-fix' });
     });

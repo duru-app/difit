@@ -519,7 +519,7 @@ Related entries are below.`);
         ]),
       );
 
-      expect(result).toContain('src/App.tsx:L10 [수정 중]\nOpen');
+      expect(result).toContain('src/App.tsx:L10 [답변 대기]\nOpen');
       expect(result).toContain('src/App.tsx:L20 [승인됨]\nDone');
     });
 
@@ -550,7 +550,7 @@ Related entries are below.`);
       );
 
       expect(result).toContain(
-        'src/App.tsx:L10 [수정 중]\n고쳐 넣을 커밋: 1111111 first\nFix named',
+        'src/App.tsx:L10 [답변 대기]\n고쳐 넣을 커밋: 1111111 first\nFix named',
       );
       expect(result).toContain('src/App.tsx:L10\n고쳐 넣을 커밋: 2222222\nFix unlisted');
       expect(result).toContain('src/App.tsx:L10\nFix old');
@@ -580,7 +580,7 @@ Related entries are below.`);
       );
 
       expect(result).toContain(
-        '\nsrc/App.tsx [수정 중]\n고쳐 넣을 커밋: 1111111 first\nWhole file kept',
+        '\nsrc/App.tsx [답변 대기]\n고쳐 넣을 커밋: 1111111 first\nWhole file kept',
       );
       expect(result).toContain(
         '\nsrc/App.tsx (old)\n고쳐 넣을 커밋: 1111111 first\nWhole file deleted',

@@ -281,7 +281,7 @@ describe('comment subcommand integration', () => {
   });
 
   describe('wait', () => {
-    const THREAD = { threadId: 'c1', state: 'awaiting-fix', label: '수정 중' };
+    const THREAD = { threadId: 'c1', state: 'awaiting-fix', label: '답변 대기' };
 
     function streamResponse(...events: string[]): Response {
       return new Response(

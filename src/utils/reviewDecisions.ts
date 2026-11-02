@@ -20,9 +20,9 @@ const REVIEW_DECISION_KINDS: ReviewDecision['kind'][] = [
 ];
 
 const REVIEW_STATE_LABEL: Record<ThreadReviewState, string> = {
-  'awaiting-fix': '수정 중',
+  'awaiting-fix': '답변 대기',
   answered: '답변 완료',
-  choosing: '고를 차례',
+  choosing: '선택 대기',
   'awaiting-approval': '승인 대기',
   approved: '승인됨',
   folded: '접힘',
