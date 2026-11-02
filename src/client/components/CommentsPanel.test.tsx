@@ -120,8 +120,8 @@ describe('CommentsPanel', () => {
     render(<Harness statusById={new Map([...STATUSES, ['b5', 'choosing']])} />);
 
     const row = screen.getByRole('button', { name: /b\.ts:5/ });
-    expect(row).toHaveTextContent('고를 차례');
-    expect(screen.getByTestId('choosing-count')).toHaveTextContent('고를 차례 1');
+    expect(row).toHaveTextContent('선택 대기');
+    expect(screen.getByTestId('choosing-count')).toHaveTextContent('선택 대기 1');
     expect(screen.getByRole('button', { name: '남은 것 3' })).toBeInTheDocument();
   });
 

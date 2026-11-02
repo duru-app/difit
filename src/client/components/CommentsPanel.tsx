@@ -46,7 +46,7 @@ const STATUS_CHIP: Record<CommentPanelStatus, { label: string; className: string
   },
   answered: { label: '답함', className: 'border-blue-500 text-blue-400' },
   choosing: {
-    label: '고를 차례',
+    label: '선택 대기',
     className: 'border-github-warning bg-github-warning/15 text-github-warning',
   },
   resolved: { label: '해결', className: 'border-github-border text-github-text-muted' },
@@ -205,7 +205,7 @@ export function CommentsPanel({
               data-testid="choosing-count"
               className="inline-flex h-7 items-center rounded-md border border-github-warning px-2.5 text-xs text-github-warning"
             >
-              고를 차례 {choosingCount}
+              선택 대기 {choosingCount}
             </span>
           )}
         </div>

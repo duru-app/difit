@@ -980,7 +980,7 @@ describe('CommentThreadCard', () => {
     expect(screen.queryByTestId('review-state-chip')).not.toBeInTheDocument();
     unmount();
     renderCard(false);
-    expect(screen.getByTestId('review-state-chip')).toHaveTextContent('수정 중');
+    expect(screen.getByTestId('review-state-chip')).toHaveTextContent('답변 대기');
     expect(screen.queryByTestId('responding-chip')).not.toBeInTheDocument();
   });
 
@@ -1154,14 +1154,14 @@ describe('CommentThreadCard', () => {
       renderCard(offered);
 
       const chip = screen.getByTestId('review-state-chip');
-      expect(chip).toHaveTextContent('고를 차례');
+      expect(chip).toHaveTextContent('선택 대기');
       expect(chip).toHaveClass('text-github-warning');
     });
 
     it('shows the pick state on a pinned review too', () => {
       renderCard(offered, undefined, { ...awaitingReview, state: 'choosing', pendingFixups: [] });
 
-      expect(screen.getByTestId('review-state-chip')).toHaveTextContent('고를 차례');
+      expect(screen.getByTestId('review-state-chip')).toHaveTextContent('선택 대기');
     });
 
     it('replies with the pick and the choice it answers', async () => {

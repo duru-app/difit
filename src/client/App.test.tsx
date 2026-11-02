@@ -1487,13 +1487,13 @@ describe('App Component - Returning from the review a comment was made on', () =
 
     try {
       renderApp();
-      await waitFor(() => expect(chips()).toEqual(['수정 중', '해결됨']));
+      await waitFor(() => expect(chips()).toEqual(['답변 대기', '해결됨']));
 
       fireEvent.click(await screen.findByRole('button', { name: '이 지적을 달던 시점으로' }));
       await waitFor(() => expect(chips()).toEqual(['다시 수정 중']));
 
       act(() => window.history.back());
-      await waitFor(() => expect(chips()).toEqual(['수정 중', '해결됨']));
+      await waitFor(() => expect(chips()).toEqual(['답변 대기', '해결됨']));
       expect(recordDecision).not.toHaveBeenCalled();
       expect(recordFixupDecisions).not.toHaveBeenCalled();
       expect(undoApproval).not.toHaveBeenCalled();

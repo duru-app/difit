@@ -241,7 +241,7 @@ describe('deriveThreadReviewState', () => {
       messages: [...asked.messages, { author: AGENT_AUTHOR, choices: [{ id: 'A' }] }],
     };
     expect(deriveThreadReviewState('t1', [], [], offered)).toBe('choosing');
-    expect(reviewStateLabel('choosing')).toBe('고를 차례');
+    expect(reviewStateLabel('choosing')).toBe('선택 대기');
     expect(
       deriveThreadReviewState('t1', [], [], {
         messages: [...offered.messages, { author: REVIEWER_AUTHOR }],
@@ -296,7 +296,7 @@ describe('deriveThreadReviewState', () => {
 
 describe('reviewStateLabel', () => {
   it('names each state the way the screen chip does', () => {
-    expect(reviewStateLabel('awaiting-fix')).toBe('수정 중');
+    expect(reviewStateLabel('awaiting-fix')).toBe('답변 대기');
     expect(reviewStateLabel('awaiting-approval')).toBe('승인 대기');
     expect(reviewStateLabel('approved')).toBe('승인됨');
     expect(reviewStateLabel('folded')).toBe('접힘');
@@ -308,7 +308,7 @@ describe('reviewStateLabel', () => {
   it('tells a rejected thread apart from one still waiting for its first fixup', () => {
     const rejected = [decision('rejected', 'aaaa')];
     expect(reviewStateLabel(deriveThreadReviewState('t1', [], rejected))).toBe('다시 수정 중');
-    expect(reviewStateLabel(deriveThreadReviewState('t1', [], []))).toBe('수정 중');
+    expect(reviewStateLabel(deriveThreadReviewState('t1', [], []))).toBe('답변 대기');
   });
 });
 
@@ -788,7 +788,7 @@ describe('selectThreadsAwaitingAgent', () => {
     expect(ids(threads, new Map())).toEqual(['new', 'asked-back']);
     expect(selectThreadsAwaitingAgent(threads, new Map(), [])[0]).toMatchObject({
       state: 'awaiting-fix',
-      label: '수정 중',
+      label: '답변 대기',
     });
   });
 
