@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CommentThread, ReviewDecision } from '../../types/diff';
 import {
@@ -726,6 +726,64 @@ describe('CommentThreadCard', () => {
 
       expect(onReplyToThread).toHaveBeenCalledWith('thread-1', 'One more thing');
       expect(recordDecision).toHaveBeenCalledWith('thread-1', 'unresolved', '');
+    });
+
+    describe('folding while the diff is scrolled', () => {
+      const FILE_HEADER_HEIGHT = 50;
+      const EXPANDED_HEIGHT = 2000;
+      const COLLAPSED_HEIGHT = 40;
+      let cardTop = 0;
+
+      beforeEach(() => {
+        vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
+          function (this: Element) {
+            const box = (top: number, height: number) =>
+              DOMRect.fromRect({ x: 0, y: top, width: 800, height });
+            if (this.tagName === 'MAIN') return box(0, 600);
+            if (this.hasAttribute('data-file-header')) return box(0, FILE_HEADER_HEIGHT);
+            if (this.id === 'comment-thread-thread-1') {
+              const expanded = this.querySelector('[aria-label="Collapse thread"]') !== null;
+              return box(cardTop, expanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT);
+            }
+            return box(0, 0);
+          },
+        );
+      });
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      const inDiff = (decisions: ReviewDecision[], state: 'awaiting-approval' | 'approved') => (
+        <main className="overflow-y-auto">
+          <div data-file-path={mockThread.file}>
+            <div data-file-header />
+            {card(decisions, state)}
+          </div>
+        </main>
+      );
+
+      const approveScrolledTo = (top: number) => {
+        cardTop = top;
+        const { container, rerender } = render(inDiff([], 'awaiting-approval'));
+        const diff = container.querySelector('main');
+        if (!diff) throw new Error('diff container missing');
+        diff.scrollTop = 3000;
+        rerender(inDiff([record('approved', 0)], 'approved'));
+        return diff.scrollTop;
+      };
+
+      it('brings the folded head back under the file header when the card ran off the top', () => {
+        expect(approveScrolledTo(-1500)).toBe(3000 - 1500 - FILE_HEADER_HEIGHT - 8);
+      });
+
+      it('stays put when the whole card was already above the screen', () => {
+        expect(approveScrolledTo(-2500)).toBe(3000);
+      });
+
+      it('stays put when the head of the card was on screen', () => {
+        expect(approveScrolledTo(200)).toBe(3000);
+      });
     });
   });
 

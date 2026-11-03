@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, Copy, Edit2, MessageSquare, Trash2 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   type ChoiceAnswer,
@@ -16,10 +16,12 @@ import {
   deriveThreadReviewState,
   reviewStateLabel,
 } from '../../utils/reviewDecisions';
+import { NAVIGATION_SELECTORS } from '../constants/navigation';
 import { type ThreadReviewControls, useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { usePickedThreadId } from '../contexts/PickedThreadContext';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { copyTextToClipboard } from '../utils/clipboard';
+import { stickyHeaderCover } from '../utils/domUtils';
 
 import { CommentBodyRenderer } from './CommentBodyRenderer';
 import { CommentForm } from './CommentForm';
@@ -228,6 +230,19 @@ const OUTDATED_REASON_TITLE: Record<AnchorStaleReason, string> = {
 
 const RESPONDING_DOT_DELAYS_MS = [0, 150, 300];
 
+const visibleTopOf = (card: HTMLElement) => {
+  const diff = card.closest<HTMLElement>(NAVIGATION_SELECTORS.SCROLL_CONTAINER);
+  if (!diff) return null;
+  return { diff, top: diff.getBoundingClientRect().top + stickyHeaderCover(card) };
+};
+
+const runsOffTheTop = (card: HTMLElement | null) => {
+  const visible = card && visibleTopOf(card);
+  if (!card || !visible) return false;
+  const { top, bottom } = card.getBoundingClientRect();
+  return top < visible.top && bottom > visible.top;
+};
+
 interface CommentThreadCardProps {
   thread: CommentThread;
   review?: ThreadReviewControls;
@@ -259,11 +274,18 @@ export function CommentThreadCard({
     (decision) => decision.threadId === thread.id && decision.kind === 'folded',
   );
   const isPicked = usePickedThreadId() === thread.id;
+  const cardRef = useRef<HTMLDivElement>(null);
   const [isCollapsed, setIsCollapsed] = useState(isResolved && !isPicked);
+  const headWasOffTheTop = useRef(false);
+  const collapse = () => {
+    if (!isCollapsed) headWasOffTheTop.current = runsOffTheTop(cardRef.current);
+    setIsCollapsed(true);
+  };
   const [wasResolved, setWasResolved] = useState(isResolved);
   if (wasResolved !== isResolved && !(isResolved && isReplying)) {
     setWasResolved(isResolved);
-    setIsCollapsed(isResolved);
+    if (isResolved) collapse();
+    else setIsCollapsed(false);
   }
   const [wasPicked, setWasPicked] = useState(isPicked);
   if (wasPicked !== isPicked) {
@@ -271,9 +293,18 @@ export function CommentThreadCard({
     if (isPicked) setIsCollapsed(false);
   }
 
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!isCollapsed || !headWasOffTheTop.current || !card) return;
+    headWasOffTheTop.current = false;
+    const visible = visibleTopOf(card);
+    if (visible) visible.diff.scrollTop += card.getBoundingClientRect().top - visible.top;
+  }, [isCollapsed]);
+
   const toggleCollapsed = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setIsCollapsed((prev) => !prev);
+    if (isCollapsed) setIsCollapsed(false);
+    else collapse();
   };
 
   const toggleResolved = (e: React.MouseEvent) => {
@@ -302,6 +333,7 @@ export function CommentThreadCard({
 
   return (
     <div
+      ref={cardRef}
       id={`comment-thread-${thread.id}`}
       data-picked={isPicked ? 'true' : undefined}
       className={`rounded-md border border-l-4 bg-github-bg-tertiary p-3 shadow-sm transition-all ${
