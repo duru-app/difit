@@ -4697,19 +4697,43 @@ describe('App Component - Commits of the review', () => {
     },
   );
 
-  it('closes the empty reply form of the card on a Ctrl+click in the diff around it', async () => {
-    const { card } = await openCardFormOnThreeLines();
+  it.each([
+    { key: 'Shift', modifier: { shiftKey: true } },
+    { key: 'Ctrl', modifier: { ctrlKey: true } },
+  ])(
+    'closes the empty reply form of the card on a $key+click in the diff around it',
+    async ({ modifier }) => {
+      const { card } = await openCardFormOnThreeLines();
+      const diffCell = document.querySelector<HTMLElement>(
+        '[data-diff-line-row="true"] [data-line-number-cell]',
+      )!;
+
+      fireEvent.mouseDown(diffCell, { button: 0, ...modifier });
+      fireEvent.mouseUp(diffCell, modifier);
+      fireEvent.click(diffCell, modifier);
+
+      await waitFor(() =>
+        expect(within(card).queryByRole('form', { name: 'fixup 줄에 답글' })).toBeNull(),
+      );
+    },
+  );
+
+  it('closes an empty comment form of the diff on a Ctrl+click in the card', async () => {
+    const { card, cells } = await openCardFormOnThreeLines();
     const diffCell = document.querySelector<HTMLElement>(
       '[data-diff-line-row="true"] [data-line-number-cell]',
     )!;
-
     fireEvent.mouseDown(diffCell, { button: 0, ctrlKey: true });
     fireEvent.mouseUp(diffCell, { ctrlKey: true });
     fireEvent.click(diffCell, { ctrlKey: true });
+    await screen.findByPlaceholderText('Leave a comment...');
 
-    await waitFor(() =>
-      expect(within(card).queryByRole('form', { name: 'fixup 줄에 답글' })).toBeNull(),
-    );
+    fireEvent.mouseDown(cells[2]!, { button: 0, ctrlKey: true });
+    fireEvent.mouseUp(cells[2]!, { ctrlKey: true });
+    fireEvent.click(cells[2]!, { ctrlKey: true });
+
+    await waitFor(() => expect(screen.queryByPlaceholderText('Leave a comment...')).toBeNull());
+    expect(within(card).getByRole('form', { name: 'fixup 줄에 답글' })).toBeInTheDocument();
   });
 
   it('unfolds a viewed file on the commit it opens to show a comment picked from the list', async () => {

@@ -126,7 +126,7 @@ function FixupChunksTable({
   return (
     <FileLevelTokensProvider value={NO_PRECOMPUTED_TOKENS}>
       <div
-        data-line-pick-scope={replying ? true : undefined}
+        data-line-pick-scope={replying ? 'true' : 'false'}
         data-adds-lines={replying?.addsLines || undefined}
       >
         {chunks.map((chunk, chunkIndex) =>
