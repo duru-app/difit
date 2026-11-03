@@ -174,6 +174,7 @@ difit comment add --port <port> '{"type":"reply","filePath":"src/config.ts","pos
    ```
 
 - Keep one fixup commit per comment and target commit. When one comment needs changes in several commits, make one fixup per target commit, each with the same `Review-Thread` trailer (the target of a change outside the commented lines is the commit of the range that last changed those lines: `git blame <review target> -- <file>`, where a commit older than the range means the review target); the viewer shows them all under that comment, and the user approves or rejects them together.
+- Before committing a fixup, check only that it builds (a compile, a type check); do not run the tests or a code review for each fixup. The user may reject the fix and ask for another shape, and every run made before that decision is thrown away. Tests and review run once, after every fixup is `[승인됨]` (see "Folding approved fixups").
 - Re-read `comment get` right before committing and confirm the comment is still `[답변 대기]`, `[답변 완료]`, `[수정 중]` or `[다시 수정 중]`. The user may have edited that line in the viewer meanwhile.
 - When fixing the same comment again before a decision, fold the change into the existing fixup for the same target commit instead of adding a commit: `git commit --amend --no-edit` when it is HEAD, otherwise `edit` it in `git rebase -i`.
 - A rejected fixup shows up in the JSON `decisions` as `"kind": "rejected"` with its SHA. Drop it (`drop` in `git rebase -i`) before any other rebase, since rewriting the lines right next to it can clear the rejection mark, then fix again.
@@ -184,6 +185,8 @@ difit comment add --port <port> '{"type":"reply","filePath":"src/config.ts","pos
 ### Folding approved fixups
 
 Fold once, when the branch is wrapped up: every remaining fixup is `[승인됨]`, every rejected fixup is dropped, and so is every fixup whose `Review-Thread` trailer names a thread with a `"kind": "deleted"` record in the JSON `decisions`. `--autosquash` folds all fixups in range.
+
+Run the tests and the code review the change needs once, on the tip with every approved fixup, before folding. A failure or a review finding is answered like a comment: a new fixup for the user to approve, then one more run.
 
 The JSON `decisions` only accumulate. Approving a comment with several fixups adds one `approved` per fixup, all at the same time. When the user unapproves, `"kind": "unapproved"` is added; the later of `approved` and `unapproved` for a thread wins, and a `rejected` later than the approval wins over both. Read the current state from the text output labels.
 
