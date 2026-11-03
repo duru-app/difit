@@ -460,7 +460,7 @@ export function FixupOverlayBlock({
 export function FixupOverlayRow({ thread, filePath, colSpan, syntaxTheme }: FixupOverlayRowProps) {
   if (overlaidFixups(useFixupOverlay(), thread).length === 0 || !filePath) return null;
   return (
-    <tr>
+    <tr data-thread-overlay={thread.id}>
       <td colSpan={colSpan} className="p-0">
         <FixupOverlayBlock thread={thread} filePath={filePath} syntaxTheme={syntaxTheme} />
       </td>

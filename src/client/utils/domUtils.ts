@@ -1,3 +1,5 @@
+import { NAVIGATION_SELECTORS } from '../constants/navigation';
+
 /**
  * Utilities for safe DOM manipulation
  */
@@ -30,3 +32,12 @@ export const stickyHeaderCover = (target: HTMLElement) => {
   if (!header || target.contains(header)) return 0;
   return header.getBoundingClientRect().height + ELEMENT_GAP_BELOW_HEADER_PX;
 };
+
+export const visibleTopOf = (target: HTMLElement) => {
+  const diff = target.closest<HTMLElement>(NAVIGATION_SELECTORS.SCROLL_CONTAINER);
+  if (!diff) return null;
+  return { diff, top: diff.getBoundingClientRect().top + stickyHeaderCover(target) };
+};
+
+export const runsOffTheTopOf = (top: number, bottom: number, visibleTop: number) =>
+  top < visibleTop && bottom > visibleTop;

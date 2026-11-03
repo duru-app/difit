@@ -28,6 +28,7 @@ import {
 
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
+import { KeepPlaceWhenThreadLeaves } from './KeepPlaceWhenThreadLeaves';
 import { DiffLineRow } from './DiffLineRow';
 import { PickControls, ThreadMarker } from './LinePickParts';
 import { DirectEditForm } from './DirectEditForm';
@@ -640,6 +641,7 @@ export const DiffChunk = memo(function DiffChunk({
                   const review = threadReviewControls(overlay, thread);
                   return (
                     <React.Fragment key={thread.id}>
+                      <KeepPlaceWhenThreadLeaves threadId={thread.id} />
                       <FixupOverlayRow
                         thread={thread}
                         filePath={filename}

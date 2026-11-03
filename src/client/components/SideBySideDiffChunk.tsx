@@ -28,6 +28,7 @@ import { useFileLevelTokensLookup } from '../contexts/FileLevelTokensContext';
 
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
+import { KeepPlaceWhenThreadLeaves } from './KeepPlaceWhenThreadLeaves';
 import { DirectEditForm } from './DirectEditForm';
 import { EditHunkButton } from './EditLineButton';
 import { EnhancedPrismSyntaxHighlighter } from './EnhancedPrismSyntaxHighlighter';
@@ -931,13 +932,15 @@ export function SideBySideDiffChunk({
                   ))}
 
                 {allThreads.map((thread) => (
-                  <FixupOverlayRow
-                    key={`fixup-${thread.id}`}
-                    thread={thread}
-                    filePath={filename}
-                    colSpan={4}
-                    syntaxTheme={syntaxTheme}
-                  />
+                  <React.Fragment key={`fixup-${thread.id}`}>
+                    <KeepPlaceWhenThreadLeaves threadId={thread.id} />
+                    <FixupOverlayRow
+                      thread={thread}
+                      filePath={filename}
+                      colSpan={4}
+                      syntaxTheme={syntaxTheme}
+                    />
+                  </React.Fragment>
                 ))}
 
                 {/* Comment threads row */}
@@ -968,6 +971,7 @@ export function SideBySideDiffChunk({
                                   : 'justify-center'
                             }`}
                           >
+                            <KeepPlaceWhenThreadLeaves threadId={thread.id} />
                             <div className={`${layout === 'full' ? 'w-full' : 'w-1/2'} min-w-0`}>
                               <div
                                 className="m-2 mx-3"

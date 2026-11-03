@@ -26,6 +26,7 @@ import type { DiffViewerBodyProps } from '../viewers/types';
 
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
+import { KeepPlaceWhenThreadLeaves } from './KeepPlaceWhenThreadLeaves';
 import { DiffViewerHeader } from './DiffViewerHeader';
 import { FixupBoxes, FixupOverlayBlock } from './FixupOverlayCard';
 import type { AppearanceSettings } from './SettingsModal';
@@ -393,8 +394,10 @@ export const DiffViewer = memo(function DiffViewer({
                   <div
                     key={thread.id}
                     id={thread.line === undefined ? `file-comment-${thread.id}` : undefined}
+                    data-thread-overlay={thread.id}
                     className="space-y-1"
                   >
+                    <KeepPlaceWhenThreadLeaves threadId={thread.id} />
                     <FixupOverlayBlock
                       thread={thread}
                       filePath={file.path}
