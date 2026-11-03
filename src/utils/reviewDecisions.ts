@@ -114,6 +114,14 @@ function latestOf(
     );
 }
 
+export function latestResolutionMarkAt(threadId: string, decisions: ReviewDecision[]): number {
+  const mark = latestOf(
+    decisions.filter((decision) => decision.threadId === threadId),
+    ['resolved', 'unresolved'],
+  );
+  return mark ? decidedAt(mark) : 0;
+}
+
 export function isThreadResolved(threadId: string, decisions: ReviewDecision[]): boolean {
   const own = decisions.filter((decision) => decision.threadId === threadId);
   return latestOf(own, ['resolved', 'unresolved'])?.kind === 'resolved';

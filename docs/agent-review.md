@@ -60,6 +60,8 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
    difit comment get --port <port> --format json
    ```
 
+   JSON에는 이미 해결된 스레드도 들어 있다. `decisions`에서 그 스레드의 `resolved`·`unresolved` 기록 가운데 가장 나중 것이 `resolved`이면 건너뛴다. `comment resolve`로 해결한 스레드도 같은 식으로 목록에 남는다.
+
    리뷰어가 커밋 하나나 커밋 범위를 보며 단 지적에는 필드가 둘 더 있다. `view`는 지적을 단 화면의 기준(`baseCommitish`)과 대상(`targetCommitish`)이고, `fixupTarget`은 fixup을 걸 커밋의 SHA다. 전체 화면에서 단 지적에는 `fixupTarget`만 있다. 텍스트 출력에도 그 지적의 위치 줄 바로 아래에 `고쳐 넣을 커밋: <짧은 SHA> <제목>`이 붙는다. `view`가 없는 지적은 전체 화면에서 단 지적이다.
 
    범위나 전체 화면에서 단 지적의 `fixupTarget`은 그 화면의 커밋 가운데 그 줄을 마지막으로 바꾼 커밋이다. 줄들이 여러 커밋에서 왔으면 가장 최근 커밋이다. 지운 쪽과 남은 쪽에 걸친 지적은 남은 쪽 줄만 본다. 지운 줄만 있거나 그 화면의 커밋이 바꾸지 않은 줄이면 그 화면의 마지막 커밋이다. 앞 회차의 fixup 커밋처럼 커밋 목록에 없는 커밋이 고친 줄은, 그 줄을 원래 만든 커밋으로 친다. 리뷰 범위에는 없고 fixup에서만 수정한 파일에 단 지적의 `fixupTarget`은 그 fixup이 합쳐질 커밋이다. 그 커밋이 리뷰 범위에 없으면 그 fixup이 답한 지적의 `fixupTarget`이고, 답한 지적에도 그 값이 없으면 리뷰 대상 커밋이다. `fixupTarget`이 없는 지적은 이 규칙이 생기기 전에 달았거나, 지적을 달 때 서버가 대상을 정하지 못한 지적이다.

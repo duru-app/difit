@@ -286,6 +286,139 @@ describe('commentImports', () => {
       expect(result.threads[1]?.messages[1]?.body).toBe('Imported reply');
     });
 
+    it('puts a reply on the open thread even when a resolved one is newer', () => {
+      const open = createThread({
+        id: 'open',
+        body: 'Root 1',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const resolved = createThread({
+        id: 'resolved',
+        body: 'Root 2',
+        updatedAt: '2024-01-02T00:00:00.000Z',
+      });
+
+      const result = mergeCommentImports(
+        [open, resolved],
+        [
+          {
+            type: 'reply',
+            filePath: 'src/example.ts',
+            position: { side: 'new', line: 10 },
+            body: 'Imported reply',
+            author: 'AI',
+          },
+        ],
+        () => true,
+        (thread) => thread.id === 'resolved',
+      );
+
+      expect(result.threads[0]?.messages).toHaveLength(2);
+      expect(result.threads[1]?.messages).toHaveLength(1);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('puts the same reply on the older open thread once the newer one is resolved', () => {
+      const first = createThread({
+        id: 'a',
+        body: 'Root A',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      });
+      const second = createThread({
+        id: 'b',
+        body: 'Root B',
+        updatedAt: '2024-01-02T00:00:00.000Z',
+      });
+      const reply = {
+        type: 'reply' as const,
+        filePath: 'src/example.ts',
+        position: { side: 'new' as const, line: 10 },
+        body: 'Fixed.',
+        author: 'AI',
+      };
+
+      const landed = mergeCommentImports([first, second], [reply]).threads;
+      expect(landed[1]?.messages).toHaveLength(2);
+
+      const answered = mergeCommentImports(
+        landed,
+        [reply],
+        () => true,
+        (thread) => thread.id === 'b',
+      );
+
+      expect(answered.threads[0]?.messages).toHaveLength(2);
+      expect(answered.threads[1]?.messages).toHaveLength(2);
+      expect(answered.warnings).toEqual([]);
+    });
+
+    it('stores a reply that only a resolved thread matches and says so', () => {
+      const resolved = createThread({ id: 'resolved', body: 'Root' });
+
+      const result = mergeCommentImports(
+        [resolved],
+        [
+          {
+            type: 'reply',
+            filePath: 'src/example.ts',
+            position: { side: 'new', line: 10 },
+            body: 'Imported reply',
+            author: 'AI',
+          },
+        ],
+        () => true,
+        () => true,
+      );
+
+      expect(result.threads[0]?.messages).toHaveLength(2);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('resolved');
+    });
+
+    it('warns when a thread import repeats a resolved thread and creates nothing', () => {
+      const resolved = createThread({ id: 'resolved', body: 'Imported thread' });
+
+      const result = mergeCommentImports(
+        [resolved],
+        [
+          {
+            type: 'thread',
+            filePath: 'src/example.ts',
+            position: { side: 'new', line: 10 },
+            body: 'Imported thread',
+            author: 'User',
+          },
+        ],
+        () => true,
+        () => true,
+      );
+
+      expect(result.threads).toHaveLength(1);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('resolved');
+    });
+
+    it('does not warn when a thread import repeats an open thread', () => {
+      const existing = createThread({ id: 'thread-1', body: 'Imported thread' });
+
+      const result = mergeCommentImports(
+        [existing],
+        [
+          {
+            type: 'thread',
+            filePath: 'src/example.ts',
+            position: { side: 'new', line: 10 },
+            body: 'Imported thread',
+            author: 'User',
+          },
+        ],
+        () => true,
+        () => false,
+      );
+
+      expect(result.warnings).toEqual([]);
+    });
+
     it('skips a duplicate reply import', () => {
       const existing = createThread({ id: 'thread-1', body: 'Root' });
       existing.messages.push({

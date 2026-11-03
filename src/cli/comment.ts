@@ -1,7 +1,12 @@
 import { Command, Option } from 'commander';
 
 import { parseCommentImportValue } from '../utils/commentImports.js';
-import { isThreadDeleted, normalizeReviewDecisions } from '../utils/reviewDecisions.js';
+import {
+  isThreadDeleted,
+  isThreadResolved,
+  latestResolutionMarkAt,
+  normalizeReviewDecisions,
+} from '../utils/reviewDecisions.js';
 
 import { detectStdinSource, readStdin } from './utils.js';
 
@@ -213,53 +218,71 @@ export function createCommentCommand(): Command {
   comment
     .command('resolve')
     .alias('remove')
-    .description('Resolve (remove) comment threads on a running difit server')
+    .description('Resolve comment threads on a running difit server, keeping them recorded')
     .argument('<threadIds...>', 'thread IDs to resolve')
     .requiredOption('--port <port>', 'port of the running difit server', parseInt)
-    .action(async (threadIds: string[], opts: { port: number }) => {
+    .action(async (requestedIds: string[], opts: { port: number }) => {
       try {
-        const results = await Promise.all(
-          threadIds.map(
-            async (
-              threadId,
-            ): Promise<{
-              threadId: string;
-              status: 'resolved' | 'notFound' | 'error';
-              error?: string;
-            }> => {
-              const response = await fetch(
-                `http://localhost:${opts.port}/api/comments/${encodeURIComponent(threadId)}`,
-                { method: 'DELETE' },
-              );
+        const threadIds = [...new Set(requestedIds)];
+        const baseUrl = `http://localhost:${opts.port}`;
+        const failure = async (response: Response, fallback: string) => {
+          const body = (await response.json().catch(() => ({}))) as { error?: string };
+          return body.error ?? fallback;
+        };
 
-              if (response.ok) {
-                return { threadId, status: 'resolved' };
-              }
-
-              if (response.status === 404) {
-                return { threadId, status: 'notFound' };
-              }
-
-              const errorBody = (await response.json().catch(() => ({}))) as {
-                error?: string;
-              };
-              return {
-                threadId,
-                status: 'error',
-                error: errorBody.error ?? `Failed to resolve thread ${threadId}`,
-              };
-            },
-          ),
+        const stateResponse = await fetch(`${baseUrl}/api/comments-json`);
+        if (!stateResponse.ok) {
+          const error = await failure(stateResponse, 'Failed to retrieve comments');
+          console.log(
+            JSON.stringify({
+              success: false,
+              resolved: [],
+              notFound: [],
+              errors: threadIds.map((threadId) => ({ threadId, error })),
+            }),
+          );
+          process.exit(1);
+          return;
+        }
+        const state = withoutDeletedThreads(await stateResponse.json()) as {
+          threads?: unknown;
+          decisions?: unknown;
+        };
+        const decisions = normalizeReviewDecisions(state.decisions);
+        const existing = new Set(
+          (Array.isArray(state.threads) ? (state.threads as Array<{ id?: unknown }>) : [])
+            .map((thread) => thread.id)
+            .filter((id): id is string => typeof id === 'string'),
         );
 
-        const resolved = results.filter((r) => r.status === 'resolved').map((r) => r.threadId);
-        const notFound = results.filter((r) => r.status === 'notFound').map((r) => r.threadId);
-        const errors = results
-          .filter((r) => r.status === 'error')
-          .map((r) => ({
-            threadId: r.threadId,
-            error: r.error ?? `Failed to resolve thread ${r.threadId}`,
-          }));
+        const notFound = threadIds.filter((id) => !existing.has(id));
+        const found = threadIds.filter((id) => existing.has(id));
+        const pending = found.filter((id) => !isThreadResolved(id, decisions));
+
+        let resolved = found;
+        let errors: Array<{ threadId: string; error: string }> = [];
+        if (pending.length > 0) {
+          const now = Date.now();
+          const response = await fetch(`${baseUrl}/api/decisions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              pending.map((threadId) => ({
+                threadId,
+                kind: 'resolved',
+                fixupSha: '',
+                at: new Date(
+                  Math.max(now, latestResolutionMarkAt(threadId, decisions) + 1),
+                ).toISOString(),
+              })),
+            ),
+          });
+          if (!response.ok) {
+            const error = await failure(response, 'Failed to resolve thread');
+            errors = pending.map((threadId) => ({ threadId, error }));
+            resolved = found.filter((id) => !pending.includes(id));
+          }
+        }
 
         console.log(
           JSON.stringify({

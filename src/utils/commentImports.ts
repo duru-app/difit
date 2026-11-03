@@ -744,6 +744,7 @@ export function mergeCommentImports(
   existingThreads: DiffCommentThread[],
   commentImports: CommentImport[],
   takesReplies: (thread: DiffCommentThread) => boolean = () => true,
+  isResolved: (thread: DiffCommentThread) => boolean = () => false,
 ): MergeCommentImportsResult {
   // Clone (don't shallow-copy) so appending a reply doesn't mutate the caller's
   // thread objects in place — otherwise the server can't detect the change and
@@ -755,8 +756,13 @@ export function mergeCommentImports(
     const now = new Date().toISOString();
 
     if (commentImport.type === 'thread') {
-      const hasDuplicate = threads.some((thread) => rootThreadMatchesImport(thread, commentImport));
-      if (hasDuplicate) {
+      const duplicate = threads.find((thread) => rootThreadMatchesImport(thread, commentImport));
+      if (duplicate) {
+        if (isResolved(duplicate)) {
+          warnings.push(
+            `Skipped thread import for ${commentImport.filePath}:${getPositionKey(commentImport.position)} because the same thread ${duplicate.id} is already resolved; nothing new was created.`,
+          );
+        }
         continue;
       }
 
@@ -773,7 +779,7 @@ export function mergeCommentImports(
       )
       .sort(sortByNewestThread);
 
-    const targetThread = targetThreads[0];
+    const targetThread = targetThreads.find((thread) => !isResolved(thread)) ?? targetThreads[0];
     if (!targetThread) {
       warnings.push(
         `Skipped reply import for ${commentImport.filePath}:${getPositionKey(commentImport.position)} because no matching thread was found.`,
@@ -786,6 +792,12 @@ export function mergeCommentImports(
     );
     if (hasDuplicateReply) {
       continue;
+    }
+
+    if (isResolved(targetThread)) {
+      warnings.push(
+        `Stored the reply for ${commentImport.filePath}:${getPositionKey(commentImport.position)} on thread ${targetThread.id}, which is resolved; no open thread matched.`,
+      );
     }
 
     const importedReply = createImportedReply(commentImport, now);
