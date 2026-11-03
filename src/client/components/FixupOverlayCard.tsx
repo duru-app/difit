@@ -125,129 +125,130 @@ function FixupChunksTable({
   const fixupSha = fixup.sha;
   return (
     <FileLevelTokensProvider value={NO_PRECOMPUTED_TOKENS}>
-      {chunks.map((chunk, chunkIndex) =>
-        (editing ? changedParts(chunk.lines) : [wholeChunk(chunk)]).map(({ from, to, range }) => (
-          <div
-            key={`${chunkIndex}-${from}`}
-            className="group/hunk relative"
-            data-adds-lines={replying?.addsLines || undefined}
-          >
-            {editing && range && (
-              <EditHunkButton onClick={() => editing.open(range)} alwaysShown={!canHover} />
-            )}
-            <table className="w-full table-fixed border-collapse font-mono text-sm leading-5">
-              <tbody>
-                {chunk.lines.slice(from, to).map((line, offset) => {
-                  const lineIndex = from + offset;
-                  const lineNumber = line.type === 'add' ? line.newLineNumber : undefined;
-                  const rowKey = `${chunkIndex}-${lineIndex}`;
-                  const laterEdit =
-                    line.newLineNumber === undefined
-                      ? undefined
-                      : laterEdits?.get(line.newLineNumber);
-                  const isEditHovered =
-                    editing !== undefined && hovered === rowKey && lineNumber !== undefined;
-                  const picked = fixupLineOf(line);
-                  return (
-                    <Fragment key={lineIndex}>
-                      <tr
-                        id={
-                          picked
-                            ? fixupLineElementId(
-                                fixupSha,
-                                file.path,
-                                picked.side,
-                                picked.lineNumber,
-                              )
-                            : undefined
-                        }
-                        className={`${getOverlayLineClass(line)} ${
-                          picked && replying?.isPicked(picked) ? 'comment-selected' : ''
-                        }`}
-                        onMouseEnter={() => {
-                          if (editing && canHover) setHovered(rowKey);
-                          if (picked) replying?.hover(picked);
-                        }}
-                        onMouseLeave={editing && canHover ? () => setHovered(null) : undefined}
-                      >
-                        <td
-                          data-line-number-cell
-                          onMouseDown={
-                            replying && picked
-                              ? (event) => replying.press(picked, event)
+      <div
+        data-line-pick-scope={replying ? true : undefined}
+        data-adds-lines={replying?.addsLines || undefined}
+      >
+        {chunks.map((chunk, chunkIndex) =>
+          (editing ? changedParts(chunk.lines) : [wholeChunk(chunk)]).map(({ from, to, range }) => (
+            <div key={`${chunkIndex}-${from}`} className="group/hunk relative">
+              {editing && range && (
+                <EditHunkButton onClick={() => editing.open(range)} alwaysShown={!canHover} />
+              )}
+              <table className="w-full table-fixed border-collapse font-mono text-sm leading-5">
+                <tbody>
+                  {chunk.lines.slice(from, to).map((line, offset) => {
+                    const lineIndex = from + offset;
+                    const lineNumber = line.type === 'add' ? line.newLineNumber : undefined;
+                    const rowKey = `${chunkIndex}-${lineIndex}`;
+                    const laterEdit =
+                      line.newLineNumber === undefined
+                        ? undefined
+                        : laterEdits?.get(line.newLineNumber);
+                    const isEditHovered =
+                      editing !== undefined && hovered === rowKey && lineNumber !== undefined;
+                    const picked = fixupLineOf(line);
+                    return (
+                      <Fragment key={lineIndex}>
+                        <tr
+                          id={
+                            picked
+                              ? fixupLineElementId(
+                                  fixupSha,
+                                  file.path,
+                                  picked.side,
+                                  picked.lineNumber,
+                                )
                               : undefined
                           }
-                          onClick={
-                            replying && picked
-                              ? (event) => replying.click(picked, event)
-                              : undefined
-                          }
-                          className={`w-[var(--line-number-width)] min-w-[var(--line-number-width)] max-w-[var(--line-number-width)] px-2 max-md:px-0.5 max-md:text-[11px] text-right text-github-text-muted select-none align-top ${
-                            replying && picked
-                              ? 'cursor-pointer hover:text-github-text-primary'
-                              : ''
+                          className={`${getOverlayLineClass(line)} ${
+                            picked && replying?.isPicked(picked) ? 'comment-selected' : ''
                           }`}
+                          onMouseEnter={() => {
+                            if (editing && canHover) setHovered(rowKey);
+                            if (picked) replying?.hover(picked);
+                          }}
+                          onMouseLeave={editing && canHover ? () => setHovered(null) : undefined}
                         >
-                          {line.newLineNumber ?? line.oldLineNumber ?? ''}
-                        </td>
-                        <td
-                          className="relative p-0 w-full align-top [&_span:first-child]:!bg-transparent"
-                          {...symbolAttributes(line, fixupSha, file)}
-                        >
-                          <DiffCodeLine
-                            line={line}
-                            syntaxTheme={syntaxTheme}
-                            filename={file.path}
-                            showPrefixBorder={false}
-                          />
-                          {(laterEdit || isEditHovered) && (
-                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1">
-                              {laterEdit && (
-                                <button
-                                  type="button"
-                                  data-testid="fixup-later-edit"
-                                  title={`${laterEdit.fixupSha.slice(0, 7)} 에서 다시 수정됨`}
-                                  onClick={() =>
-                                    revealFixupFile(laterEdit.fixupSha, laterEdit.path)
-                                  }
-                                  className="rounded px-1 bg-github-bg-secondary font-sans text-xs text-github-warning hover:underline"
-                                >
-                                  수정됨
-                                </button>
-                              )}
-                              {editing && isEditHovered && lineNumber !== undefined && (
-                                <EditLineButton
-                                  onClick={() =>
-                                    editing.open({ start: lineNumber, end: lineNumber })
-                                  }
-                                />
-                              )}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                      {editing?.range && lineNumber === editing.range.end && (
-                        <tr>
-                          <td colSpan={2} className="p-0">
-                            {editing.form}
+                          <td
+                            data-line-number-cell
+                            onMouseDown={
+                              replying && picked
+                                ? (event) => replying.press(picked, event)
+                                : undefined
+                            }
+                            onClick={
+                              replying && picked
+                                ? (event) => replying.click(picked, event)
+                                : undefined
+                            }
+                            className={`w-[var(--line-number-width)] min-w-[var(--line-number-width)] max-w-[var(--line-number-width)] px-2 max-md:px-0.5 max-md:text-[11px] text-right text-github-text-muted select-none align-top ${
+                              replying && picked
+                                ? 'cursor-pointer hover:text-github-text-primary'
+                                : ''
+                            }`}
+                          >
+                            {line.newLineNumber ?? line.oldLineNumber ?? ''}
+                          </td>
+                          <td
+                            className="relative p-0 w-full align-top [&_span:first-child]:!bg-transparent"
+                            {...symbolAttributes(line, fixupSha, file)}
+                          >
+                            <DiffCodeLine
+                              line={line}
+                              syntaxTheme={syntaxTheme}
+                              filename={file.path}
+                              showPrefixBorder={false}
+                            />
+                            {(laterEdit || isEditHovered) && (
+                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1">
+                                {laterEdit && (
+                                  <button
+                                    type="button"
+                                    data-testid="fixup-later-edit"
+                                    title={`${laterEdit.fixupSha.slice(0, 7)} 에서 다시 수정됨`}
+                                    onClick={() =>
+                                      revealFixupFile(laterEdit.fixupSha, laterEdit.path)
+                                    }
+                                    className="rounded px-1 bg-github-bg-secondary font-sans text-xs text-github-warning hover:underline"
+                                  >
+                                    수정됨
+                                  </button>
+                                )}
+                                {editing && isEditHovered && lineNumber !== undefined && (
+                                  <EditLineButton
+                                    onClick={() =>
+                                      editing.open({ start: lineNumber, end: lineNumber })
+                                    }
+                                  />
+                                )}
+                              </div>
+                            )}
                           </td>
                         </tr>
-                      )}
-                      {picked && replying?.isFormUnder(picked) && (
-                        <tr>
-                          <td colSpan={2} className="p-0">
-                            {replying.form}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )),
-      )}
+                        {editing?.range && lineNumber === editing.range.end && (
+                          <tr>
+                            <td colSpan={2} className="p-0">
+                              {editing.form}
+                            </td>
+                          </tr>
+                        )}
+                        {picked && replying?.isFormUnder(picked) && (
+                          <tr>
+                            <td colSpan={2} className="p-0">
+                              {replying.form}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )),
+        )}
+      </div>
     </FileLevelTokensProvider>
   );
 }

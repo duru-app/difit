@@ -76,6 +76,9 @@ export function useFixupLineReply({
   const last = ranges.at(-1);
   const resolved = appearsResolved(target.id, fixupsByThread.get(target.id) ?? [], decisions);
 
+  const picksOnClick = (event: MouseEvent) =>
+    event.shiftKey || event.ctrlKey || event.metaKey || store.addMode;
+
   const submit = (body: string) => {
     const fixupLines: FixupLines = {
       fixupSha: fixup.sha,
@@ -95,13 +98,14 @@ export function useFixupLineReply({
     press: (line, event) => {
       if (event.button !== 0) return;
       event.preventDefault();
-      if (event.shiftKey || event.ctrlKey || event.metaKey || store.addMode) return;
+      if (picksOnClick(event)) return;
       store.setAnchor(line);
       setDrag({ from: line, to: line });
     },
     click: (line, event) => {
+      if (!picksOnClick(event)) return;
       if (event.shiftKey) store.extend(line, 'unified');
-      else if (event.ctrlKey || event.metaKey || store.addMode) store.toggle(line);
+      else store.toggle(line);
     },
     addsLines: store.addMode,
     hover: (line) => {

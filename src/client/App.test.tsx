@@ -4625,6 +4625,52 @@ describe('App Component - Commits of the review', () => {
     }
   });
 
+  const openCardFormOnThreeLines = async () => {
+    const added = (line: number) => ({
+      type: 'add' as const,
+      content: `const v${line} = ${line};`,
+      newLineNumber: line,
+    });
+    fixupsFor.current = [
+      {
+        sha: 'f'.repeat(40),
+        shortSha: 'fffffff',
+        patchId: 'patch-1',
+        authoredAt: '2026-01-01T00:00:00Z',
+        subject: 'fixup! second step',
+        threadIds: ['c1'],
+        files: [
+          {
+            path: 'test.ts',
+            status: 'modified',
+            chunks: [
+              {
+                header: '@@ -0,0 +1,3 @@',
+                oldStart: 0,
+                oldLines: 0,
+                newStart: 1,
+                newLines: 3,
+                lines: [added(1), added(2), added(3)],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    mockComments = [
+      createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' }),
+    ];
+
+    renderApp();
+    const card = await screen.findByTestId('fixup-overlay-card');
+    const cells = [...card.querySelectorAll<HTMLElement>('[data-line-number-cell]')];
+    fireEvent.mouseDown(cells[0]!, { button: 0 });
+    fireEvent.mouseUp(cells[0]!);
+    fireEvent.click(cells[0]!.closest('tbody')!);
+    await within(card).findByRole('form', { name: 'fixup 줄에 답글' });
+    return { card, cells };
+  };
+
   it.each([
     { way: 'Shift+click', modifier: { shiftKey: true }, addButton: false, picked: 'L1-L3' },
     { way: 'Ctrl+click', modifier: { ctrlKey: true }, addButton: false, picked: 'L1, L3' },
@@ -4632,50 +4678,8 @@ describe('App Component - Commits of the review', () => {
   ])(
     'keeps the empty reply form of the card open on a $way that adds a line',
     async ({ modifier, addButton, picked }) => {
-      const added = (line: number) => ({
-        type: 'add' as const,
-        content: `const v${line} = ${line};`,
-        newLineNumber: line,
-      });
-      fixupsFor.current = [
-        {
-          sha: 'f'.repeat(40),
-          shortSha: 'fffffff',
-          patchId: 'patch-1',
-          authoredAt: '2026-01-01T00:00:00Z',
-          subject: 'fixup! second step',
-          threadIds: ['c1'],
-          files: [
-            {
-              path: 'test.ts',
-              status: 'modified',
-              chunks: [
-                {
-                  header: '@@ -0,0 +1,3 @@',
-                  oldStart: 0,
-                  oldLines: 0,
-                  newStart: 1,
-                  newLines: 3,
-                  lines: [added(1), added(2), added(3)],
-                },
-              ],
-            },
-          ],
-        },
-      ];
-      mockComments = [
-        createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' }),
-      ];
-
-      renderApp();
-      const card = await screen.findByTestId('fixup-overlay-card');
-      const cells = [...card.querySelectorAll<HTMLElement>('[data-line-number-cell]')];
-      fireEvent.mouseDown(cells[0]!, { button: 0 });
-      fireEvent.mouseUp(cells[0]!);
-      fireEvent.click(cells[0]!.closest('tbody')!);
-      await within(card).findByRole('form', { name: 'fixup 줄에 답글' });
+      const { card, cells } = await openCardFormOnThreeLines();
       if (addButton) {
-        // happy-dom misses that the toggle sits inside the form, so it is pressed on a form with text.
         const box = within(card).getByPlaceholderText('이 줄에 답글...');
         fireEvent.change(box, { target: { value: 'x' } });
         fireEvent.click(within(card).getByRole('button', { name: '줄 더하기' }));
@@ -4692,6 +4696,21 @@ describe('App Component - Commits of the review', () => {
       ).toBeInTheDocument();
     },
   );
+
+  it('closes the empty reply form of the card on a Ctrl+click in the diff around it', async () => {
+    const { card } = await openCardFormOnThreeLines();
+    const diffCell = document.querySelector<HTMLElement>(
+      '[data-diff-line-row="true"] [data-line-number-cell]',
+    )!;
+
+    fireEvent.mouseDown(diffCell, { button: 0, ctrlKey: true });
+    fireEvent.mouseUp(diffCell, { ctrlKey: true });
+    fireEvent.click(diffCell, { ctrlKey: true });
+
+    await waitFor(() =>
+      expect(within(card).queryByRole('form', { name: 'fixup 줄에 답글' })).toBeNull(),
+    );
+  });
 
   it('unfolds a viewed file on the commit it opens to show a comment picked from the list', async () => {
     mockViewedFiles = new Set(['test.ts']);
