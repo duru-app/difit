@@ -65,8 +65,6 @@ function resolveDiffSelection(
 function determineDiffMode(selection: DiffSelection, compareWith?: string): DiffMode {
   const { targetCommitish } = selection;
 
-  // If comparing specific commits/branches (not involving HEAD), no watching needed
-  // Exception: allow watching when targetCommitish is '.' even with compareWith
   if (compareWith && targetCommitish !== 'HEAD' && targetCommitish !== '.') {
     return DiffMode.SPECIFIC;
   }

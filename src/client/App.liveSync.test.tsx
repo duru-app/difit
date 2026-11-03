@@ -107,6 +107,7 @@ const fixup: ThreadFixup = {
 };
 
 let server: { version: number; threads: DiffCommentThread[]; decisions: ReviewDecision[] };
+let serverFixups: ThreadFixup[];
 
 const callsTo = (prefix: string, method?: string) =>
   vi
@@ -137,7 +138,7 @@ function stubServer() {
       return reply({ version: server.version, merged: false });
     }
     if (url.startsWith('/api/fixups')) {
-      return reply({ fixups: [fixup] });
+      return reply({ fixups: serverFixups });
     }
     if (url.startsWith('/api/revisions')) {
       return reply(null);
@@ -184,6 +185,7 @@ describe('App - live comment sync', { timeout: 15_000 }, () => {
     vi.stubGlobal('WebSocket', MockWebSocket);
     MockWebSocket.instances = [];
     server = { version: 1, threads: [thread], decisions: [] };
+    serverFixups = [fixup];
     stubServer();
   });
 
@@ -226,6 +228,29 @@ describe('App - live comment sync', { timeout: 15_000 }, () => {
 
     expect(openWatch()).toBe(watch);
     expect(watch?.close).not.toHaveBeenCalled();
+  });
+
+  it('shows a fixup committed while the review is open once the server says HEAD moved', async () => {
+    serverFixups = [];
+    render(
+      <HotkeysProvider initiallyActiveScopes={['navigation']}>
+        <App />
+      </HotkeysProvider>,
+    );
+    await waitFor(() => expect(callsTo('/api/fixups')).toHaveLength(1), { timeout: 5000 });
+    await settle();
+    expect(screen.queryByRole('button', { name: '승인' })).not.toBeInTheDocument();
+
+    serverFixups = [fixup];
+    act(() => {
+      openWatch()?.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({ type: 'headMoved', timestamp: '2026-01-02T00:00:00Z' }),
+        }),
+      );
+    });
+
+    expect(await screen.findByRole('button', { name: '승인' })).toBeInTheDocument();
   });
 
   it('posts nothing when the server sends back the comments and decisions it already has', async () => {

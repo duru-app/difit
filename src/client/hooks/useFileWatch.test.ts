@@ -232,6 +232,26 @@ describe('useFileWatch', () => {
       expect(second).toHaveBeenCalledTimes(1);
     });
 
+    it('passes on a HEAD move to the latest callback without reconnecting', () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      const { rerender } = renderHook(
+        ({ onHeadMoved }) => useFileWatch(undefined, undefined, undefined, onHeadMoved),
+        { initialProps: { onHeadMoved: first } },
+      );
+
+      rerender({ onHeadMoved: second });
+      act(() => {
+        MockWebSocket.instances[0]!.dispatchMessage(
+          JSON.stringify({ type: 'headMoved', timestamp: new Date().toISOString() }),
+        );
+      });
+
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledTimes(1);
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
     it('passes on a change of a commit index without reconnecting', () => {
       const onSymbolIndexChanged = vi.fn();
       renderHook(() => useFileWatch(undefined, undefined, onSymbolIndexChanged));

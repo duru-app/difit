@@ -41,8 +41,8 @@ const MODE_WATCH_CONFIGS: Record<DiffMode, ModeWatchConfig> = {
     ],
   },
   [DiffMode.SPECIFIC]: {
-    watchPaths: [], // No watching for specific commits
-    ignore: [],
+    watchPaths: ['.git'],
+    ignore: ['.git/objects/**', '.git/refs/**'],
   },
 };
 
@@ -54,6 +54,8 @@ export class FileWatcherService {
   private subscriptions: Array<{ unsubscribe: () => Promise<void> }> = [];
   private clients: WatchClient[] = [];
   private debounceTimer: NodeJS.Timeout | null = null;
+  private pendingReload = false;
+  private pendingHeadMove = false;
   private config: FileWatcherConfig | null = null;
   private git: SimpleGit | null = null;
 
@@ -69,12 +71,6 @@ export class FileWatcherService {
 
     // Stop existing watchers
     await this.stop();
-
-    // No watching for specific commit comparisons
-    if (diffMode === DiffMode.SPECIFIC) {
-      console.log('🔍 File watching disabled (specific commit comparison)');
-      return;
-    }
 
     const modeConfig = MODE_WATCH_CONFIGS[diffMode];
 
@@ -103,6 +99,7 @@ export class FileWatcherService {
         fullPath = await this.resolveGitDir(basePath);
       }
 
+      const headPaths = new Set([join(fullPath, 'HEAD'), join(fullPath, 'logs', 'HEAD')]);
       try {
         const subscription = (await subscribe(
           fullPath,
@@ -114,6 +111,7 @@ export class FileWatcherService {
 
             // Filter out ignored files and check for relevant changes
             const relevantEvents = [];
+            let headMoved = false;
             for (const event of events) {
               if (this.shouldIgnoreEvent(event.path, modeConfig.ignore)) {
                 continue;
@@ -126,6 +124,7 @@ export class FileWatcherService {
 
               // For git directory watching, only care about specific files
               if (watchPath === '.git') {
+                if (headPaths.has(event.path)) headMoved = true;
                 const fileName = event.path.replace(/.*[/\\]/, '');
                 const isRelevantGitFile = this.isRelevantGitFile(fileName, this.config?.diffMode);
                 if (!isRelevantGitFile) {
@@ -136,8 +135,8 @@ export class FileWatcherService {
               relevantEvents.push(event);
             }
 
-            if (relevantEvents.length > 0) {
-              this.debouncedBroadcast();
+            if (relevantEvents.length > 0 || headMoved) {
+              this.debouncedBroadcast(relevantEvents.length > 0, headMoved);
             }
           },
           {
@@ -200,18 +199,28 @@ export class FileWatcherService {
     }
   }
 
-  private debouncedBroadcast(): void {
+  private debouncedBroadcast(reload: boolean, headMove: boolean): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
+    this.pendingReload ||= reload;
+    this.pendingHeadMove ||= headMove;
 
     const debounceMs = this.config?.debounceMs || 300;
     this.debounceTimer = setTimeout(() => {
-      // Invalidate cache before broadcasting change
-      if (this.config?.onCacheInvalidate) {
-        this.config.onCacheInvalidate();
+      const { pendingReload, pendingHeadMove } = this;
+      this.pendingReload = false;
+      this.pendingHeadMove = false;
+      if (pendingReload) {
+        // Invalidate cache before broadcasting change
+        if (this.config?.onCacheInvalidate) {
+          this.config.onCacheInvalidate();
+        }
+        this.broadcastChange();
       }
-      this.broadcastChange();
+      if (pendingHeadMove) {
+        this.broadcast({ type: 'headMoved', timestamp: new Date().toISOString() });
+      }
     }, debounceMs);
   }
 
@@ -221,6 +230,8 @@ export class FileWatcherService {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
+    this.pendingReload = false;
+    this.pendingHeadMove = false;
 
     // Unsubscribe from all watchers
     await Promise.all(
