@@ -46,7 +46,13 @@ export function useFixupLineReply({
   const canHover = useCanHover();
   const [drag, setDrag] = useState<{ from: LineSelection; to: LineSelection } | null>(null);
   const [chosenId, setChosenId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const { open, openBetween } = store;
+  const picking = store.pick !== null;
+
+  useEffect(() => {
+    if (!picking) setDraft('');
+  }, [picking]);
 
   useEffect(() => {
     if (!drag) return undefined;
@@ -127,6 +133,8 @@ export function useFixupLineReply({
               <PickControls store={store} ranges={[]} canHover={canHover} />
             </>
           }
+          value={draft}
+          onValueChange={setDraft}
           onSubmit={submit}
           onCancel={store.close}
           submitLabel={resolved ? '답글 달고 다시 열기' : '답글'}

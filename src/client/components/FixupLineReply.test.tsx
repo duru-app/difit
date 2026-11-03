@@ -195,17 +195,41 @@ describe('replying on lines of a fixup card', () => {
 
     pressNumber(added!);
     await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    fireEvent.change(within(card).getByRole('textbox'), { target: { value: '이 줄에 남길 말' } });
     fireEvent.mouseDown(last!, { button: 0, shiftKey: true });
     fireEvent.mouseUp(document);
 
     await waitFor(() =>
       expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L12-L13'),
     );
+    expect(within(card).getByRole('textbox')).toHaveValue('이 줄에 남길 말');
 
     pressNumber(first!);
     await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L11'));
+    expect(within(card).getByRole('textbox')).toHaveValue('이 줄에 남길 말');
     pressNumber(first!);
     await waitFor(() => expect(within(card).queryByRole('form')).toBeNull());
+
+    pressNumber(added!);
+    await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    expect(within(card).getByRole('textbox')).toHaveValue('');
+  });
+
+  it('empties the reply after Escape closes the pick', async () => {
+    render(view({ replyToThread: vi.fn() }));
+    const card = screen.getByTestId('fixup-overlay-card');
+    const [first, , added] = numberCells(card);
+
+    pressNumber(added!);
+    await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    const textbox = within(card).getByRole('textbox');
+    fireEvent.change(textbox, { target: { value: '취소할 말' } });
+    fireEvent.keyDown(textbox, { key: 'Escape' });
+    await waitFor(() => expect(within(card).queryByRole('form')).toBeNull());
+
+    pressNumber(first!);
+    await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    expect(within(card).getByRole('textbox')).toHaveValue('');
   });
 
   it('adds one line at a time with the add button, for screens without Shift', async () => {
