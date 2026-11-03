@@ -5,7 +5,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import '@testing-library/jest-dom';
 
 import { mockFetch } from '../../vitest.setup';
-import type { DiffCommentThread, DiffResponse, ReviewDecision } from '../types/diff';
+import type {
+  DiffCommentThread,
+  DiffResponse,
+  FileCommentThread,
+  ReviewDecision,
+} from '../types/diff';
 import type { ClientWatchState } from '../types/watch';
 import { DiffMode } from '../types/watch';
 import { mergeCommentImports, parseCommentImportValue } from '../utils/commentImports';
@@ -15,7 +20,7 @@ import { useDiffComments } from './hooks/useDiffComments';
 import { useViewedFiles } from './hooks/useViewedFiles';
 import { useViewport } from './hooks/useViewport';
 import { resetClientSettingsForTests } from './services/userSettings';
-import { getFileElementId } from './utils/domUtils';
+import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { spreadFixups } from './utils/fixupSpread';
 import { placeThread } from './utils/outdatedComments';
 
@@ -157,7 +162,7 @@ function createMockThread({
   line: number;
   body: string;
   author?: string;
-}): DiffCommentThread {
+}): FileCommentThread {
   const timestamp = '2024-01-01T00:00:00.000Z';
   return {
     id,
@@ -3670,6 +3675,161 @@ describe('App Component - Commits of the review', () => {
     expect(fixupTargetQueries()).toEqual([
       { base: 'def4567', target: 'abc1234', path: 'test.ts', side: 'new', scope: 'file' },
     ]);
+  });
+
+  const commitThread = (sha: string, body: string): DiffCommentThread => ({
+    id: `commit-${sha.slice(0, 7)}`,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+    position: { scope: 'commit' },
+    fixupTarget: sha,
+    messages: [
+      {
+        id: `commit-${sha.slice(0, 7)}`,
+        body,
+        author: 'User',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ],
+  });
+
+  it('binds a comment on a whole commit to the one commit shown, without asking the server', async () => {
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+    expect(screen.queryByRole('button', { name: '이 커밋 전체에 지적 달기' })).toBeNull();
+    fireEvent.click(commitButton(/1111111/));
+    await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
+
+    fireEvent.click(await screen.findByRole('button', { name: '이 커밋 전체에 지적 달기' }));
+    fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
+      target: { value: 'Split this commit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() =>
+      expect(addedThreads()).toEqual([
+        [
+          {
+            scope: 'commit',
+            body: 'Split this commit',
+            binding: {
+              view: { baseCommitish: COMMITS[0]!.parentSha, targetCommitish: COMMITS[0]!.sha },
+              fixupTarget: COMMITS[0]!.sha,
+              snapshotCommit: COMMITS[0]!.sha,
+            },
+          },
+        ],
+      ]),
+    );
+    expect(fixupTargetQueries()).toEqual([]);
+  });
+
+  it('binds a comment added from a commit row on the whole review to that commit and its own view', async () => {
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+
+    fireEvent.click(
+      within(commitButton(/1111111/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      }),
+    );
+    fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
+      target: { value: 'Reword this' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() =>
+      expect(addedThreads()).toEqual([
+        [
+          {
+            scope: 'commit',
+            body: 'Reword this',
+            binding: {
+              view: { baseCommitish: COMMITS[0]!.parentSha, targetCommitish: COMMITS[0]!.sha },
+              fixupTarget: COMMITS[0]!.sha,
+              snapshotCommit: COMMITS[0]!.sha,
+            },
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('shows comments on whole commits above the files, by commit, on a view holding them', async () => {
+    mockComments = [
+      commitThread(COMMITS[0]!.sha, 'Reword the first step'),
+      commitThread(COMMITS[1]!.sha, 'Split the second step'),
+    ];
+    renderApp();
+
+    const section = await screen.findByRole('region', { name: '커밋 지적' });
+    expect(within(section).getByText('Reword the first step')).toBeInTheDocument();
+    expect(within(section).getByText('Split the second step')).toBeInTheDocument();
+    expect(within(section).getAllByText('커밋 1111111 first step').length).toBeGreaterThan(0);
+    expect(within(section).queryByRole('button', { name: '이 커밋 전체에 지적 달기' })).toBeNull();
+    expect(screen.queryByLabelText('Outdated comment')).not.toBeInTheDocument();
+
+    fireEvent.click(commitButton(/abc1234/));
+    await waitFor(() => expect(commitButton(/abc1234/)).toHaveAttribute('aria-current', 'true'));
+    const shown = () => screen.getByRole('region', { name: '커밋 지적' });
+    await waitFor(() => expect(within(shown()).queryByText('Reword the first step')).toBeNull());
+    expect(within(shown()).getByText('Split the second step')).toBeInTheDocument();
+  });
+
+  it('shows the fixup answering a comment on a whole commit on its card in the whole review', async () => {
+    mockComments = [commitThread(COMMITS[0]!.sha, 'Split the first step')];
+    fixupsFor.current = [
+      {
+        sha: 'f'.repeat(40),
+        shortSha: 'fffffff',
+        patchId: 'patch-1',
+        authoredAt: '2026-01-01T00:00:00Z',
+        subject: 'fixup! first step',
+        threadIds: ['commit-1111111'],
+        files: [{ path: 'notes.md', status: 'added', chunks: file.chunks }],
+      },
+    ];
+    renderApp();
+
+    const section = await screen.findByRole('region', { name: '커밋 지적' });
+    expect(await within(section).findByTestId('fixup-overlay-card')).toHaveTextContent('fffffff');
+    expect(within(section).getByText('notes.md')).toBeInTheDocument();
+  });
+
+  it('takes the fixup link of a deleted file to that file on the card of the commit comment it answers', async () => {
+    mockComments = [commitThread(COMMITS[0]!.sha, 'Drop the old file')];
+    moreReviewFiles = [{ ...file, path: 'old.ts', status: 'deleted', additions: 0, deletions: 1 }];
+    const fixupSha = 'f'.repeat(40);
+    fixupsFor.current = [
+      {
+        sha: fixupSha,
+        shortSha: 'fffffff',
+        patchId: 'patch-1',
+        authoredAt: '2026-01-01T00:00:00Z',
+        subject: 'fixup! first step',
+        threadIds: ['commit-1111111'],
+        files: [{ path: 'old.ts', status: 'modified', chunks: file.chunks }],
+      },
+    ];
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView');
+    renderApp();
+
+    const section = await screen.findByRole('region', { name: '커밋 지적' });
+    await within(section).findByTestId('fixup-overlay-card');
+    scrolled.mockClear();
+    fireEvent.click(
+      within(document.getElementById(getFileElementId('old.ts'))!).getByRole('button', {
+        name: 'fixup 수정',
+      }),
+    );
+
+    await waitFor(() =>
+      expect(scrolled.mock.contexts).toContain(
+        document.getElementById(fixupFileElementId(fixupSha, 'old.ts')) ?? 'no held file element',
+      ),
+    );
+    scrolled.mockRestore();
   });
 
   it('shows a comment on the whole file above the code and in the panel by its file name', async () => {

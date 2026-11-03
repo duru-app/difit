@@ -8,6 +8,7 @@ import type {
   FixupRef,
   ReviewDecision,
   ReviewDecisionKind,
+  ShownThread,
   ThreadFixup,
   ThreadReviewState,
 } from '../../types/diff';
@@ -120,7 +121,7 @@ export interface ThreadReviewControls {
 
 export function threadReviewControls(
   overlay: FixupOverlayState,
-  thread: CommentThread,
+  thread: ShownThread,
 ): ThreadReviewControls | undefined {
   if (overlay.targetCommit === null) return undefined;
   const fixups = overlay.fixupsByThread.get(thread.id) ?? [];

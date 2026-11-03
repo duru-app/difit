@@ -4,6 +4,7 @@ import type {
   CommentImport,
   DiffCommentPosition,
   DiffCommentThread,
+  FileCommentThread,
   ThreadCommentImport,
 } from '../types/diff';
 
@@ -29,7 +30,7 @@ function createThread({
   line?: number;
   body: string;
   updatedAt?: string;
-}): DiffCommentThread {
+}): FileCommentThread {
   return {
     id,
     filePath,
@@ -55,7 +56,7 @@ const PIN_SHA = '1111111111111111111111111111111111111111';
 const BASE_SHA = '0000000000000000000000000000000000000000';
 const PIN_VIEW = { baseCommitish: BASE_SHA, targetCommitish: PIN_SHA };
 
-function createBoundThread(args: Parameters<typeof createThread>[0]): DiffCommentThread {
+function createBoundThread(args: Parameters<typeof createThread>[0]): FileCommentThread {
   return { ...createThread(args), view: PIN_VIEW, fixupTarget: PIN_SHA };
 }
 
@@ -156,12 +157,12 @@ describe('commentImports', () => {
         }),
       );
 
-      expect(imports[0]?.codeSnapshot).toEqual({
-        content: 'const value = 1;',
-        language: undefined,
-        commit: '6e4f6d5',
+      expect(imports[0]).toMatchObject({
+        codeSnapshot: { content: 'const value = 1;', commit: '6e4f6d5' },
       });
-      expect(mergeCommentImports([], imports).threads[0]?.codeSnapshot?.commit).toBe('6e4f6d5');
+      expect(mergeCommentImports([], imports).threads[0]).toMatchObject({
+        codeSnapshot: { commit: '6e4f6d5' },
+      });
     });
 
     it('rejects malformed json', () => {
@@ -901,7 +902,7 @@ describe('commentImports', () => {
       const [parsed] = parseCommentImportValue(JSON.stringify(multiImport));
 
       expect(parsed?.position).toEqual(POSITION);
-      expect(parsed?.codeSnapshot?.extraContents).toEqual(['x', 'y\nz']);
+      expect(parsed).toMatchObject({ codeSnapshot: { extraContents: ['x', 'y\nz'] } });
     });
 
     it('reads an import with only a line as before', () => {
@@ -959,7 +960,7 @@ describe('commentImports', () => {
         ],
       };
       const stored = JSON.parse(JSON.stringify({ threads: [thread] })) as {
-        threads: DiffCommentThread[];
+        threads: FileCommentThread[];
       };
       const copied = stored.threads.flatMap((t) => [
         {
@@ -1050,7 +1051,7 @@ describe('commentImports', () => {
       const [parsed] = parseCommentImportValue(JSON.stringify(mixedImport));
 
       expect(parsed?.position).toEqual(POSITION);
-      expect(parsed?.codeSnapshot?.extraContents).toEqual(['c', 'x\ny\nz', 'w']);
+      expect(parsed).toMatchObject({ codeSnapshot: { extraContents: ['c', 'x\ny\nz', 'w'] } });
     });
 
     it('reads a range that names the position side as a plain range', () => {
@@ -1125,6 +1126,87 @@ describe('commentImports', () => {
 
       expect(mergeCommentThreads([mixed!], [mixed!]).threads).toEqual([mixed]);
       expect(mixed?.position).toEqual(POSITION);
+    });
+  });
+
+  describe('a comment on a whole commit', () => {
+    const OTHER_SHA = '2222222222222222222222222222222222222222';
+    const commitThreadImport = {
+      type: 'thread',
+      id: 'commit-thread',
+      position: { scope: 'commit' },
+      fixupTarget: PIN_SHA,
+      body: 'Split this commit in two',
+    } as const;
+
+    it('reads a thread import that names no file', () => {
+      const [entry] = parseCommentImportValue(JSON.stringify(commitThreadImport));
+
+      expect(entry).toMatchObject({ position: { scope: 'commit' }, fixupTarget: PIN_SHA });
+      expect(entry).not.toHaveProperty('filePath');
+    });
+
+    it.each([
+      ['a file path', { filePath: 'src/example.ts' }, 'filePath'],
+      ['no fixup target', { fixupTarget: undefined }, 'fixupTarget'],
+      ['a side', { position: { scope: 'commit', side: 'new' } }, 'position'],
+      ['a line', { position: { scope: 'commit', line: 3 } }, 'position'],
+      ['a code snapshot', { codeSnapshot: { content: 'x' } }, 'codeSnapshot'],
+    ])('rejects one with %s', (_label, overrides, fieldName) => {
+      expect(() => normalizeCommentImports({ ...commitThreadImport, ...overrides })).toThrow(
+        `Invalid comment import field: ${fieldName}`,
+      );
+    });
+
+    it('serializes it without a file path', () => {
+      const [entry] = JSON.parse(serializeCommentImports([commitThreadImport]));
+
+      expect(entry).toMatchObject({ position: { scope: 'commit' }, fixupTarget: PIN_SHA });
+      expect(entry.filePath).toBeUndefined();
+    });
+
+    it('takes a reply naming the same commit and keeps the other commit apart', () => {
+      const { threads: withThreads } = mergeCommentImports(
+        [],
+        [
+          commitThreadImport,
+          { ...commitThreadImport, id: 'other', fixupTarget: OTHER_SHA, body: 'Reword this' },
+        ],
+      );
+
+      const { threads, warnings } = mergeCommentImports(withThreads, [
+        { ...commitThreadImport, type: 'reply', id: 'reply-1', body: 'Split' },
+      ]);
+
+      expect(warnings).toEqual([]);
+      expect(threads.find(({ id }) => id === 'commit-thread')?.messages).toMatchObject([
+        { body: 'Split this commit in two' },
+        { body: 'Split' },
+      ]);
+      expect(threads.find(({ id }) => id === 'other')?.messages).toHaveLength(1);
+    });
+
+    it('warns about a reply whose commit has no commit comment', () => {
+      const { threads: withThread } = mergeCommentImports([], [commitThreadImport]);
+
+      const { warnings } = mergeCommentImports(withThread, [
+        { ...commitThreadImport, type: 'reply', fixupTarget: OTHER_SHA, body: 'Done' },
+      ]);
+
+      expect(warnings).toEqual([
+        `Skipped reply import for the commit ${OTHER_SHA} because no matching thread was found.`,
+      ]);
+    });
+
+    it('keeps it apart from a file thread with the same body, and through a merge of thread lists', () => {
+      const fileThread = createBoundThread({ id: 'file', body: 'Split this commit in two' });
+      const { threads } = mergeCommentImports(
+        [fileThread],
+        [{ ...commitThreadImport, id: undefined }],
+      );
+
+      expect(threads).toHaveLength(2);
+      expect(mergeCommentThreads(threads, threads).threads).toEqual(threads);
     });
   });
 });

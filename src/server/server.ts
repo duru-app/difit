@@ -15,6 +15,7 @@ import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
 import {
   extraLinesOfPosition,
+  isOnCommit,
   lineOfPosition,
   lineOfRange,
   positionOfLines,
@@ -98,6 +99,7 @@ import {
   type RewordRequest,
   type RewordResponse,
   type LibrarySourceResponse,
+  type ShownThread,
   type SidedLine,
   type SymbolCallersResponse,
   type SymbolIndexLogResponse,
@@ -107,6 +109,7 @@ import {
   type ThreadReviewState,
 } from '@/types/diff.js';
 import {
+  bindingForCommit,
   bindingForView,
   commitsOfView,
   createDiffSelection,
@@ -1273,7 +1276,17 @@ export async function startServer(options: ServerOptions): Promise<{
   function toCommentThread(
     thread: DiffCommentThread,
     commits: readonly ReviewCommit[] = [],
-  ): CommentThread {
+  ): ShownThread {
+    if (isOnCommit(thread)) {
+      return {
+        id: thread.id,
+        commit: thread.fixupTarget,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        messages: thread.messages,
+        fixupCommit: fixupCommitOf(thread.fixupTarget, commits),
+      };
+    }
     const line = lineOfPosition(thread.position);
     const extraLines = extraLinesOfPosition(thread.position);
     return {
@@ -1293,7 +1306,7 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   function normalizeThreadPayload(thread: CommentThread | DiffCommentThread): DiffCommentThread {
-    if ('filePath' in thread && 'position' in thread) {
+    if ('position' in thread && ('filePath' in thread || isOnCommit(thread))) {
       return thread;
     }
 
@@ -2054,11 +2067,7 @@ export async function startServer(options: ServerOptions): Promise<{
       threadId,
     });
     if (!result.ok) return refuseReword(result.reason, result.output);
-    const binding = bindingForView(
-      review,
-      createDiffSelection(commit.parentSha, commit.sha),
-      commit.sha,
-    );
+    const binding = bindingForCommit(review, commit);
 
     const session = getOrCreateCommentSession(selection);
     const patchId = (await parser.readThreadFixup(result.sha))?.patchId;

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Copy, Pencil } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil } from 'lucide-react';
 import {
   Fragment,
   useEffect,
@@ -15,6 +15,7 @@ import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
 import { copyTextToClipboard } from '../utils/clipboard';
 
 import { CommentCount } from './CommentCount';
+import { CommentForm } from './CommentForm';
 import { CommitGraph } from './CommitGraph';
 import { CommitMessageForm, type RewordControls } from './CommitMessageForm';
 
@@ -28,6 +29,7 @@ interface CommitListProps {
   // Keyed by commit sha: the whole message an amend! will leave on that commit.
   amendedMessages?: ReadonlyMap<string, string> | undefined;
   reword?: RewordControls | undefined;
+  onAddCommitComment?: ((sha: string, body: string) => Promise<void>) | undefined;
   height?: number | null | undefined;
   onResize?: ((height: number) => void) | undefined;
 }
@@ -141,12 +143,14 @@ export function CommitList({
   openCounts,
   amendedMessages,
   reword,
+  onAddCommitComment,
   height,
   onResize,
 }: CommitListProps) {
   const { commits } = review;
   const [isOpen, setIsOpen] = useState(true);
   const [rewording, setRewording] = useState<string | null>(null);
+  const [commenting, setCommenting] = useState<string | null>(null);
   const [isSavingMessage, setIsSavingMessage] = useState(false);
   const guardedReword = useMemo<RewordControls | undefined>(
     () =>
@@ -512,7 +516,35 @@ export function CommitList({
                         <Pencil size={12} />
                       </button>
                     )}
+                    {onAddCommitComment && (
+                      <button
+                        type="button"
+                        aria-label="커밋에 지적 달기"
+                        title="이 커밋 전체에 지적 달기"
+                        aria-expanded={commenting === commit.sha}
+                        onClick={() =>
+                          setCommenting((current) => (current === commit.sha ? null : commit.sha))
+                        }
+                        className={`shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-tertiary focus:opacity-100 ${inDrawer || commenting === commit.sha ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                      >
+                        <MessageSquarePlus size={12} />
+                      </button>
+                    )}
                   </div>
+                  {onAddCommitComment && commenting === commit.sha && (
+                    <div
+                      onContextMenu={(event) => event.stopPropagation()}
+                      className="px-4 py-2 select-text [-webkit-touch-callout:default]"
+                    >
+                      <CommentForm
+                        onSubmit={async (body) => {
+                          await onAddCommitComment(commit.sha, body);
+                          setCommenting(null);
+                        }}
+                        onCancel={() => setCommenting(null)}
+                      />
+                    </div>
+                  )}
                   {guardedReword && rewording === commit.sha && (
                     <CommitMessageForm
                       sha={commit.sha}

@@ -28,19 +28,29 @@ import {
   type LineNumber,
   type SidedLine,
   type CommentThread,
+  type CommitThreadView,
+  type FileCommentThread,
   type RevisionsResponse,
   type ReviewScope,
   type ReviewView,
   type ReviewViewAction,
   type RewordRequest,
   type RewordResponse,
+  type ShownThread,
 } from '../types/diff';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
-import { inStoredOrder, positionOfLines, rangeOfLineNumber } from '../utils/commentPosition';
+import {
+  inStoredOrder,
+  isOnCommit,
+  positionOfLines,
+  rangeOfLineNumber,
+} from '../utils/commentPosition';
 import { DEFAULT_DIFF_VIEW_MODE, normalizeDiffViewMode } from '../utils/diffMode';
 import { mergeCommentThreads } from '../utils/commentImports';
 import {
+  bindingForCommit,
   bindingForView,
+  commitsOfView,
   createDiffSelection,
   diffSelectionsEqual,
   fixupCommitOf,
@@ -75,6 +85,7 @@ import { DiffQuickMenu } from './components/DiffQuickMenu';
 import { DiffViewer } from './components/DiffViewer';
 import { FileChips } from './components/FileChips';
 import { FilePathText } from './components/FilePathText';
+import { CommitCommentsSection } from './components/CommitCommentsSection';
 import { CommitList, ShownCommits } from './components/CommitList';
 import { type RewordControls } from './components/CommitMessageForm';
 import { FileList, type FileListHandle } from './components/FileList';
@@ -309,33 +320,48 @@ function placeThreads(
   review: ReviewScope | undefined,
   targetCommit: string | null,
   lineIndexOf: (path: string) => FileLineIndex | undefined,
-): { normalizedThreads: CommentThread[]; hiddenThreadIds: Set<string> } {
+): {
+  normalizedThreads: CommentThread[];
+  commitThreads: CommitThreadView[];
+  hiddenThreadIds: Set<string>;
+} {
   const hidden = new Set<string>();
-  const placed = threads.map((thread): CommentThread => {
+  const placed: CommentThread[] = [];
+  const commitThreads: CommitThreadView[] = [];
+  for (const thread of threads) {
+    const onCommit = isOnCommit(thread);
     const placement = placeThread(
       thread,
       { view, review, targetCommit },
-      lineIndexOf(thread.filePath),
+      onCommit ? undefined : lineIndexOf(thread.filePath),
     );
     if (placement.kind === 'hidden') hidden.add(thread.id);
     const madeView = review && view ? madeViewElsewhere(thread, view, review) : undefined;
-    return {
+    const fixupCommit = thread.fixupTarget
+      ? fixupCommitOf(thread.fixupTarget, review?.commits ?? [])
+      : undefined;
+    const shared = {
       id: thread.id,
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+      messages: thread.messages,
+      ...(fixupCommit ? { fixupCommit } : {}),
+      ...(madeView ? { madeView } : {}),
+    };
+    if (onCommit) {
+      commitThreads.push({ ...shared, commit: thread.fixupTarget });
+      continue;
+    }
+    placed.push({
+      ...shared,
       file: thread.filePath,
       ...placedLine(placement),
       side: thread.position.side,
-      createdAt: thread.createdAt,
-      updatedAt: thread.updatedAt,
       codeContent: thread.codeSnapshot?.content,
       anchorCommit: thread.codeSnapshot?.commit,
-      messages: thread.messages,
-      ...(thread.fixupTarget
-        ? { fixupCommit: fixupCommitOf(thread.fixupTarget, review?.commits ?? []) }
-        : {}),
-      ...(madeView ? { madeView } : {}),
-    };
-  });
-  return { normalizedThreads: placed, hiddenThreadIds: hidden };
+    });
+  }
+  return { normalizedThreads: placed, commitThreads, hiddenThreadIds: hidden };
 }
 
 const anchorKeyOf = ({
@@ -345,7 +371,7 @@ const anchorKeyOf = ({
   codeSnapshot,
   fixupTarget,
   view,
-}: DiffCommentThread) => JSON.stringify([id, filePath, position, codeSnapshot, fixupTarget, view]);
+}: FileCommentThread) => JSON.stringify([id, filePath, position, codeSnapshot, fixupTarget, view]);
 
 const newThread = (
   filePath: string,
@@ -966,25 +992,38 @@ function App() {
   const answeredThreads = useMemo(() => {
     answeredThreadsRef.current = keepWhileSame(
       answeredThreadsRef.current,
-      reviewPlacement.normalizedThreads
-        .filter((thread) => !reviewPlacement.hiddenThreadIds.has(thread.id))
-        .map(({ id, file, line, extraLines, side, isOutdated }) => ({
-          id,
-          file,
-          line,
-          ...(extraLines ? { extraLines } : {}),
-          ...(side ? { side } : {}),
-          isOutdated,
-        })),
+      [
+        ...reviewPlacement.normalizedThreads
+          .filter((thread) => !reviewPlacement.hiddenThreadIds.has(thread.id))
+          .map(({ id, file, line, extraLines, side, isOutdated }) => ({
+            id,
+            file,
+            line,
+            ...(extraLines ? { extraLines } : {}),
+            ...(side ? { side } : {}),
+            isOutdated,
+          })),
+        ...reviewPlacement.commitThreads
+          .filter((thread) => !reviewPlacement.hiddenThreadIds.has(thread.id))
+          .map(({ id, commit, fixupCommit }) => ({
+            id,
+            commit,
+            ...(fixupCommit ? { fixupCommit } : {}),
+            isOutdated: false as const,
+          })),
+      ],
       sameAnsweredThread,
     );
     return answeredThreadsRef.current;
   }, [reviewPlacement]);
-  const outsideThreadsRef = useRef<readonly DiffCommentThread[]>([]);
+  const outsideThreadsRef = useRef<readonly FileCommentThread[]>([]);
   const outsideThreads = useMemo(() => {
     outsideThreadsRef.current = keepWhileSame(
       outsideThreadsRef.current,
-      threads.filter((thread) => !fileLineIndexByPath.has(thread.filePath)),
+      threads.filter(
+        (thread): thread is FileCommentThread =>
+          !isOnCommit(thread) && !fileLineIndexByPath.has(thread.filePath),
+      ),
       (thread, before) => anchorKeyOf(thread) === anchorKeyOf(before),
     );
     return outsideThreadsRef.current;
@@ -1035,6 +1074,7 @@ function App() {
       ),
     [fixups, fixupReviewPaths, fixupSpread.places, diffData],
   );
+  const { commitThreads } = reviewPlacement;
   const { normalizedThreads, hiddenThreadIds } = useMemo(() => {
     const { outsidePlacements } = fixupSpread;
     if (outsidePlacements.size === 0) return reviewPlacement;
@@ -1050,9 +1090,13 @@ function App() {
     () => normalizedThreads.filter((thread) => !hiddenThreadIds.has(thread.id)),
     [normalizedThreads, hiddenThreadIds],
   );
+  const shownThreads = useMemo<ShownThread[]>(
+    () => [...commitThreads, ...normalizedThreads],
+    [commitThreads, normalizedThreads],
+  );
   const showAuthorBadges = useMemo(
-    () => hasMultipleCommentAuthors(normalizedThreads.flatMap((thread) => thread.messages)),
-    [normalizedThreads],
+    () => hasMultipleCommentAuthors(shownThreads.flatMap((thread) => thread.messages)),
+    [shownThreads],
   );
   const unresolvedThreads = useMemo(
     () => drawnThreads.filter((thread) => !resolvedThreadIds.has(thread.id)),
@@ -1066,8 +1110,8 @@ function App() {
     [unresolvedThreads],
   );
   const pickedThread = useMemo(
-    () => normalizedThreads.find((thread) => thread.id === pickedThreadId) ?? null,
-    [normalizedThreads, pickedThreadId],
+    () => shownThreads.find((thread) => thread.id === pickedThreadId) ?? null,
+    [shownThreads, pickedThreadId],
   );
   const keptPickedThreadId =
     !showResolvedThreads && pickedThread && resolvedThreadIds.has(pickedThread.id)
@@ -1092,6 +1136,19 @@ function App() {
     });
     return map;
   }, [drawnThreads, unresolvedThreads, showResolvedThreads, keptPickedThreadId, resolvedThreadIds]);
+  const drawnCommitThreads = useMemo(
+    () =>
+      commitThreads.filter(
+        ({ id }) =>
+          !hiddenThreadIds.has(id) &&
+          (showResolvedThreads || !resolvedThreadIds.has(id) || id === keptPickedThreadId),
+      ),
+    [commitThreads, hiddenThreadIds, showResolvedThreads, resolvedThreadIds, keptPickedThreadId],
+  );
+  const viewCommits = useMemo(
+    () => (review && resolvedSelection ? commitsOfView(resolvedSelection, review) : []),
+    [review, resolvedSelection],
+  );
   const threadsByFixupOnlyFile = useMemo(() => {
     const map = new Map<string, CommentThread[]>();
     for (const [path, fileThreads] of threadsByFile) {
@@ -2044,6 +2101,15 @@ function App() {
     },
     [bindNewThread],
   );
+  const handleAddCommitComment = useCallback(
+    (sha: string, body: string): Promise<void> => {
+      const commit = review?.commits.find((candidate) => candidate.sha === sha);
+      const binding = review && commit && bindingForCommit(review, commit);
+      if (binding) addThreadRef.current({ scope: 'commit', body, binding });
+      return Promise.resolve();
+    },
+    [review],
+  );
   const handleAddFixupOnlyComment = useCallback(
     (
       fixupSha: string,
@@ -2105,39 +2171,47 @@ function App() {
     [replyToThread],
   );
 
-  const pickComment = (thread: CommentThread) => {
+  const pickComment = (thread: ShownThread) => {
     if (!diffData) return;
     setPickedThreadId(thread.id);
     const place: ReviewPlace = { kind: 'thread', threadId: thread.id };
     const placedHere =
       !hiddenThreadIds.has(thread.id) &&
       !thread.isOutdated &&
-      diffData.files.some(({ path }) => path === thread.file);
+      (!('file' in thread) || diffData.files.some(({ path }) => path === thread.file));
     if (!placedHere && showsPartOfReview && review) {
       showDiff(thread.madeView ?? review.requested, place);
       return;
     }
 
     jumpWithinReview(place);
-    jumpToThread(thread, collapsedFiles.has(thread.file), false);
+    jumpToThread(thread, 'file' in thread && collapsedFiles.has(thread.file), false);
   };
   pickThreadRef.current = (threadId) => {
-    const thread = normalizedThreads.find(({ id }) => id === threadId);
+    const thread = shownThreads.find(({ id }) => id === threadId);
     if (thread) pickComment(thread);
   };
   showThreadCardRef.current = (threadId) => {
-    const thread = normalizedThreads.find(({ id }) => id === threadId);
+    const thread = shownThreads.find(({ id }) => id === threadId);
     if (!thread) return;
     setPickedThreadId(thread.id);
     jumpWithinReview({ kind: 'thread', threadId: thread.id });
-    if (fixupSpread.outsidePlacements.has(thread.id)) {
+    if ('file' in thread && fixupSpread.outsidePlacements.has(thread.id)) {
       scrollFileIntoDiffContainer(thread.file, `comment-thread-${thread.id}`);
       return;
     }
     jumpToThread(thread, false, false);
   };
-  const jumpToThread = (thread: CommentThread, afterRender: boolean, restoring: boolean) => {
+  const jumpToThread = (thread: ShownThread, afterRender: boolean, restoring: boolean) => {
     if (!diffData) return;
+    if (!('file' in thread)) {
+      requestAnimationFrame(() =>
+        document
+          .getElementById(`comment-thread-${thread.id}`)
+          ?.scrollIntoView({ block: 'nearest' }),
+      );
+      return;
+    }
     const placed = fixupSpread.outsidePlacements.get(thread.id);
     if (placed) {
       showFixupFile({ fixupSha: placed.fixupSha, path: thread.file }, restoring);
@@ -2184,10 +2258,18 @@ function App() {
     if (!place) return;
     setFocusedFixupFile(ref);
     if (place.kind === 'card') {
-      const thread = normalizedThreads.find(({ id }) => id === place.threadId);
+      const thread = shownThreads.find(({ id }) => id === place.threadId);
       if (!thread) return;
       setPickedThreadId(thread.id);
-      jumpToThread(thread, collapsedFiles.has(thread.file), restoring);
+      if ('file' in thread) {
+        jumpToThread(thread, collapsedFiles.has(thread.file), restoring);
+        return;
+      }
+      requestAnimationFrame(() =>
+        document
+          .getElementById(fixupFileElementId(ref.fixupSha, ref.path))
+          ?.scrollIntoView({ block: 'nearest' }),
+      );
       return;
     }
     if (place.kind === 'box' && collapsedFiles.has(place.reviewPath)) {
@@ -2210,10 +2292,14 @@ function App() {
 
   const showPlace = (place: ReviewPlace, restoring: boolean, afterRender: boolean) => {
     if (place.kind === 'thread') {
-      const thread = normalizedThreads.find(({ id }) => id === place.threadId);
+      const thread = shownThreads.find(({ id }) => id === place.threadId);
       if (!thread) return;
       setPickedThreadId(thread.id);
-      jumpToThread(thread, afterRender || collapsedFiles.has(thread.file), restoring);
+      jumpToThread(
+        thread,
+        afterRender || ('file' in thread && collapsedFiles.has(thread.file)),
+        restoring,
+      );
       return;
     }
     if (place.kind === 'fixup') {
@@ -2415,7 +2501,7 @@ function App() {
   const commentsPanelBody = (
     <CommentsPanel
       ref={commentsPanelRef}
-      threads={normalizedThreads}
+      threads={shownThreads}
       statusById={commentPanelStatusById}
       resolvedThreadIds={resolvedThreadIds}
       filter={commentsPanelFilter}
@@ -2756,7 +2842,9 @@ function App() {
             reviewedFiles={viewedFiles}
             selectedFileIndex={cursor?.fileIndex ?? null}
             scrollVisibleFileIndex={scrollVisibleFileIndex}
-            pickedCommentFilePath={pickedThread?.file ?? null}
+            pickedCommentFilePath={
+              pickedThread && 'file' in pickedThread ? pickedThread.file : null
+            }
             onScrollToFile={jumpToFile}
           />
         )}
@@ -2807,6 +2895,7 @@ function App() {
                 openCounts={openCountsByCommit}
                 amendedMessages={amendedMessages}
                 reword={reword}
+                onAddCommitComment={handleAddCommitComment}
               />
             </aside>
           </>
@@ -2880,7 +2969,9 @@ function App() {
                   onToggleFolderReviewed={toggleFolderReviewed}
                   selectedFileIndex={cursor?.fileIndex ?? null}
                   scrollVisibleFileIndex={scrollVisibleFileIndex}
-                  pickedCommentFilePath={pickedThread?.file ?? null}
+                  pickedCommentFilePath={
+                    pickedThread && 'file' in pickedThread ? pickedThread.file : null
+                  }
                   {...(isMobile && { onEscape: () => setIsFileDrawerOpen(false) })}
                   fixupTouchedFiles={fixupSpread.touchedReviewFiles}
                   fixupRevertedFiles={fixupRevertedFiles}
@@ -2898,6 +2989,7 @@ function App() {
                   openCounts={openCountsByCommit}
                   amendedMessages={amendedMessages}
                   reword={reword}
+                  onAddCommitComment={handleAddCommitComment}
                   height={commitListHeight}
                   onResize={handleCommitListResize}
                 />
@@ -2949,6 +3041,20 @@ function App() {
                     : { minWidth: `min(${DIFF_MIN_WIDTH}px, calc(100% - ${reservedPanelWidth}px))` }
                 }
               >
+                {review && (
+                  <CommitCommentsSection
+                    commits={viewCommits}
+                    threads={drawnCommitThreads}
+                    onAddComment={takesComments ? handleAddCommitComment : undefined}
+                    fixupOverlay={fixupOverlay}
+                    showAuthorBadges={showAuthorBadges}
+                    syntaxTheme={settings.syntaxTheme}
+                    onResolveThread={resolveThread}
+                    onReplyToThread={handleReplyToThread}
+                    onRemoveMessage={removeMessage}
+                    onUpdateMessage={updateMessage}
+                  />
+                )}
                 {diffData.files.map((file, fileIndex) => {
                   const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
                   const mergedChunks =

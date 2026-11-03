@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DiffCommentThread, DiffFile, DiffLine } from '../../types/diff';
+import type { DiffCommentThread, DiffFile, DiffLine, FileCommentThread } from '../../types/diff';
 
 import { buildFileLineIndex, locateThread, placeThread } from './outdatedComments';
 
-const buildThread = (overrides: Partial<DiffCommentThread> = {}): DiffCommentThread => ({
+const buildThread = (overrides: Partial<FileCommentThread> = {}): FileCommentThread => ({
   id: 'thread-1',
   filePath: 'src/app.ts',
   createdAt: '2026-01-01T00:00:00Z',
@@ -364,7 +364,7 @@ describe('placeThread', () => {
   const FIX_VIEW = { baseCommitish: '1111111', targetCommitish: '2222222' };
   const shownOn = (view: typeof WHOLE) => ({ view, review, targetCommit: '2222222' });
 
-  const madeOnPin = (overrides: Partial<DiffCommentThread> = {}) =>
+  const madeOnPin = (overrides: Partial<FileCommentThread> = {}) =>
     buildThread({
       view: { baseCommitish: PIN.parentSha, targetCommitish: PIN.sha },
       fixupTarget: PIN.sha,
@@ -501,7 +501,7 @@ describe('placeThread', () => {
   });
 
   describe('a thread on the whole file', () => {
-    const onFile = (overrides: Partial<DiffCommentThread> = {}) =>
+    const onFile = (overrides: Partial<FileCommentThread> = {}) =>
       madeOnPin({
         position: { side: 'new', scope: 'file' },
         codeSnapshot: { content: '', commit: PIN.sha },
@@ -525,6 +525,27 @@ describe('placeThread', () => {
 
     it('is hidden on a commit view that does not hold its fixup target, like a line thread', () => {
       expect(placeThread(onFile(), shownOn(FIX_VIEW), gone)).toEqual({ kind: 'hidden' });
+    });
+  });
+
+  describe('a thread on a whole commit', () => {
+    const onCommit: DiffCommentThread = {
+      id: 'commit-thread',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      position: { scope: 'commit' },
+      view: { baseCommitish: PIN.parentSha, targetCommitish: PIN.sha },
+      fixupTarget: PIN.sha,
+      messages: [],
+    };
+
+    it('is drawn, never outdated, on every view that holds its commit', () => {
+      expect(placeThread(onCommit, shownOn(PIN_VIEW), undefined)).toEqual({ kind: 'stored' });
+      expect(placeThread(onCommit, shownOn(WHOLE), undefined)).toEqual({ kind: 'stored' });
+    });
+
+    it('is hidden on a commit view that does not hold its commit', () => {
+      expect(placeThread(onCommit, shownOn(FIX_VIEW), undefined)).toEqual({ kind: 'hidden' });
     });
   });
 });

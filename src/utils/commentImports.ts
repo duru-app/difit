@@ -2,6 +2,7 @@ import {
   AGENT_AUTHOR,
   type ChoiceAnswer,
   type CommentImport,
+  type CommitCommentPosition,
   type DiffCommentPosition,
   type DiffCommentThread,
   type DiffLineRange,
@@ -14,9 +15,15 @@ import {
   type ReplyCommentImport,
   type ThreadCommentImport,
 } from '../types/diff.js';
-import { endOfLine, rangesOfPosition, sideOfRange, startOfLine } from './commentPosition.js';
+import {
+  endOfLine,
+  isOnCommit,
+  rangesOfPosition,
+  sideOfRange,
+  startOfLine,
+} from './commentPosition.js';
 import { createId } from './createId.js';
-import { createDiffSelection, isCommitHash } from './diffSelection.js';
+import { createDiffSelection, isCommitHash, isSameCommit } from './diffSelection.js';
 
 interface MergeCommentImportsResult {
   threads: DiffCommentThread[];
@@ -126,6 +133,13 @@ function normalizePosition(value: unknown): DiffCommentPosition {
   return { side: value.side, scope: 'file' };
 }
 
+function normalizeCommitPosition(value: unknown): CommitCommentPosition {
+  if (!isRecord(value) || Object.keys(value).some((key) => key !== 'scope')) {
+    throw new Error('Invalid comment import field: position');
+  }
+  return { scope: 'commit' };
+}
+
 function normalizeCodeSnapshot(value: unknown): DiffCommentCodeSnapshot | undefined {
   if (value === undefined) {
     return undefined;
@@ -188,10 +202,10 @@ function cloneView(view: DiffSelection): DiffSelection {
   return createDiffSelection(view.baseCommitish, view.targetCommitish, view.baseMode);
 }
 
-function viewFields(source: {
+function viewFields(source: { view?: DiffSelection; fixupTarget?: string }): {
   view?: DiffSelection;
   fixupTarget?: string;
-}): Pick<DiffCommentThread, 'view' | 'fixupTarget'> {
+} {
   return {
     ...(source.view === undefined ? {} : { view: cloneView(source.view) }),
     ...(source.fixupTarget === undefined ? {} : { fixupTarget: source.fixupTarget }),
@@ -335,7 +349,12 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
     throw new Error('Invalid comment import field: type');
   }
 
-  if (typeof value.filePath !== 'string' || value.filePath.trim().length === 0) {
+  const onCommit = isRecord(value.position) && value.position.scope === 'commit';
+  if (
+    onCommit
+      ? value.filePath !== undefined
+      : typeof value.filePath !== 'string' || value.filePath.trim().length === 0
+  ) {
     throw new Error('Invalid comment import field: filePath');
   }
 
@@ -355,20 +374,14 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
     throw new Error('Invalid comment import field: a reply takes choices or fixPending, not both');
   }
 
-  const normalized = {
+  const fixupTarget = normalizeFixupTarget(value.fixupTarget);
+  const common = {
     type: value.type,
     id: normalizeOptionalString(value.id, 'id'),
-    filePath: value.filePath,
-    position: normalizePosition(value.position),
     body: normalizeRequiredBody(value.body),
     author: normalizeOptionalString(value.author, 'author'),
     createdAt,
     updatedAt,
-    codeSnapshot: normalizeCodeSnapshot(value.codeSnapshot),
-    ...viewFields({
-      view: normalizeView(value.view),
-      fixupTarget: normalizeFixupTarget(value.fixupTarget),
-    }),
     ...replyFields({
       choices: normalizeChoices(value.choices),
       answer: normalizeAnswer(value.answer),
@@ -376,7 +389,28 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
     }),
   };
 
-  return normalized as CommentImport;
+  if (onCommit) {
+    if (fixupTarget === undefined) {
+      throw new Error('Invalid comment import field: fixupTarget');
+    }
+    if (value.codeSnapshot !== undefined) {
+      throw new Error('Invalid comment import field: codeSnapshot');
+    }
+    return {
+      ...common,
+      position: normalizeCommitPosition(value.position),
+      ...viewFields({ view: normalizeView(value.view) }),
+      fixupTarget,
+    } as CommentImport;
+  }
+
+  return {
+    ...common,
+    filePath: value.filePath,
+    position: normalizePosition(value.position),
+    codeSnapshot: normalizeCodeSnapshot(value.codeSnapshot),
+    ...viewFields({ view: normalizeView(value.view), fixupTarget }),
+  } as CommentImport;
 }
 
 export function normalizeCommentImports(input: unknown): CommentImport[] {
@@ -422,6 +456,25 @@ function positionsMatch(left: DiffCommentPosition, right: DiffCommentPosition): 
   return getPositionKey(left) === getPositionKey(right);
 }
 
+type Place =
+  | { filePath: string; position: DiffCommentPosition }
+  | { position: CommitCommentPosition; fixupTarget: string };
+
+function samePlace(left: Place, right: Place): boolean {
+  if (isOnCommit(left) || isOnCommit(right)) {
+    return (
+      isOnCommit(left) && isOnCommit(right) && isSameCommit(left.fixupTarget, right.fixupTarget)
+    );
+  }
+  return left.filePath === right.filePath && positionsMatch(left.position, right.position);
+}
+
+function placeLabel(place: Place): string {
+  return isOnCommit(place)
+    ? `the commit ${place.fixupTarget}`
+    : `${place.filePath}:${getPositionKey(place.position)}`;
+}
+
 function normalizeAuthor(author: string | undefined): string {
   return author?.trim() || '';
 }
@@ -460,10 +513,7 @@ function rootThreadMatchesImport(
     return true;
   }
 
-  if (
-    thread.filePath !== commentImport.filePath ||
-    !positionsMatch(thread.position, commentImport.position)
-  ) {
+  if (!samePlace(thread, commentImport)) {
     return false;
   }
 
@@ -495,15 +545,10 @@ function sortByNewestThread(left: DiffCommentThread, right: DiffCommentThread): 
 function createImportedThread(commentImport: ThreadCommentImport, now: string): DiffCommentThread {
   const { createdAt, updatedAt } = toThreadTimestamp(commentImport, now);
   const threadId = commentImport.id ?? createId();
-
-  return {
+  const common = {
     id: threadId,
-    filePath: commentImport.filePath,
     createdAt,
     updatedAt,
-    position: commentImport.position,
-    codeSnapshot: commentImport.codeSnapshot,
-    ...viewFields(commentImport),
     messages: [
       {
         id: commentImport.id ?? threadId,
@@ -513,6 +558,22 @@ function createImportedThread(commentImport: ThreadCommentImport, now: string): 
         updatedAt,
       },
     ],
+  };
+
+  if (isOnCommit(commentImport)) {
+    return {
+      ...common,
+      position: { scope: 'commit' },
+      ...viewFields({ view: commentImport.view }),
+      fixupTarget: commentImport.fixupTarget,
+    };
+  }
+  return {
+    ...common,
+    filePath: commentImport.filePath,
+    position: commentImport.position,
+    codeSnapshot: commentImport.codeSnapshot,
+    ...viewFields(commentImport),
   };
 }
 
@@ -586,14 +647,25 @@ function cloneMessage(message: DiffCommentMessage): DiffCommentMessage {
 }
 
 function cloneThread(thread: DiffCommentThread): DiffCommentThread {
-  return {
+  const common = {
     id: thread.id,
-    filePath: thread.filePath,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
+    messages: thread.messages.map(cloneMessage),
+  };
+  if (isOnCommit(thread)) {
+    return {
+      ...common,
+      position: { scope: 'commit' },
+      ...viewFields({ view: thread.view }),
+      fixupTarget: thread.fixupTarget,
+    };
+  }
+  return {
+    ...common,
+    filePath: thread.filePath,
     position: clonePosition(thread.position),
     codeSnapshot: cloneCodeSnapshot(thread.codeSnapshot),
-    messages: thread.messages.map(cloneMessage),
     ...viewFields(thread),
   };
 }
@@ -619,7 +691,7 @@ function threadsMatch(left: DiffCommentThread, right: DiffCommentThread): boolea
     return true;
   }
 
-  if (left.filePath !== right.filePath || !positionsMatch(left.position, right.position)) {
+  if (!samePlace(left, right)) {
     return false;
   }
 
@@ -679,20 +751,26 @@ function mergeThread(
     maxIsoTimestamp(existingThread.updatedAt, incomingThread.updatedAt),
   );
 
-  return {
-    ...cloneThread(existingThread),
+  const merged = {
     createdAt:
       existingThread.createdAt.localeCompare(incomingThread.createdAt) <= 0
         ? existingThread.createdAt
         : incomingThread.createdAt,
     updatedAt,
-    position: clonePosition(existingThread.position),
-    codeSnapshot: cloneCodeSnapshot(incomingThread.codeSnapshot ?? existingThread.codeSnapshot),
     messages: orderedMessages,
-    ...viewFields({
-      view: existingThread.view ?? incomingThread.view,
-      fixupTarget: existingThread.fixupTarget ?? incomingThread.fixupTarget,
-    }),
+  };
+  const view = existingThread.view ?? incomingThread.view;
+  if (isOnCommit(existingThread)) {
+    return { ...cloneThread(existingThread), ...merged, ...viewFields({ view }) };
+  }
+  return {
+    ...cloneThread(existingThread),
+    ...merged,
+    codeSnapshot: cloneCodeSnapshot(
+      (isOnCommit(incomingThread) ? undefined : incomingThread.codeSnapshot) ??
+        existingThread.codeSnapshot,
+    ),
+    ...viewFields({ view, fixupTarget: existingThread.fixupTarget ?? incomingThread.fixupTarget }),
   };
 }
 
@@ -720,13 +798,19 @@ export function serializeCommentImports(commentImports: CommentImport[]): string
     commentImports.map((commentImport) => ({
       type: commentImport.type,
       id: commentImport.id,
-      filePath: commentImport.filePath,
-      position: clonePosition(commentImport.position),
+      ...(isOnCommit(commentImport)
+        ? { position: { scope: 'commit' } }
+        : {
+            filePath: commentImport.filePath,
+            position: clonePosition(commentImport.position),
+          }),
       body: commentImport.body,
       author: commentImport.author,
       createdAt: commentImport.createdAt,
       updatedAt: commentImport.updatedAt,
-      codeSnapshot: cloneCodeSnapshot(commentImport.codeSnapshot),
+      codeSnapshot: isOnCommit(commentImport)
+        ? undefined
+        : cloneCodeSnapshot(commentImport.codeSnapshot),
       view: commentImport.view
         ? {
             baseCommitish: commentImport.view.baseCommitish,
@@ -760,7 +844,7 @@ export function mergeCommentImports(
       if (duplicate) {
         if (isResolved(duplicate)) {
           warnings.push(
-            `Skipped thread import for ${commentImport.filePath}:${getPositionKey(commentImport.position)} because the same thread ${duplicate.id} is already resolved; nothing new was created.`,
+            `Skipped thread import for ${placeLabel(commentImport)} because the same thread ${duplicate.id} is already resolved; nothing new was created.`,
           );
         }
         continue;
@@ -771,18 +855,13 @@ export function mergeCommentImports(
     }
 
     const targetThreads = threads
-      .filter(
-        (thread) =>
-          thread.filePath === commentImport.filePath &&
-          positionsMatch(thread.position, commentImport.position) &&
-          takesReplies(thread),
-      )
+      .filter((thread) => samePlace(thread, commentImport) && takesReplies(thread))
       .sort(sortByNewestThread);
 
     const targetThread = targetThreads.find((thread) => !isResolved(thread)) ?? targetThreads[0];
     if (!targetThread) {
       warnings.push(
-        `Skipped reply import for ${commentImport.filePath}:${getPositionKey(commentImport.position)} because no matching thread was found.`,
+        `Skipped reply import for ${placeLabel(commentImport)} because no matching thread was found.`,
       );
       continue;
     }
@@ -796,7 +875,7 @@ export function mergeCommentImports(
 
     if (isResolved(targetThread)) {
       warnings.push(
-        `Stored the reply for ${commentImport.filePath}:${getPositionKey(commentImport.position)} on thread ${targetThread.id}, which is resolved; no open thread matched.`,
+        `Stored the reply for ${placeLabel(commentImport)} on thread ${targetThread.id}, which is resolved; no open thread matched.`,
       );
     }
 

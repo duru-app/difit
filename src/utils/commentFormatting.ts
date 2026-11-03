@@ -5,11 +5,12 @@ import type {
   DiffCommentMessage,
   DiffSide,
   LineNumber,
+  ShownThread,
   SidedLine,
   ThreadReviewState,
 } from '../types/diff';
 
-import { coversBothSides, sidedRangesLabel } from './commentPosition.js';
+import { commitLocationLabel, coversBothSides, sidedRangesLabel } from './commentPosition.js';
 import { reviewStateLabel } from './reviewDecisions.js';
 import { hasSuggestionBlock, parseSuggestionBlocks } from './suggestionUtils.js';
 
@@ -180,14 +181,17 @@ const wasEdited = ({ createdAt, updatedAt }: DiffCommentMessage): boolean =>
   (Date.parse(updatedAt) || 0) > (Date.parse(createdAt) || 0);
 
 export function formatCommentThreadPrompt(
-  thread: CommentThread,
+  thread: ShownThread,
   reviewState?: ThreadReviewState,
   { showEdits = false }: { showEdits?: boolean } = {},
 ): string {
+  const onFile = 'file' in thread;
   const sections: string[] = [
-    formatCommentLocation(thread.file, thread.line, thread.side, reviewState, thread.extraLines),
+    onFile
+      ? formatCommentLocation(thread.file, thread.line, thread.side, reviewState, thread.extraLines)
+      : `${commitLocationLabel(thread)}${reviewState ? ` [${reviewStateLabel(reviewState)}]` : ''}`,
   ];
-  if (thread.fixupCommit) {
+  if (onFile && thread.fixupCommit) {
     const { shortSha, subject } = thread.fixupCommit;
     sections.push(`고쳐 넣을 커밋: ${subject ? `${shortSha} ${subject}` : shortSha}`);
   }
@@ -198,7 +202,7 @@ export function formatCommentThreadPrompt(
     }
     if (showEdits && wasEdited(message)) sections.push(`고친 시각: ${message.updatedAt}`);
     sections.push(
-      formatCommentContent(message.body, thread.codeContent),
+      formatCommentContent(message.body, onFile ? thread.codeContent : undefined),
       ...formatChoices(message, thread.messages),
     );
   });
@@ -207,7 +211,7 @@ export function formatCommentThreadPrompt(
 }
 
 export function formatAllCommentThreadsPrompt(
-  threads: CommentThread[],
+  threads: ShownThread[],
   context?: CommentPromptDiffContext,
   reviewStates?: ReadonlyMap<string, ThreadReviewState>,
   options?: { showEdits?: boolean },
@@ -228,7 +232,7 @@ export function formatAllCommentThreadsPrompt(
 }
 
 export function formatCommentsOutput(
-  input: Comment[] | CommentThread[],
+  input: Comment[] | ShownThread[],
   reviewStates?: ReadonlyMap<string, ThreadReviewState>,
 ): string {
   const threads = input.map((item) => ('messages' in item ? item : normalizeLegacyComment(item)));

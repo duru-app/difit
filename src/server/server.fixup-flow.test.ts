@@ -378,6 +378,62 @@ it('binds a comment on the whole file to the last commit that changed it and han
   );
 });
 
+it('keeps a comment on a whole commit without a file and hands it over naming the commit', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const base = commit(repo, 'base', { 'discount.js': 'export const rate = 0.1;\n' });
+  const pin = commit(repo, 'test: pin current discount', { 'discount.test.js': PINNING_TEST });
+  const docs = commit(repo, 'docs: say discounts round down', { 'README.md': 'Rounds down.\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, docs),
+    repoPath: repo,
+    preferredPort: 9285,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  const onCommit = {
+    id: 't1',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    position: { scope: 'commit' },
+    view: createDiffSelection(base, pin),
+    fixupTarget: pin,
+    messages: [
+      {
+        id: 't1',
+        body: 'Name the commit after the rule it pins.',
+        author: 'User',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ],
+  };
+
+  const saved = await fetch(api('/api/comments'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threads: [onCommit] }),
+  });
+  expect(saved.status).toBe(200);
+
+  const stored = (await (await fetch(api('/api/comments-json'))).json()) as {
+    threads: Array<Record<string, unknown>>;
+  };
+  expect(stored.threads).toEqual([expect.objectContaining({ position: { scope: 'commit' } })]);
+  expect(stored.threads[0]).not.toHaveProperty('filePath');
+  const output = await (await fetch(api('/api/comments-output'))).text();
+  expect(output).toContain(
+    `\n커밋 ${pin.slice(0, 7)} test: pin current discount [답변 대기]\nName the commit`,
+  );
+  const waited = await (await fetch(api('/api/comments-wait'))).text();
+  const [handed] = JSON.parse(waited.split('data: ')[1]!) as Array<Record<string, unknown>>;
+  expect(handed).toMatchObject({ threadId: 't1', position: { scope: 'commit' }, fixupTarget: pin });
+  expect(handed).not.toHaveProperty('filePath');
+});
+
 it('rewords a commit of the review into an amend! the commit list then shows', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));

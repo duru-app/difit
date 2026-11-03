@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import type { Comment, CommentThread } from '../types/diff';
+import type { Comment, CommentThread, CommitThreadView } from '../types/diff';
 
 import {
   formatCommentPrompt,
@@ -555,6 +555,29 @@ Related entries are below.`);
       expect(result).toContain('src/App.tsx:L10\n고쳐 넣을 커밋: 2222222\nFix unlisted');
       expect(result).toContain('src/App.tsx:L10\nFix old');
       expect(result.match(/고쳐 넣을 커밋/g)).toHaveLength(2);
+    });
+
+    it('should name the commit in place of a file for a thread on a whole commit', () => {
+      const onCommit: CommitThreadView = {
+        id: 'commit-thread',
+        commit: '1111111111111111111111111111111111111111',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        messages: [
+          {
+            id: 'commit-thread',
+            body: 'Split this commit',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          },
+        ],
+        fixupCommit: { shortSha: '1111111', subject: 'first' },
+      };
+
+      const result = formatCommentsOutput([onCommit], new Map([['commit-thread', 'awaiting-fix']]));
+
+      expect(result).toContain('\n커밋 1111111 first [답변 대기]\nSplit this commit');
+      expect(result).not.toContain('고쳐 넣을 커밋');
     });
 
     it('should name only the file for a thread on the whole file, marking a deleted one', () => {

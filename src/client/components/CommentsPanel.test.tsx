@@ -152,6 +152,43 @@ describe('CommentsPanel', () => {
     expect(rowLabels()).toEqual(['a.ts', 'a.ts:3-8', 'a.ts:20', 'a.ts:20', 'b.ts:5']);
   });
 
+  it('names the commit of a comment on a whole commit and lists it before the files', () => {
+    const onCommit = {
+      id: 'commit',
+      commit: '1111111111111111111111111111111111111111',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      messages: [
+        {
+          id: 'commit',
+          body: 'Split this commit',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        },
+      ],
+      fixupCommit: { shortSha: '1111111', subject: 'first step' },
+    };
+    const onPick = vi.fn();
+    render(
+      <Harness
+        initialFilter="all"
+        threads={[...THREADS, onCommit]}
+        statusById={new Map([...STATUSES, ['commit', 'open']])}
+        onPick={onPick}
+      />,
+    );
+
+    expect(rowLabels()).toEqual([
+      '커밋 1111111 first step',
+      'a.ts:3-8',
+      'a.ts:20',
+      'a.ts:20',
+      'b.ts:5',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /커밋 1111111/ }));
+    expect(onPick).toHaveBeenCalledWith(onCommit);
+  });
+
   it('shows where each comment is, its first message and its status', () => {
     render(<Harness />);
 
