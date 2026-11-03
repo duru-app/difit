@@ -5820,6 +5820,16 @@ describe.each(['unified', 'split'] as const)('App Component - picking lines (%s)
     expect(picked()).toEqual(['line 2', 'line 3']);
   });
 
+  it('keeps the empty form of the file open on a Shift+click on a line number', async () => {
+    renderApp();
+
+    await clickNumber(2, { ctrlKey: true }, 'edge');
+    await clickNumber(3, { shiftKey: true }, 'edge');
+
+    expect(picked()).toEqual(['line 2', 'line 3']);
+    expect(cancels).not.toHaveBeenCalled();
+  });
+
   it('still closes an empty form in another file when lines are picked', async () => {
     mockFetch({ ...twoHunks, files: [...twoHunks.files, { ...twoHunks.files[0]!, path: 'b.ts' }] });
     renderApp();
