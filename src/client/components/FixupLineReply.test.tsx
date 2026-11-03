@@ -196,8 +196,7 @@ describe('replying on lines of a fixup card', () => {
     pressNumber(added!);
     await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
     fireEvent.change(within(card).getByRole('textbox'), { target: { value: '이 줄에 남길 말' } });
-    fireEvent.mouseDown(last!, { button: 0, shiftKey: true });
-    fireEvent.mouseUp(document);
+    pressNumber(last!, { shiftKey: true });
 
     await waitFor(() =>
       expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L12-L13'),

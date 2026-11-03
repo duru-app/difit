@@ -2509,7 +2509,8 @@ function App() {
     }
     const isCommentButton = target.closest('[data-comment-button="true"]');
     const isOpenInEditorButton = target.closest('[data-open-in-editor-button="true"]');
-    const isShiftRangeClick = e.shiftKey && target.closest('[data-diff-line-row="true"]');
+    const isShiftRangeClick =
+      e.shiftKey && target.closest('[data-diff-line-row="true"], [data-line-number-cell]');
     const pickingInFile =
       (e.ctrlKey || e.metaKey || target.closest('[data-adds-lines="true"]')) &&
       target.closest('[data-line-number-cell]')

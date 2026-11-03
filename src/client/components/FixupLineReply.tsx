@@ -24,6 +24,8 @@ const sameLine = (a: LineSelection | null, b: LineSelection) =>
 export interface FixupLineReplying {
   isPicked: (line: LineSelection) => boolean;
   press: (line: LineSelection, event: MouseEvent) => void;
+  click: (line: LineSelection, event: MouseEvent) => void;
+  addsLines: boolean;
   hover: (line: LineSelection) => void;
   isFormUnder: (line: LineSelection) => boolean;
   form: ReactNode;
@@ -93,13 +95,15 @@ export function useFixupLineReply({
     press: (line, event) => {
       if (event.button !== 0) return;
       event.preventDefault();
+      if (event.shiftKey || event.ctrlKey || event.metaKey || store.addMode) return;
+      store.setAnchor(line);
+      setDrag({ from: line, to: line });
+    },
+    click: (line, event) => {
       if (event.shiftKey) store.extend(line, 'unified');
       else if (event.ctrlKey || event.metaKey || store.addMode) store.toggle(line);
-      else {
-        store.setAnchor(line);
-        setDrag({ from: line, to: line });
-      }
     },
+    addsLines: store.addMode,
     hover: (line) => {
       if (drag && !sameLine(drag.to, line)) setDrag({ ...drag, to: line });
     },

@@ -127,7 +127,11 @@ function FixupChunksTable({
     <FileLevelTokensProvider value={NO_PRECOMPUTED_TOKENS}>
       {chunks.map((chunk, chunkIndex) =>
         (editing ? changedParts(chunk.lines) : [wholeChunk(chunk)]).map(({ from, to, range }) => (
-          <div key={`${chunkIndex}-${from}`} className="group/hunk relative">
+          <div
+            key={`${chunkIndex}-${from}`}
+            className="group/hunk relative"
+            data-adds-lines={replying?.addsLines || undefined}
+          >
             {editing && range && (
               <EditHunkButton onClick={() => editing.open(range)} alwaysShown={!canHover} />
             )}
@@ -171,6 +175,11 @@ function FixupChunksTable({
                           onMouseDown={
                             replying && picked
                               ? (event) => replying.press(picked, event)
+                              : undefined
+                          }
+                          onClick={
+                            replying && picked
+                              ? (event) => replying.click(picked, event)
                               : undefined
                           }
                           className={`w-[var(--line-number-width)] min-w-[var(--line-number-width)] max-w-[var(--line-number-width)] px-2 max-md:px-0.5 max-md:text-[11px] text-right text-github-text-muted select-none align-top ${
