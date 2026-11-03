@@ -4142,11 +4142,94 @@ describe('App Component - Commits of the review', () => {
     await waitFor(() => expect(commentsPanelHasFocus()).toBe(true));
     await userEvent.keyboard('{Enter}');
 
-    await waitFor(() =>
-      expect(scrollTo).toHaveBeenCalledWith({
-        top: expect.toSatisfy((top: number) => top >= 1100 - 800 && top <= 900),
-      }),
-    );
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 900 - 8 }));
+  });
+
+  it('brings the line of a comment picked from the list right under the file header, its card below', async () => {
+    mockComments = [
+      createMockThread({ id: 'l1', filePath: 'test.ts', line: 1, body: 'About this line' }),
+    ];
+    renderApp();
+    await screen.findByText('About this line');
+    const main = document.querySelector('main')!;
+    const scrollTo = vi.fn();
+    main.scrollTo = scrollTo;
+    main.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 800, left: 0, right: 0, width: 0, height: 800 }) as DOMRect;
+    const rect = (top: number, bottom: number) => () =>
+      ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top }) as DOMRect;
+    for (const line of document.querySelectorAll<HTMLElement>('[id^="file-0-chunk-"]')) {
+      line.getBoundingClientRect = rect(900, 920);
+    }
+    document.getElementById('comment-thread-l1')!.getBoundingClientRect = rect(920, 1100);
+
+    await userEvent.keyboard('{Shift>}L{/Shift}');
+    await waitFor(() => expect(commentsPanelHasFocus()).toBe(true));
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 900 - 8 }));
+  });
+
+  describe('with a comment on a range of lines', () => {
+    const rangeThread = (extraRanges?: number[]) => {
+      const thread = createMockThread({
+        id: 'r1',
+        filePath: 'more.ts',
+        line: 4,
+        body: 'These lines',
+      });
+      return {
+        ...thread,
+        position: {
+          side: 'new' as const,
+          line: { start: 3, end: 4 },
+          ...(extraRanges && { extraRanges }),
+        },
+      };
+    };
+    // Counted from 0.
+    const newLine = (index: number) =>
+      document.getElementById(`file-1-chunk-0-line-${index}-right`)!;
+    const layOut = () => {
+      const main = document.querySelector('main')!;
+      const scrollTo = vi.fn();
+      main.scrollTo = scrollTo;
+      main.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 800, left: 0, right: 0, width: 0, height: 800 }) as DOMRect;
+      const rect = (top: number, bottom: number) => () =>
+        ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top }) as DOMRect;
+      newLine(2).getBoundingClientRect = rect(500, 520);
+      newLine(3).getBoundingClientRect = rect(520, 540);
+      document.getElementById('comment-thread-r1')!.getBoundingClientRect = rect(540, 700);
+      return scrollTo;
+    };
+
+    it('brings the first line of the range right under the file header', async () => {
+      moreReviewFiles = [linedFile('more.ts', 6)];
+      mockComments = [rangeThread()];
+      renderApp();
+      await screen.findByText('These lines');
+      const scrollTo = layOut();
+
+      await userEvent.keyboard('{Shift>}L{/Shift}');
+      await waitFor(() => expect(commentsPanelHasFocus()).toBe(true));
+      await userEvent.keyboard('{Enter}');
+
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 500 - 8 }));
+    });
+
+    it('picks the comment and shows its card the same way from a line of its other range', async () => {
+      moreReviewFiles = [linedFile('more.ts', 6)];
+      mockComments = [rangeThread([1])];
+      renderApp();
+      await screen.findByText('These lines');
+      const scrollTo = layOut();
+
+      fireEvent.click(screen.getByRole('button', { name: '지적으로 가기' }));
+
+      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 500 - 8 }));
+      expect(document.getElementById('comment-thread-r1')).toHaveAttribute('data-picked', 'true');
+    });
   });
 
   it('keeps the card of a whole-file comment on screen when the fixups above it are taller', async () => {

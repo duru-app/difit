@@ -1291,6 +1291,7 @@ function renderChunk(
   mode: ChunkMode,
   {
     commentable = true,
+    overlay,
     ...extra
   }: {
     onOpenInEditor?: () => void;
@@ -1298,6 +1299,7 @@ function renderChunk(
     commentTrigger?: { fileIndex: number; chunkIndex: number; lineIndex: number };
     chunk?: DiffChunkData;
     threads?: CommentThread[];
+    overlay?: Partial<FixupOverlayState>;
   } = {},
 ) {
   const onAddComment = vi.fn().mockResolvedValue(undefined);
@@ -1313,11 +1315,19 @@ function renderChunk(
     filename: 'src/example.ts',
     ...extra,
   };
-  const view = renderWithProviders(
+  const chunk =
     mode === 'unified' ? (
       <DiffChunk {...props} mode="unified" />
     ) : (
       <SideBySideDiffChunk {...props} />
+    );
+  const view = renderWithProviders(
+    overlay ? (
+      <FixupOverlayProvider value={{ ...EMPTY_FIXUP_OVERLAY, ...overlay }}>
+        {chunk}
+      </FixupOverlayProvider>
+    ) : (
+      chunk
     ),
   );
   const rows = Array.from(view.container.querySelectorAll('[data-diff-line-row="true"]'));
@@ -1584,6 +1594,19 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     } else {
       expect(screen.queryByText(/이 줄도/)).toBeNull();
     }
+  });
+
+  it('shows the card of the comment from the line that points to it', () => {
+    const showThreadCard = vi.fn();
+    const thread = {
+      ...threadOn(12, 'Also here', 'new'),
+      extraLines: [{ side: 'new' as const, line: 10 }],
+    };
+    renderChunk(mode, { threads: [thread], overlay: { showThreadCard } });
+
+    fireEvent.click(screen.getByRole('button', { name: '지적으로 가기' }));
+
+    expect(showThreadCard).toHaveBeenCalledWith(thread.id);
   });
 
   it.runIf(mode === 'unified')(

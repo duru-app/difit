@@ -1792,6 +1792,8 @@ function App() {
   const [focusedFixupFile, setFocusedFixupFile] = useState<FixupFileRef | null>(null);
   const pickThreadRef = useRef<(threadId: string) => void>(() => {});
   const pickThread = useCallback((threadId: string) => pickThreadRef.current(threadId), []);
+  const showThreadCardRef = useRef<(threadId: string) => void>(() => {});
+  const showThreadCard = useCallback((threadId: string) => showThreadCardRef.current(threadId), []);
   const showFixupFileRef = useRef<(ref: FixupFileRef, restoring: boolean) => void>(() => {});
   const revealFixupFile = useCallback(
     (fixupSha: string, path: string) => {
@@ -1825,6 +1827,7 @@ function App() {
       focusedFixupFile,
       revealFixupFile,
       pickThread,
+      showThreadCard,
     }),
     [
       showFixupOverlay,
@@ -1842,6 +1845,7 @@ function App() {
       focusedFixupFile,
       revealFixupFile,
       pickThread,
+      showThreadCard,
     ],
   );
 
@@ -2105,6 +2109,17 @@ function App() {
     const thread = normalizedThreads.find(({ id }) => id === threadId);
     if (thread) pickComment(thread);
   };
+  showThreadCardRef.current = (threadId) => {
+    const thread = normalizedThreads.find(({ id }) => id === threadId);
+    if (!thread) return;
+    setPickedThreadId(thread.id);
+    jumpWithinReview({ kind: 'thread', threadId: thread.id });
+    if (fixupSpread.outsidePlacements.has(thread.id)) {
+      scrollFileIntoDiffContainer(thread.file, `comment-thread-${thread.id}`);
+      return;
+    }
+    jumpToThread(thread, false, false);
+  };
   const jumpToThread = (thread: CommentThread, afterRender: boolean, restoring: boolean) => {
     if (!diffData) return;
     const placed = fixupSpread.outsidePlacements.get(thread.id);
@@ -2135,10 +2150,14 @@ function App() {
     const moveCursor = () => {
       const position = findCommentPosition(thread, navigableFilesRef.current);
       setCursorPosition(position);
+      const firstLine = Array.isArray(thread.line)
+        ? (findCommentPosition({ ...thread, line: thread.line[0] }, navigableFilesRef.current) ??
+          position)
+        : position;
       scrollFileIntoDiffContainer(
         thread.file,
         `comment-thread-${thread.id}`,
-        position ? getElementId(position, diffMode) : undefined,
+        firstLine ? getElementId(firstLine, diffMode) : undefined,
       );
     };
     if (afterRender) requestAnimationFrame(moveCursor);

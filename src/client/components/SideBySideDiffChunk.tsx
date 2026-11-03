@@ -32,7 +32,7 @@ import { DirectEditForm } from './DirectEditForm';
 import { EditHunkButton } from './EditLineButton';
 import { EnhancedPrismSyntaxHighlighter } from './EnhancedPrismSyntaxHighlighter';
 import { FixupBoxRows, FixupOverlayRow } from './FixupOverlayCard';
-import { goToThreadCard, PickControls, ThreadMarker } from './LinePickParts';
+import { PickControls, ThreadMarker } from './LinePickParts';
 import {
   type FoldedLines,
   FoldedLinesRow,
@@ -372,7 +372,7 @@ export function SideBySideDiffChunk({
 
   const flashedThread = threads.find(({ id }) => id === linePick.flashedThreadId);
   const showThread = (thread: CommentThread) => {
-    goToThreadCard(thread.id);
+    overlay.showThreadCard(thread.id);
     linePick.flash(thread.id);
   };
 

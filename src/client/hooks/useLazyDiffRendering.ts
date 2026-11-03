@@ -42,7 +42,8 @@ interface UseLazyDiffRenderingReturn {
   ensureFilesRenderedUpTo: (filePath: string) => void;
   registerLazyFileContainer: (filePath: string, node: HTMLDivElement | null) => void;
   // With elementId, scrolls to that element, or to a reviewed file's header while it is not drawn.
-  // The element above it named by alsoShowId stays in sight when both fit on screen.
+  // When the element above it named by alsoShowId fits on screen together with it, that one lands
+  // at the top instead, with the element below it.
   scrollFileIntoDiffContainer: (filePath: string, elementId?: string, alsoShowId?: string) => void;
   isFileScrolledPastContainerTop: (filePath: string) => boolean;
 }
@@ -335,10 +336,7 @@ export function useLazyDiffRendering({
           const alsoShownTop = alsoShown.getBoundingClientRect().top - containerRect.top;
           const targetBottom = targetRect.bottom - containerRect.top;
           if (targetBottom - alsoShownTop <= containerRect.height - cover) {
-            offset = Math.min(
-              Math.max(0, targetBottom - containerRect.height),
-              alsoShownTop - cover,
-            );
+            offset = alsoShownTop - cover;
           }
         }
 
