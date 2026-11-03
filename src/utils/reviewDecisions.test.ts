@@ -10,6 +10,7 @@ import {
 
 import {
   appearsResolved,
+  awaitsJudgmentOfReplacement,
   commentPanelStatus,
   deriveThreadReviewState,
   isAgentResponding,
@@ -460,6 +461,132 @@ describe('appearsResolved', () => {
     expect(
       appearsResolved('t1', [fixup('aaaa')], [decision('approved', 'aaaa', at(0), 't2')]),
     ).toBe(false);
+  });
+});
+
+describe('a fixup amended after its approval', () => {
+  const at = (minute: number) => `2026-01-01T00:0${minute}:00Z`;
+  const approvedA = { ...decision('approved', 'aaaa', at(0)), patchId: 'patch-aaaa' };
+  const resolved = decision('resolved', '', at(1));
+  const amended = fixup('bbbb');
+
+  it('reopens on both sides even though the thread was resolved after the approval', () => {
+    const decisions = [approvedA, resolved];
+    expect(appearsResolved('t1', [fixup('aaaa')], decisions)).toBe(true);
+
+    expect(appearsResolved('t1', [amended], decisions)).toBe(false);
+    expect(isThreadResolved('t1', decisions, [amended])).toBe(false);
+    expect(deriveThreadReviewState('t1', [amended], decisions)).toBe('awaiting-approval');
+    expect(awaitsJudgmentOfReplacement('t1', [amended], decisions)).toBe(true);
+  });
+
+  it('stays open when the check is pressed again before the new fixup is judged', () => {
+    const decisions = [approvedA, resolved, decision('resolved', '', at(3))];
+    expect(appearsResolved('t1', [amended], decisions)).toBe(false);
+  });
+
+  it('closes again once the amended fixup is approved', () => {
+    const decisions = [approvedA, resolved, decision('approved', 'bbbb', at(3))];
+    expect(awaitsJudgmentOfReplacement('t1', [amended], decisions)).toBe(false);
+    expect(appearsResolved('t1', [amended], decisions)).toBe(true);
+    expect(isThreadResolved('t1', decisions, [amended])).toBe(true);
+  });
+
+  it('hands the reviewer’s rejection of the amended fixup to the agent', () => {
+    const decisions = [approvedA, resolved, decision('rejected', 'bbbb', at(3))];
+    expect(deriveThreadReviewState('t1', [amended], decisions)).toBe('rejected');
+    const thread = {
+      id: 't1',
+      filePath: 'a.ts',
+      position: { side: 'new' as const, line: 1 },
+      messages: [
+        { id: 'm1', body: 'fix', author: REVIEWER_AUTHOR, createdAt: at(0), updatedAt: at(0) },
+      ],
+    };
+    expect(
+      selectThreadsAwaitingAgent([thread], new Map([['t1', [amended]]]), decisions),
+    ).toMatchObject([{ threadId: 't1', state: 'rejected', rejectedFixupSha: 'bbbb' }]);
+  });
+
+  it('hands the reviewer’s reply on the amended fixup to the agent', () => {
+    const thread = {
+      id: 't1',
+      filePath: 'a.ts',
+      position: { side: 'new' as const, line: 1 },
+      messages: [
+        { id: 'm1', body: 'fix', author: REVIEWER_AUTHOR, createdAt: at(0), updatedAt: at(0) },
+        {
+          id: 'm2',
+          body: 'still off',
+          author: REVIEWER_AUTHOR,
+          createdAt: at(4),
+          updatedAt: at(4),
+        },
+      ],
+    };
+    expect(
+      selectThreadsAwaitingAgent([thread], new Map([['t1', [amended]]]), [approvedA, resolved]),
+    ).toMatchObject([{ threadId: 't1', state: 'awaiting-approval' }]);
+  });
+
+  it('keeps the approval when only the message or the base changed', () => {
+    const reworded = { ...fixup('cccc'), patchId: 'patch-aaaa' };
+    const decisions = [approvedA, resolved];
+    expect(awaitsJudgmentOfReplacement('t1', [reworded], decisions)).toBe(false);
+    expect(appearsResolved('t1', [reworded], decisions)).toBe(true);
+  });
+
+  it('keeps a resolution made without any approval', () => {
+    expect(appearsResolved('t1', [amended], [resolved])).toBe(true);
+    expect(isThreadResolved('t1', [resolved], [amended])).toBe(true);
+  });
+
+  it('keeps the resolution once the approval was undone', () => {
+    const undone = [
+      approvedA,
+      decision('unapproved', 'aaaa', at(2)),
+      decision('resolved', '', at(3)),
+    ];
+    expect(appearsResolved('t1', [amended], undone)).toBe(true);
+  });
+
+  it('leaves an approved fixup that is being folded alone', () => {
+    expect(awaitsJudgmentOfReplacement('t1', [], [approvedA, resolved])).toBe(false);
+    expect(appearsResolved('t1', [], [approvedA, resolved])).toBe(true);
+  });
+
+  it('lets the reviewer resolve again once the amended fixup is rejected', () => {
+    const rejected = [approvedA, resolved, decision('rejected', 'bbbb', at(3))];
+    expect(awaitsJudgmentOfReplacement('t1', [amended], rejected)).toBe(false);
+    expect(appearsResolved('t1', [amended], rejected)).toBe(false);
+
+    const resolvedAgain = [...rejected, decision('resolved', '', at(4))];
+    expect(appearsResolved('t1', [amended], resolvedAgain)).toBe(true);
+    expect(isThreadResolved('t1', resolvedAgain, [amended])).toBe(true);
+  });
+
+  it('stays open when another fixup follows the rejected one', () => {
+    const decisions = [
+      approvedA,
+      resolved,
+      decision('rejected', 'bbbb', at(3)),
+      decision('resolved', '', at(4)),
+    ];
+    const next = [amended, fixup('cccc')];
+    expect(awaitsJudgmentOfReplacement('t1', next, decisions)).toBe(true);
+    expect(appearsResolved('t1', next, decisions)).toBe(false);
+  });
+
+  it('leaves a folded thread to the fold record when a new fixup arrives', () => {
+    const folded = [
+      approvedA,
+      decision('folded', 'aaaa', at(2)),
+      decision('unresolved', '', at(3)),
+    ];
+    expect(awaitsJudgmentOfReplacement('t1', [fixup('dddd')], folded)).toBe(false);
+    expect(
+      appearsResolved('t1', [fixup('dddd')], [...folded, decision('resolved', '', at(4))]),
+    ).toBe(true);
   });
 });
 

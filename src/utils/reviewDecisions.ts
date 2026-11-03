@@ -122,9 +122,15 @@ export function latestResolutionMarkAt(threadId: string, decisions: ReviewDecisi
   return mark ? decidedAt(mark) : 0;
 }
 
-export function isThreadResolved(threadId: string, decisions: ReviewDecision[]): boolean {
+export function isThreadResolved(
+  threadId: string,
+  decisions: ReviewDecision[],
+  fixups: ThreadFixup[] = [],
+): boolean {
   const own = decisions.filter((decision) => decision.threadId === threadId);
-  return latestOf(own, ['resolved', 'unresolved'])?.kind === 'resolved';
+  const mark = latestOf(own, ['resolved', 'unresolved']);
+  const judgedAt = replacementJudgedAt(threadId, fixups, decisions);
+  return mark?.kind === 'resolved' && (judgedAt === undefined || decidedAt(mark) > judgedAt);
 }
 
 type ThreadMessages = {
@@ -135,6 +141,10 @@ type ThreadMessages = {
     fixPending?: boolean;
   }>;
 };
+
+export function isThreadFolded(threadId: string, decisions: ReviewDecision[]): boolean {
+  return decisions.some((decision) => decision.threadId === threadId && decision.kind === 'folded');
+}
 
 export function isThreadDeleted(threadId: string, decisions: ReviewDecision[]): boolean {
   return decisions.some(
@@ -188,6 +198,46 @@ function standingApproval(own: ReviewDecision[]): ReviewDecision[] {
   return rejectedSince ? [] : approved;
 }
 
+// The reviewer has not seen what the agent put in place of an approved fixup, by an amend say, so
+// that approval no longer holds, and a resolution holds only once made after the reviewer judged
+// every replacing fixup. Undefined when nothing replaced the approval; Infinity while a replacing
+// fixup still waits for judgment.
+function replacementJudgedAt(
+  threadId: string,
+  fixups: ThreadFixup[],
+  decisions: ReviewDecision[],
+): number | undefined {
+  if (isThreadFolded(threadId, decisions)) return undefined;
+  const own = decisions.filter((decision) => decision.threadId === threadId);
+  const approved = standingApproval(own);
+  if (approved[0] === undefined) return undefined;
+  const approvedAt = decidedAt(approved[0]);
+  const rejections = own.filter((decision) => decision.kind === 'rejected');
+  const rejectedBefore = matcherFor(
+    rejections.filter((decision) => decidedAt(decision) < approvedAt),
+  );
+  const standing = fixups.filter((fixup) => !rejectedBefore(fixup));
+  const isApproved = matcherFor(approved);
+  const replacing = standing.filter((fixup) => !isApproved(fixup));
+  const approvalLeft = approved.some((approval) => !standing.some(matcherFor([approval])));
+  if (!approvalLeft || replacing.length === 0) return undefined;
+  const judgedAt = replacing.map((fixup) => {
+    const rejectedAt = rejections
+      .filter((decision) => matcherFor([decision])(fixup))
+      .map((decision) => decidedAt(decision));
+    return rejectedAt.length > 0 ? Math.max(...rejectedAt) : Infinity;
+  });
+  return Math.max(...judgedAt);
+}
+
+export function awaitsJudgmentOfReplacement(
+  threadId: string,
+  fixups: ThreadFixup[],
+  decisions: ReviewDecision[],
+): boolean {
+  return replacementJudgedAt(threadId, fixups, decisions) === Infinity;
+}
+
 // The standing approval when it covers every fixup still under judgment. With no fixup left, the
 // approved ones are being folded and the fold record has not landed yet.
 function approvalCovering(
@@ -195,6 +245,7 @@ function approvalCovering(
   fixups: ThreadFixup[],
   decisions: ReviewDecision[],
 ): ReviewDecision | undefined {
+  if (replacementJudgedAt(threadId, fixups, decisions) !== undefined) return undefined;
   const approved = standingApproval(decisions.filter((decision) => decision.threadId === threadId));
   const isApproved = matcherFor(approved);
   const covered = pendingFixupsFor(threadId, fixups, decisions).every(isApproved);
@@ -208,6 +259,9 @@ export function appearsResolved(
   fixups: ThreadFixup[],
   decisions: ReviewDecision[],
 ): boolean {
+  if (replacementJudgedAt(threadId, fixups, decisions) !== undefined) {
+    return isThreadResolved(threadId, decisions, fixups);
+  }
   const own = decisions.filter((decision) => decision.threadId === threadId);
   const mark = latestOf(own, ['resolved', 'unresolved']);
   const closings = [latestOf(own, ['folded']), approvalCovering(threadId, fixups, decisions)];
@@ -224,7 +278,7 @@ export function deriveThreadReviewState(
   thread: ThreadMessages = {},
 ): ThreadReviewState {
   const own = decisions.filter((decision) => decision.threadId === threadId);
-  if (own.some((decision) => decision.kind === 'folded')) return 'folded';
+  if (isThreadFolded(threadId, decisions)) return 'folded';
   if (own.some((decision) => decision.kind === 'deleted')) return 'deleted';
 
   if (approvalCovering(threadId, fixups, decisions)) return 'approved';
@@ -264,13 +318,9 @@ export function selectOpenThreads<T extends { id: string } & ThreadMessages>(
   decisions: ReviewDecision[],
 ): T[] {
   return threads.filter((thread) => {
-    if (isThreadResolved(thread.id, decisions)) return false;
-    const state = deriveThreadReviewState(
-      thread.id,
-      fixupsByThread.get(thread.id) ?? [],
-      decisions,
-      thread,
-    );
+    const fixups = fixupsByThread.get(thread.id) ?? [];
+    if (isThreadResolved(thread.id, decisions, fixups)) return false;
+    const state = deriveThreadReviewState(thread.id, fixups, decisions, thread);
     return state === 'awaiting-fix' || state === 'rejected';
   });
 }
@@ -418,7 +468,7 @@ function agentTurnOn(
     ['deleted'],
   );
   if (deletion) return deletionTurnOn(thread, fixupsByThread, decisions, deletion);
-  if (isThreadResolved(thread.id, decisions)) return null;
+  if (isThreadResolved(thread.id, decisions, fixupsByThread?.get(thread.id))) return null;
   const reviewerSpokeLast = thread.messages.at(-1)?.author === REVIEWER_AUTHOR;
   if (!fixupsByThread) return reviewerSpokeLast ? {} : null;
 

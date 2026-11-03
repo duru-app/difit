@@ -136,14 +136,18 @@ export function threadReviewControls(
 export function canAnswerByEdit(overlay: FixupOverlayState, thread: CommentThread): boolean {
   if (!overlay.directEdit || (thread.side ?? 'new') !== 'new' || thread.isOutdated) return false;
   if (thread.line === undefined) return false;
-  if (isOpenedByEdit(thread) || isThreadResolved(thread.id, overlay.decisions)) return false;
+  const fixups = overlay.fixupsByThread.get(thread.id) ?? [];
+  if (isOpenedByEdit(thread) || isThreadResolved(thread.id, overlay.decisions, fixups)) {
+    return false;
+  }
   const state = threadReviewControls(overlay, thread)?.state;
   return state !== undefined && isAnswerableByEdit(state);
 }
 
 export function canEditFixupCard(overlay: FixupOverlayState, thread: CommentThread): boolean {
   if (!overlay.directEdit || isOpenedByEdit(thread)) return false;
-  if (isThreadResolved(thread.id, overlay.decisions)) return false;
+  const fixups = overlay.fixupsByThread.get(thread.id) ?? [];
+  if (isThreadResolved(thread.id, overlay.decisions, fixups)) return false;
   const state = threadReviewControls(overlay, thread)?.state;
   return state !== undefined && isEditableOnCard(state);
 }

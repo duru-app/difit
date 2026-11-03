@@ -1797,7 +1797,11 @@ export async function startServer(options: ServerOptions): Promise<{
       const seen = new Set(request.approvedWith);
       const unchanged =
         seen.size === pending.length && pending.every((fixup) => seen.has(fixup.sha));
-      if (isThreadResolved(thread.id, decisions) || !isEditableOnCard(state) || !unchanged) {
+      if (
+        isThreadResolved(thread.id, decisions, fixups) ||
+        !isEditableOnCard(state) ||
+        !unchanged
+      ) {
         return undefined;
       }
       const card = pending.find((fixup) => fixup.sha === request.fixupSha);
@@ -1809,7 +1813,10 @@ export async function startServer(options: ServerOptions): Promise<{
       ).filter((fixup) => fixup.threadIds.includes(answered.id));
       if (!onCard) {
         const state = deriveThreadReviewState(answered.id, fixups, session.decisions, answered);
-        if (isThreadResolved(answered.id, session.decisions) || !isAnswerableByEdit(state)) {
+        if (
+          isThreadResolved(answered.id, session.decisions, fixups) ||
+          !isAnswerableByEdit(state)
+        ) {
           return refuse('thread-has-fixup');
         }
       } else {
@@ -2137,24 +2144,11 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
 
-  async function threadReviewStatesFor(
+  async function fixupsByThreadOrNone(
     selection: DiffSelection,
-  ): Promise<Map<string, ThreadReviewState> | undefined> {
+  ): Promise<Map<string, ThreadFixup[]> | undefined> {
     try {
-      const fixupsByThread = await fixupsByThreadFor(selection);
-      if (!fixupsByThread) return undefined;
-      const session = getOrCreateCommentSession(selection);
-      return new Map(
-        session.threads.map((thread) => [
-          thread.id,
-          deriveThreadReviewState(
-            thread.id,
-            fixupsByThread.get(thread.id) ?? [],
-            session.decisions,
-            thread,
-          ),
-        ]),
-      );
+      return await fixupsByThreadFor(selection);
     } catch (error) {
       console.error('Error listing fixups:', error);
       return undefined;
@@ -2163,13 +2157,22 @@ export async function startServer(options: ServerOptions): Promise<{
 
   async function renderCommentsOutput(selection: DiffSelection): Promise<string> {
     const session = getOrCreateCommentSession(selection);
-    const threads = session.threads.filter(
-      (thread) =>
-        !isThreadResolved(thread.id, session.decisions) &&
-        !isThreadDeleted(thread.id, session.decisions),
+    const kept = session.threads.filter((thread) => !isThreadDeleted(thread.id, session.decisions));
+    if (kept.length === 0) return '';
+    const fixupsByThread = await fixupsByThreadOrNone(selection);
+    const fixupsOf = (threadId: string) => fixupsByThread?.get(threadId) ?? [];
+    const threads = kept.filter(
+      (thread) => !isThreadResolved(thread.id, session.decisions, fixupsOf(thread.id)),
     );
     if (threads.length === 0) return '';
-    const reviewStates = await threadReviewStatesFor(selection);
+    const reviewStates =
+      fixupsByThread &&
+      new Map<string, ThreadReviewState>(
+        session.threads.map((thread) => [
+          thread.id,
+          deriveThreadReviewState(thread.id, fixupsOf(thread.id), session.decisions, thread),
+        ]),
+      );
     const commits = findReviewOf(selection)?.commits;
     return formatCommentsOutput(
       threads.map((thread) => toCommentThread(thread, commits)),

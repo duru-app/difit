@@ -13,7 +13,9 @@ import { locationLabel } from '../../utils/commentPosition';
 import { isSameCommit } from '../../utils/diffSelection';
 import {
   appearsResolved,
+  awaitsJudgmentOfReplacement,
   deriveThreadReviewState,
+  isThreadFolded,
   reviewStateLabel,
 } from '../../utils/reviewDecisions';
 import { type ThreadReviewControls, useFixupOverlay } from '../contexts/FixupOverlayContext';
@@ -254,10 +256,10 @@ export function CommentThreadCard({
 }: CommentThreadCardProps) {
   const [isReplying, setIsReplying] = useState(false);
   const { decisions, fixupsByThread, recordDecision } = useFixupOverlay();
-  const isResolved = appearsResolved(thread.id, fixupsByThread.get(thread.id) ?? [], decisions);
-  const isFolded = decisions.some(
-    (decision) => decision.threadId === thread.id && decision.kind === 'folded',
-  );
+  const fixups = fixupsByThread.get(thread.id) ?? [];
+  const isResolved = appearsResolved(thread.id, fixups, decisions);
+  const awaitsNewJudgment = awaitsJudgmentOfReplacement(thread.id, fixups, decisions);
+  const isFolded = isThreadFolded(thread.id, decisions);
   const isPicked = usePickedThreadId() === thread.id;
   const [isCollapsed, setIsCollapsed] = useState(isResolved && !isPicked);
   const [wasResolved, setWasResolved] = useState(isResolved);
@@ -417,12 +419,19 @@ export function CommentThreadCard({
         <button
           type="button"
           onClick={toggleResolved}
-          className={`shrink-0 rounded border p-1.5 transition-all ${
+          disabled={awaitsNewJudgment}
+          className={`shrink-0 rounded border p-1.5 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
             isResolved
               ? 'border-green-700 bg-green-700 text-white hover:bg-green-800'
               : 'border-github-border bg-github-bg-tertiary text-green-700 hover:bg-github-bg-primary hover:text-green-800'
           }`}
-          title={isResolved ? 'Reopen thread' : 'Resolve thread'}
+          title={
+            awaitsNewJudgment
+              ? '바뀐 fixup 을 먼저 승인하거나 거절해 주세요'
+              : isResolved
+                ? 'Reopen thread'
+                : 'Resolve thread'
+          }
           aria-label={isResolved ? 'Reopen thread' : 'Resolve thread'}
         >
           <Check size={12} />
