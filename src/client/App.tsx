@@ -778,6 +778,21 @@ function App() {
     files: diffData?.files,
   });
 
+  // Measured before the collapse re-renders: only a header scrolled past the top needs
+  // putting back, otherwise files below simply fill the space.
+  const measureCollapseAnchor = useCallback(
+    (filePath: string) => {
+      const needsReanchor = isFileScrolledPastContainerTop(filePath);
+      return () => {
+        if (!needsReanchor) return;
+        setTimeout(() => {
+          scrollFileIntoDiffContainer(filePath);
+        }, 100);
+      };
+    },
+    [isFileScrolledPastContainerTop, scrollFileIntoDiffContainer],
+  );
+
   const toggleFileReviewed = useCallback(
     async (filePath: string) => {
       if (!diffData) return;
@@ -786,11 +801,7 @@ function App() {
       if (!file) return;
 
       const wasViewed = viewedFiles.has(filePath);
-      // Measure before the collapse re-renders: only re-anchor the header when
-      // the user is scrolled past it (deep inside a long file), so the viewport
-      // doesn't land in unrelated content after collapsing (#164). If the header
-      // is already visible, stay stationary and let files below fill up (#402).
-      const shouldScrollToHeader = !wasViewed && isFileScrolledPastContainerTop(filePath);
+      const reanchorAfterCollapse = wasViewed ? undefined : measureCollapseAnchor(filePath);
       await toggleFileViewed(filePath, file);
 
       // Update collapsed state based on viewed state
@@ -806,19 +817,9 @@ function App() {
         return newSet;
       });
 
-      if (shouldScrollToHeader) {
-        setTimeout(() => {
-          scrollFileIntoDiffContainer(filePath);
-        }, 100);
-      }
+      reanchorAfterCollapse?.();
     },
-    [
-      diffData,
-      isFileScrolledPastContainerTop,
-      scrollFileIntoDiffContainer,
-      toggleFileViewed,
-      viewedFiles,
-    ],
+    [diffData, measureCollapseAnchor, toggleFileViewed, viewedFiles],
   );
 
   const toggleFolderReviewed = useCallback(
@@ -846,17 +847,24 @@ function App() {
     [diffData, setFilesViewed],
   );
 
-  const toggleFileCollapsed = useCallback((filePath: string) => {
-    setCollapsedFiles((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(filePath)) {
-        newSet.delete(filePath);
-      } else {
-        newSet.add(filePath);
-      }
-      return newSet;
-    });
-  }, []);
+  const toggleFileCollapsed = useCallback(
+    (filePath: string) => {
+      const reanchorAfterCollapse = collapsedFiles.has(filePath)
+        ? undefined
+        : measureCollapseAnchor(filePath);
+      setCollapsedFiles((prev) => {
+        const newSet = new Set(prev);
+        if (newSet.has(filePath)) {
+          newSet.delete(filePath);
+        } else {
+          newSet.add(filePath);
+        }
+        return newSet;
+      });
+      reanchorAfterCollapse?.();
+    },
+    [collapsedFiles, measureCollapseAnchor],
+  );
 
   const toggleAllFilesCollapsed = useCallback(
     (shouldCollapse: boolean) => {
