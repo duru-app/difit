@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Pencil } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Pencil } from 'lucide-react';
 import {
   Fragment,
   useEffect,
@@ -12,6 +12,7 @@ import {
 import type { ReviewCommit, ReviewScope, ReviewView, ReviewViewAction } from '../../types/diff';
 import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
+import { copyTextToClipboard } from '../utils/clipboard';
 
 import { CommentCount } from './CommentCount';
 import { CommitGraph } from './CommitGraph';
@@ -44,6 +45,8 @@ interface Press {
 }
 
 const LONG_PRESS_MS = 500;
+const COPIED_MS = 2000;
+const COPIED_SHA_LENGTH = 10;
 const TAP_SLOP_PX = 10;
 const DEFAULT_MAX_HEIGHT = '40%';
 const MIN_HEIGHT_PX = 80;
@@ -165,6 +168,35 @@ export function CommitList({
   const listRef = useRef<HTMLUListElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const pressRef = useRef<Press | null>(null);
+  const [copied, setCopied] = useState<{ sha: string } | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(null), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copyHash = async (sha: string) => {
+    try {
+      await copyTextToClipboard(sha.slice(0, COPIED_SHA_LENGTH));
+      setCopied({ sha });
+    } catch (error) {
+      console.error('Failed to copy commit hash:', error);
+    }
+  };
+  const copyButtonOf = (sha: string, placement = '') => {
+    const isCopied = copied?.sha === sha;
+    const label = isCopied ? '복사됨' : '해시 복사';
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        onClick={() => void copyHash(sha)}
+        className={`shrink-0 self-stretch px-2 ${placement} text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-tertiary focus:opacity-100 ${inDrawer || isCopied ? '' : 'opacity-0 group-hover:opacity-100'}`}
+      >
+        {isCopied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    );
+  };
 
   useEffect(() => {
     if (!isDragging) return;
@@ -399,7 +431,7 @@ export function CommitList({
                     key={entry.kind === 'commit' ? entry.commit.sha : `${commit.sha}:omitted`}
                     aria-current={isCurrent ? true : undefined}
                     title={entry.kind === 'commit' ? entry.commit.subject : undefined}
-                    className={`${MERGED_CLASS} ${rowPadding} ${isCurrent ? CURRENT_MERGED_CLASS : ''}`}
+                    className={`group ${MERGED_CLASS} ${rowPadding} ${isCurrent ? CURRENT_MERGED_CLASS : ''}`}
                   >
                     <CommitGraph cell={entry.cell} bleed={graphBleed} />
                     {entry.kind === 'commit' ? (
@@ -407,6 +439,7 @@ export function CommitList({
                         <code className="shrink-0 font-mono text-xs">{entry.commit.shortSha}</code>
                         <span className="min-w-0 truncate">{entry.commit.subject}</span>
                         {openCountOf(entry.commit.sha)}
+                        {copyButtonOf(entry.commit.sha, `ml-auto -mr-4 ${graphBleed}`)}
                       </>
                     ) : (
                       <span>커밋 {entry.count}개 더</span>
@@ -463,6 +496,7 @@ export function CommitList({
                       )}
                       {openCountOf(commit.sha)}
                     </button>
+                    {copyButtonOf(commit.sha)}
                     {guardedReword && !commit.isMerge && (
                       <button
                         type="button"
