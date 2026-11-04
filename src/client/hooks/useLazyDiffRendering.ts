@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type DiffResponse } from '../../types/diff';
-import { getFileElementId } from '../utils/domUtils';
+import { getFileElementId, stickyHeaderCover } from '../utils/domUtils';
 
 const INITIAL_RENDERED_FILE_COUNT = 8;
 const LAZY_RENDER_ROOT_MARGIN = '1200px 0px';
@@ -9,7 +9,6 @@ const SIDEBAR_SCROLL_MAX_ATTEMPTS = 60;
 const SIDEBAR_SCROLL_CORRECTION_DELAY_MS = 180;
 // How long an element may take to be drawn after the scroll reached its file.
 const ELEMENT_WAIT_MS = 3000;
-const ELEMENT_GAP_BELOW_HEADER_PX = 8;
 const OVERLAY_SCROLLBAR_PX = 16;
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
@@ -20,15 +19,6 @@ const isTextField = (element: HTMLElement) =>
   element instanceof HTMLInputElement ||
   element instanceof HTMLTextAreaElement ||
   element instanceof HTMLSelectElement;
-
-// The file header sticks to the container top and covers an element of that file landing there.
-const stickyHeaderCover = (target: HTMLElement) => {
-  const header = target
-    .closest('[data-file-path]')
-    ?.querySelector<HTMLElement>('[data-file-header]');
-  if (!header || target.contains(header)) return 0;
-  return header.getBoundingClientRect().height + ELEMENT_GAP_BELOW_HEADER_PX;
-};
 
 interface UseLazyDiffRenderingOptions {
   diffData: DiffResponse | null;
