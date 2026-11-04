@@ -7,7 +7,8 @@ export function currentFixupSha(
   fixups: readonly FixupIdentity[],
 ): string {
   const found =
-    fixups.find(({ sha }) => sha === fixupSha) ?? fixups.find((fixup) => fixup.patchId === patchId);
+    fixups.find(({ sha }) => sha === fixupSha) ??
+    (patchId ? fixups.find((fixup) => fixup.patchId === patchId) : undefined);
   return found?.sha ?? fixupSha;
 }
 

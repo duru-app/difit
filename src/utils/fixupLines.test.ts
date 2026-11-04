@@ -40,6 +40,14 @@ describe('currentFixupSha', () => {
       stored.fixupSha,
     );
   });
+
+  it('keeps the stored sha when there is no patch id to match', () => {
+    expect(
+      currentFixupSha({ fixupSha: stored.fixupSha, patchId: '' }, [
+        { sha: 'b'.repeat(40), patchId: '' },
+      ]),
+    ).toBe(stored.fixupSha);
+  });
 });
 
 describe('withCurrentFixupShas', () => {
