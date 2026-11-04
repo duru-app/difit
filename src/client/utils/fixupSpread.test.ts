@@ -7,6 +7,7 @@ import {
   anchorOf,
   fixupDiffFile,
   reviewPathsOf,
+  revertedReviewFiles,
   sameAnsweredThread,
   spreadFixups,
 } from './fixupSpread';
@@ -838,5 +839,63 @@ describe('sameAnsweredThread', () => {
     expect(sameAnsweredThread({ ...thread('t2', 'b.ts', [3, 4]), isOutdated: true }, before)).toBe(
       false,
     );
+  });
+});
+
+describe('revertedReviewFiles', () => {
+  const reverted = (fixups: ThreadFixup[], options?: { enabled?: boolean }) =>
+    revertedReviewFiles(
+      fixups,
+      reviewPathsOf(fixups),
+      spread(fixups, [thread('t1', 'a.ts'), thread('t2', 'b.ts')], ['a.ts', 'b.ts'], options)
+        .places,
+      new Set(['a.ts', 'b.ts']),
+    );
+  const revert = (path: string) => file(path, [replaceLine(5)], { matchesReviewBase: true });
+
+  it('gives a reviewed file the fixup that brought it back to the review base', () => {
+    const fixup = fixupOf('aaa1111', ['t1'], [revert('a.ts'), file('b.ts', [replaceLine(5)])]);
+
+    expect(reverted([fixup])).toEqual(new Map([['a.ts', { fixupSha: 'aaa1111', path: 'a.ts' }]]));
+  });
+
+  it('follows the last fixup that changed the file', () => {
+    const first = fixupOf('aaa1111', ['t1'], [revert('a.ts')]);
+    const changedAgain = fixupOf('bbb2222', ['t2'], [file('a.ts', [replaceLine(5)])]);
+    const revertedAgain = fixupOf('ccc3333', ['t2'], [revert('a.ts')]);
+    const elsewhere = fixupOf('ddd4444', ['t2'], [file('b.ts', [replaceLine(5)])]);
+
+    expect(reverted([first, changedAgain])).toEqual(new Map());
+    expect(reverted([first, changedAgain, revertedAgain, elsewhere])).toEqual(
+      new Map([['a.ts', { fixupSha: 'ccc3333', path: 'a.ts' }]]),
+    );
+  });
+
+  it('leaves out a file outside the review', () => {
+    const added = fixupOf(
+      'aaa1111',
+      ['t1'],
+      [file('helper.ts', [insertTop(2)], { status: 'added' })],
+    );
+    const removed = fixupOf(
+      'bbb2222',
+      ['t1'],
+      [file('helper.ts', [], { status: 'deleted', matchesReviewBase: true })],
+    );
+
+    expect(reverted([added, removed])).toEqual(new Map());
+  });
+
+  it('leaves out a file whose reverting fixup is not shown', () => {
+    expect(reverted([fixupOf('aaa1111', ['t1'], [revert('a.ts')])], { enabled: false })).toEqual(
+      new Map(),
+    );
+  });
+
+  it('leaves out a file whose last change is a fixup that is not shown', () => {
+    const first = fixupOf('aaa1111', ['t1'], [revert('a.ts')]);
+    const unanswered = fixupOf('bbb2222', ['other'], [file('a.ts', [replaceLine(5)])]);
+
+    expect(reverted([first, unanswered])).toEqual(new Map());
   });
 });

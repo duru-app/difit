@@ -67,6 +67,7 @@ interface FileListProps {
   pickedCommentFilePath?: string | null;
   onEscape?: () => void;
   fixupTouchedFiles?: ReadonlyMap<string, FixupFileRef>;
+  fixupRevertedFiles?: ReadonlyMap<string, FixupFileRef>;
   fixupOnly?: FixupOnlyFiles[];
   focusedFixupFile?: FixupFileRef | null;
   onRevealFixupFile?: (fixupSha: string, path: string) => void;
@@ -265,6 +266,7 @@ export const FileList = memo(function FileList({
   pickedCommentFilePath = null,
   onEscape,
   fixupTouchedFiles = NO_FIXUP_TOUCHED_FILES,
+  fixupRevertedFiles = NO_FIXUP_TOUCHED_FILES,
   fixupOnly = NO_FIXUP_ONLY,
   focusedFixupFile = null,
   onRevealFixupFile,
@@ -677,7 +679,8 @@ export const FileList = memo(function FileList({
       const isScrollVisible = scrollVisibleFileIndex === fileIndex;
       const isPickedCommentFile = pickedCommentFilePath === file.path;
       const changeKind = combineChangeKinds(file.chunks.map((chunk) => chunk.changeKind));
-      const fixupRef = fixupTouchedFiles.get(file.path);
+      const revertedBy = fixupRevertedFiles.get(file.path);
+      const fixupRef = revertedBy ?? fixupTouchedFiles.get(file.path);
 
       return (
         <div
@@ -718,9 +721,9 @@ export const FileList = memo(function FileList({
           />
           {getFileIcon(node.file.status)}
           <span
-            className={`text-sm text-github-text-primary flex-1 overflow-hidden text-ellipsis whitespace-nowrap ${
-              isReviewed ? 'line-through text-github-text-muted' : ''
-            }`}
+            className={`text-sm flex-1 overflow-hidden text-ellipsis whitespace-nowrap ${
+              isReviewed ? 'line-through' : ''
+            } ${isReviewed || revertedBy ? 'text-github-text-muted' : 'text-github-text-primary'}`}
             title={node.file.path}
           >
             {node.name}
@@ -742,7 +745,7 @@ export const FileList = memo(function FileList({
               }}
               className="shrink-0 text-xs text-github-warning hover:underline"
             >
-              fixup 수정
+              {revertedBy ? 'fixup 되돌림' : 'fixup 수정'}
             </button>
           )}
           {commentCount > 0 && <CommentCount count={commentCount} />}

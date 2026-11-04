@@ -160,6 +160,95 @@ describe('DiffViewer header of a file a fixup changed', () => {
   });
 });
 
+describe('DiffViewer file a fixup brought back to the review base', () => {
+  const lineThread: CommentThread = {
+    id: 'line',
+    file: 'a.ts',
+    line: 10,
+    side: 'new',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    messages: [
+      { id: 'm1', body: 'Drop this change', author: 'User', createdAt: '', updatedAt: '' },
+    ],
+  };
+  const revertingFixup: ThreadFixup = {
+    sha: 'f2f2f2f2',
+    shortSha: 'f2f2f2f',
+    patchId: 'p2',
+    authoredAt: '2026-01-02T00:00:00Z',
+    subject: 'fixup! revert',
+    threadIds: ['line'],
+    files: [{ path: 'a.ts', status: 'modified', chunks: [changed(20, 20)] }],
+  };
+  const overlay = (revealFixupFile = vi.fn()): FixupOverlayState => ({
+    ...EMPTY_FIXUP_OVERLAY,
+    enabled: true,
+    fixupsByThread: new Map([['line', [revertingFixup]]]),
+    fixupPlaces: new Map([['f2f2f2f2:a.ts', { kind: 'card', threadId: 'line' }]]),
+    fixupTouchedFiles: new Map([['a.ts', { fixupSha: 'f1', path: 'a.ts' }]]),
+    fixupRevertedFiles: new Map([['a.ts', { fixupSha: 'f2f2f2f2', path: 'a.ts' }]]),
+    revealFixupFile,
+  });
+
+  it('dims the name and marks the file with the fixup that reverted it', async () => {
+    const revealFixupFile = vi.fn();
+    renderViewer([changed(10, 10)], [lineThread], overlay(revealFixupFile));
+
+    expect(screen.queryByRole('button', { name: 'fixup 수정' })).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'fixup 되돌림' }));
+    expect(revealFixupFile).toHaveBeenCalledWith('f2f2f2f2', 'a.ts');
+    const name = screen.getByRole('heading', { name: 'a.ts' });
+    expect(name).toHaveClass('text-github-text-muted');
+    expect(name).not.toHaveClass('line-through');
+  });
+
+  it('draws the boxes of a reverting fixup that answers a comment on another file', () => {
+    const elsewhere: ThreadFixup = { ...revertingFixup, threadIds: ['other'] };
+    const fixupFile = elsewhere.files[0]!;
+    renderViewer([changed(10, 10)], [], {
+      ...overlay(),
+      fixupsByThread: new Map([['other', [elsewhere]]]),
+      fixupPlaces: new Map([['f2f2f2f2:a.ts', { kind: 'box', reviewPath: 'a.ts' }]]),
+      boxesByFile: new Map([
+        [
+          'a.ts',
+          new Map([
+            [
+              20,
+              [
+                {
+                  fixup: elsewhere,
+                  threads: [{ id: 'other', file: 'b.ts', line: 3 }],
+                  file: fixupFile,
+                  chunk: fixupFile.chunks[0]!,
+                  chunkIndex: 0,
+                  anchor: 20,
+                },
+              ],
+            ],
+          ]),
+        ],
+      ]),
+    });
+
+    const section = screen.getByRole('region', { name: '이 파일의 지적' });
+    expect(within(section).getByTestId('fixup-file-box')).toHaveTextContent('new 20');
+    expect(screen.queryByText('new 10')).toBeNull();
+  });
+
+  it('draws the comments with their fixup cards instead of the code lines', () => {
+    renderViewer([changed(10, 10)], [lineThread], overlay());
+
+    const section = screen.getByRole('region', { name: '이 파일의 지적' });
+    expect(within(section).getByText('Drop this change')).toBeInTheDocument();
+    const card = within(section).getByTestId('fixup-overlay-card');
+    expect(card).toHaveTextContent('new 20');
+    expect(screen.queryByText('new 10')).toBeNull();
+    expect(screen.getAllByRole('table').every((table) => card.contains(table))).toBe(true);
+  });
+});
+
 describe('DiffViewer comments on the whole file', () => {
   const thread = (id: string, body: string, line?: number): CommentThread => ({
     id,

@@ -58,6 +58,8 @@ export interface FixupOverlayState {
   fixupReviewPaths: ReadonlyMap<string, string>;
   // Keyed by the reviewed path; empty unless the whole review is shown.
   fixupTouchedFiles: ReadonlyMap<string, FixupFileRef>;
+  // Keyed by the reviewed path; the shown fixup file that brought the file back to the review base.
+  fixupRevertedFiles: ReadonlyMap<string, FixupFileRef>;
   focusedFixupFile: FixupFileRef | null;
   revealFixupFile: (fixupSha: string, path: string) => void;
   pickThread: (threadId: string) => void;
@@ -80,6 +82,7 @@ export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {
   fixupPlaces: new Map(),
   fixupReviewPaths: new Map(),
   fixupTouchedFiles: new Map(),
+  fixupRevertedFiles: new Map(),
   focusedFixupFile: null,
   revealFixupFile: () => {},
   pickThread: () => {},

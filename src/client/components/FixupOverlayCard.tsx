@@ -392,7 +392,7 @@ function FixupFileBox({
   );
 }
 
-function FixupBoxes({
+export function FixupBoxes({
   boxes,
   syntaxTheme,
 }: {

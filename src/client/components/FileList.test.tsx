@@ -847,6 +847,24 @@ describe('FileList fixups', () => {
     expect(within(getTreeRow('README.md')).queryByRole('button')).toBeNull();
   });
 
+  it('dims a file a fixup brought back to the review base and marks it with that fixup', async () => {
+    const user = userEvent.setup();
+    const { onRevealFixupFile } = renderList({
+      fixupRevertedFiles: new Map([['src/b.ts', { fixupSha: 'f2f2f2f2', path: 'src/b.ts' }]]),
+    });
+
+    const row = getTreeRow('src/b.ts');
+    expect(within(row).queryByRole('button', { name: 'fixup 수정' })).toBeNull();
+    const name = within(row).getByText('b.ts');
+    expect(name).toHaveClass('text-github-text-muted');
+    expect(name).not.toHaveClass('line-through');
+    await user.click(within(row).getByRole('button', { name: 'fixup 되돌림' }));
+    expect(onRevealFixupFile).toHaveBeenCalledWith('f2f2f2f2', 'src/b.ts');
+    expect(
+      within(getTreeRow('src/a.ts')).queryByRole('button', { name: 'fixup 되돌림' }),
+    ).toBeNull();
+  });
+
   it('reveals the fixup file from the marker instead of going to the file', async () => {
     const user = userEvent.setup();
     const { onRevealFixupFile, onScrollToFile, onFileSelected } = renderList();

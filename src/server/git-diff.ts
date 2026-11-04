@@ -700,24 +700,69 @@ export class GitDiffParser {
 
   async listFixupsForScreen(selection: DiffSelection): Promise<ThreadFixup[]> {
     const { targetHash, fixups } = await this.readThreadFixups(selection);
-    const [classified, plainChangesBySha, { foldTargetBySha, amendedMessageBySha }] =
+    const [classified, plainChangesBySha, { foldTargetBySha, amendedMessageBySha }, baseMatches] =
       await Promise.all([
         this.classifyFixups(fixups),
         this.readPlainChanges(targetHash, fixups),
         this.readFolding(selection, targetHash, fixups),
+        this.readBaseMatches(selection, fixups),
       ]);
     return classified.map((fixup) => {
       const plainChangesBefore = plainChangesBySha.get(fixup.sha);
       const foldTargetSha = foldTargetBySha.get(fixup.sha);
       const amendedMessage = amendedMessageBySha.get(fixup.sha);
-      if (!plainChangesBefore && !foldTargetSha) return fixup;
+      const files = fixup.files.some(({ path }) => baseMatches.has(`${fixup.sha}:${path}`))
+        ? fixup.files.map((file) =>
+            baseMatches.has(`${fixup.sha}:${file.path}`)
+              ? { ...file, matchesReviewBase: true as const }
+              : file,
+          )
+        : fixup.files;
+      if (!plainChangesBefore && !foldTargetSha && files === fixup.files) return fixup;
       return {
         ...fixup,
+        files,
         ...(plainChangesBefore ? { plainChangesBefore } : {}),
         ...(foldTargetSha ? { foldTargetSha } : {}),
         ...(amendedMessage ? { amendedMessage } : {}),
       };
     });
+  }
+
+  // Keys `<fixup sha>:<path>` of the fixup files whose object at the fixup is the one at the review
+  // base under the same path, or that the fixup deletes where the base has none.
+  private async readBaseMatches(
+    selection: DiffSelection,
+    fixups: ThreadFixup[],
+  ): Promise<Set<string>> {
+    const matches = new Set<string>();
+    const asked = fixups.flatMap(({ sha, files }) =>
+      files
+        .filter(({ path }) => !path.includes('\n'))
+        .map(({ path, status }) => ({ key: `${sha}:${path}`, sha, path, status })),
+    );
+    if (asked.length === 0) return matches;
+    try {
+      const base = await this.resolveBaseCommitish(selection);
+      const run = await runGit(this.repoPath, ['cat-file', '--batch-check=%(objectname)'], {
+        input: Buffer.from(
+          asked.map(({ sha, path }) => `${sha}:${path}\n${base}:${path}\n`).join(''),
+        ),
+      });
+      if (run.code !== 0) throw new Error(`git cat-file failed: ${run.output}`);
+      const answers = run.stdout.toString('utf8').split('\n');
+      const absent = (answer: string) => answer.endsWith(' missing');
+      for (const [index, { key, status }] of asked.entries()) {
+        const atFixup = answers[index * 2];
+        const atBase = answers[index * 2 + 1];
+        if (atFixup === undefined || atBase === undefined) break;
+        const bothAbsent = status === 'deleted' && absent(atFixup) && absent(atBase);
+        if (atFixup === atBase || bothAbsent) matches.add(key);
+      }
+    } catch (error) {
+      console.error('Error comparing fixup files with the review base:', error);
+    }
+    return matches;
   }
 
   // Follows each fixup the way autosquash does, through fixups of fixups, to a reviewed commit.

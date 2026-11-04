@@ -142,6 +142,7 @@ import {
   type FixupFileRef,
   type FixupSpread,
   reviewPathsOf,
+  revertedReviewFiles,
   sameAnsweredThread,
   spreadFixups,
 } from './utils/fixupSpread';
@@ -1024,6 +1025,16 @@ function App() {
   const fixupOnlyRef = useRef(fixupSpread.fixupOnly);
   fixupOnlyRef.current = fixupSpread.fixupOnly;
   const fixupReviewPaths = useMemo(() => reviewPathsOf(fixups), [fixups]);
+  const fixupRevertedFiles = useMemo(
+    () =>
+      revertedReviewFiles(
+        fixups,
+        fixupReviewPaths,
+        fixupSpread.places,
+        new Set((diffData?.files ?? []).map(({ path }) => path)),
+      ),
+    [fixups, fixupReviewPaths, fixupSpread.places, diffData],
+  );
   const { normalizedThreads, hiddenThreadIds } = useMemo(() => {
     const { outsidePlacements } = fixupSpread;
     if (outsidePlacements.size === 0) return reviewPlacement;
@@ -1827,6 +1838,7 @@ function App() {
       fixupPlaces: fixupSpread.places,
       fixupReviewPaths,
       fixupTouchedFiles: fixupSpread.touchedReviewFiles,
+      fixupRevertedFiles,
       focusedFixupFile,
       revealFixupFile,
       pickThread,
@@ -1845,6 +1857,7 @@ function App() {
       directEdit,
       fixupSpread,
       fixupReviewPaths,
+      fixupRevertedFiles,
       focusedFixupFile,
       revealFixupFile,
       pickThread,
@@ -2870,6 +2883,7 @@ function App() {
                   pickedCommentFilePath={pickedThread?.file ?? null}
                   {...(isMobile && { onEscape: () => setIsFileDrawerOpen(false) })}
                   fixupTouchedFiles={fixupSpread.touchedReviewFiles}
+                  fixupRevertedFiles={fixupRevertedFiles}
                   fixupOnly={fixupSpread.fixupOnly}
                   focusedFixupFile={focusedFixupFile}
                   onRevealFixupFile={revealFixupFile}

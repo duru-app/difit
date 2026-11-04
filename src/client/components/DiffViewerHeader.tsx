@@ -29,6 +29,8 @@ interface DiffViewerHeaderProps {
   onToggleReviewed?: (path: string) => void;
   labels?: readonly string[];
   onRevealFixup?: () => void;
+  // A fixup brought the file back to the review base; onRevealFixup goes to that fixup.
+  isRevertedByFixup?: boolean;
   // Without it the file takes no comment on the whole file.
   onAddFileComment?: () => void;
 }
@@ -64,6 +66,7 @@ export const DiffViewerHeader = ({
   onToggleReviewed,
   labels = NO_LABELS,
   onRevealFixup,
+  isRevertedByFixup = false,
   onAddFileComment,
 }: DiffViewerHeaderProps) => {
   const [isCopied, setIsCopied] = useState(false);
@@ -95,7 +98,11 @@ export const DiffViewerHeader = ({
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
         </button>
         {getFileIcon(file.status)}
-        <h2 className="min-w-0 overflow-hidden text-sm font-mono text-github-text-primary m-0">
+        <h2
+          className={`min-w-0 overflow-hidden text-sm font-mono m-0 ${
+            isRevertedByFixup ? 'text-github-text-muted' : 'text-github-text-primary'
+          }`}
+        >
           <FilePathText path={file.path} />
         </h2>
         <button
@@ -135,7 +142,7 @@ export const DiffViewerHeader = ({
             onClick={onRevealFixup}
             className="shrink-0 text-xs text-github-warning hover:underline"
           >
-            fixup 수정
+            {isRevertedByFixup ? 'fixup 되돌림' : 'fixup 수정'}
           </button>
         )}
       </div>

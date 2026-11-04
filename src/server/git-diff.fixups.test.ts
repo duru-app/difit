@@ -506,6 +506,90 @@ describe('listFixupsForScreen against a real repository', () => {
   });
 });
 
+describe('fixup files that match the review base against a real repository', () => {
+  function revertRepo() {
+    const repo = createRepo();
+    const original = lines(20, 'f ');
+    const base = commit(repo, 'base', { 'F.ts': original, 'G.ts': lines(5, 'g ') });
+    const target = commit(repo, 'A: change F and G, add N', {
+      'F.ts': original.replace('f 10\n', 'changed 10\n'),
+      'G.ts': lines(6, 'g '),
+      'N.ts': lines(3, 'n '),
+    });
+    return { repo, base, target, original };
+  }
+
+  it('marks a file a fixup brought back to the review base, and a file it removed that the base lacks', async () => {
+    const { repo, base, target, original } = revertRepo();
+    commit(repo, 'fixup! A\n\nReview-Thread: t1', {
+      'F.ts': original,
+      'G.ts': lines(7, 'g '),
+      'N.ts': null,
+    });
+
+    const [fixup] = await new GitDiffParser(repo).listFixupsForScreen({
+      targetCommitish: target,
+      baseCommitish: base,
+    });
+
+    expect(fixup?.files.map(({ path, matchesReviewBase }) => [path, matchesReviewBase])).toEqual([
+      ['F.ts', true],
+      ['G.ts', undefined],
+      ['N.ts', true],
+    ]);
+  });
+
+  it('leaves a file unmarked when git finds it on neither side', async () => {
+    const { repo, base } = revertRepo();
+    commit(repo, 'add odd name', { 'a\\b.ts': lines(3, 'x ') });
+    const reviewTarget = git(repo, 'rev-parse', 'HEAD');
+    commit(repo, 'fixup! odd\n\nReview-Thread: t1', { 'a\\b.ts': lines(4, 'x ') });
+
+    const [fixup] = await new GitDiffParser(repo).listFixupsForScreen({
+      targetCommitish: reviewTarget,
+      baseCommitish: base,
+    });
+
+    expect(fixup?.files.map(({ path, matchesReviewBase }) => [path, matchesReviewBase])).toEqual([
+      ['a\\b.ts', undefined],
+    ]);
+  });
+
+  it('compares with the base the review starts from, not the target', async () => {
+    const { repo, target, original } = revertRepo();
+    commit(repo, 'fixup! A\n\nReview-Thread: t1', { 'F.ts': original });
+
+    const [fixup] = await new GitDiffParser(repo).listFixupsForScreen({
+      targetCommitish: target,
+      baseCommitish: target,
+    });
+
+    expect(fixup?.files[0]?.matchesReviewBase).toBeUndefined();
+  });
+
+  it('asks git about every fixup file with one process however many fixups there are', async () => {
+    const { repo, base, target, original } = revertRepo();
+    const list = async () => {
+      runGitCalls.length = 0;
+      await new GitDiffParser(repo).listFixupsForScreen({
+        targetCommitish: target,
+        baseCommitish: base,
+      });
+      return runGitCalls.filter((args) => args.some((arg) => arg.startsWith('--batch-check')));
+    };
+
+    commit(repo, 'fixup! A\n\nReview-Thread: t1', { 'F.ts': original });
+    const few = await list();
+    for (let index = 2; index <= 6; index++) {
+      commit(repo, `fixup! A\n\nReview-Thread: t${index}`, { 'G.ts': lines(5 + index, 'g ') });
+    }
+    const many = await list();
+
+    expect(few).toHaveLength(1);
+    expect(many).toHaveLength(1);
+  });
+});
+
 describe('the commit each fixup folds into against a real repository', () => {
   it('finds it by subject or id the way autosquash does, and leaves it out outside the range', async () => {
     const repo = createRepo();
