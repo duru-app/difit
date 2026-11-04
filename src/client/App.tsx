@@ -604,6 +604,7 @@ function App() {
   ]);
   const [showFixupOverlay, setShowFixupOverlay] = useState(true);
   const [directEditCount, setDirectEditCount] = useState(0);
+  const [headMoveCount, setHeadMoveCount] = useState(0);
   const {
     fixups,
     fixupsByThread,
@@ -611,7 +612,7 @@ function App() {
     loaded: fixupsLoaded,
   } = useThreadFixups(
     diffData && targetCommit ? getCommentApiUrl('/api/fixups') : null,
-    diffDataVersion + directEditCount,
+    diffDataVersion + directEditCount + headMoveCount,
   );
   const openThreads = useMemo(
     () => selectOpenThreads(threads, fixupsByThread, decisions),
@@ -1117,10 +1118,12 @@ function App() {
   }, [commentsContextKey, fetchServerComments, replaceThreads]);
 
   // File watch for reload functionality - initialize with callback
+  const handleHeadMoved = useCallback(() => setHeadMoveCount((count) => count + 1), []);
   const { shouldReload, reload, watchState } = useFileWatch(
     handleWatchReload,
     handleCommentsChanged,
     symbolPeek.noteIndexChange,
+    handleHeadMoved,
   );
 
   const openCommentsPanelWithKeys = useCallback(() => {

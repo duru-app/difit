@@ -4,9 +4,12 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 
+import { DiffMode } from '../types/watch.js';
+
 import {
   detectStdinSource,
   parseCommentOptions,
+  determineDiffMode,
   pinSelection,
   shortHash,
   shouldReadStdin,
@@ -467,6 +470,29 @@ describe('CLI Utils', () => {
     it('should handle short hashes', () => {
       expect(shortHash('abc')).toBe('abc');
       expect(shortHash('')).toBe('');
+    });
+  });
+
+  describe('determineDiffMode', () => {
+    it.each([
+      ['HEAD', 'HEAD^'],
+      ['0123456789abcdef', '0123456789abcdef^'],
+      ['feature', 'main'],
+      ['HEAD', 'main'],
+    ])(
+      'watches only HEAD moves for the pinned target %s against %s',
+      (targetCommitish, baseCommitish) => {
+        expect(determineDiffMode({ targetCommitish, baseCommitish })).toBe(DiffMode.SPECIFIC);
+      },
+    );
+
+    it.each([
+      ['working', DiffMode.WORKING],
+      ['staged', DiffMode.STAGED],
+      ['.', DiffMode.DOT],
+      ['stdin', DiffMode.DEFAULT],
+    ])('keeps the mode of %s, which has no pinned commit', (targetCommitish, mode) => {
+      expect(determineDiffMode({ targetCommitish, baseCommitish: 'HEAD' })).toBe(mode);
     });
   });
 

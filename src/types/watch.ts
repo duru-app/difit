@@ -1,9 +1,9 @@
 export enum DiffMode {
-  DEFAULT = 'default', // HEAD^ vs HEAD
+  DEFAULT = 'default', // a target with no commit, such as stdin
   WORKING = 'working', // staged vs working
   STAGED = 'staged', // HEAD vs staged
   DOT = 'dot', // HEAD vs working (all changes)
-  SPECIFIC = 'specific', // commit vs commit (no watching)
+  SPECIFIC = 'specific', // a pinned commit target (watches only HEAD moves)
 }
 
 type WatchChangeType = 'file' | 'commit' | 'staging';
@@ -35,6 +35,11 @@ interface ErrorWatchEvent {
 interface CommentsChangedWatchEvent {
   type: 'commentsChanged';
   version: number;
+  timestamp: string;
+}
+
+interface HeadMovedWatchEvent {
+  type: 'headMoved';
   timestamp: string;
 }
 
@@ -79,6 +84,7 @@ export type WatchEvent =
   | ReloadWatchEvent
   | ErrorWatchEvent
   | CommentsChangedWatchEvent
+  | HeadMovedWatchEvent
   | SymbolIndexChangedWatchEvent;
 
 export interface ClientWatchState {

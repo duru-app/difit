@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import type { SimpleGit } from 'simple-git';
 
 import type { CommentImport, DiffSelection } from '../types/diff.js';
+import { DiffMode } from '../types/watch.js';
 import { parseCommentImportValue } from '../utils/commentImports.js';
 import { createDiffSelection, isCommitTarget } from '../utils/diffSelection.js';
 
@@ -90,6 +91,14 @@ export function pinSelection(selection: DiffSelection, cwd?: string): PinnedSele
     selection: createDiffSelection(base, target, baseMode),
     ...(followedRef?.startsWith('refs/') ? { followedRef } : {}),
   };
+}
+
+export function determineDiffMode({ targetCommitish }: DiffSelection): DiffMode {
+  if (isCommitTarget(targetCommitish)) return DiffMode.SPECIFIC;
+  if (targetCommitish === 'working') return DiffMode.WORKING;
+  if (targetCommitish === 'staged') return DiffMode.STAGED;
+  if (targetCommitish === '.') return DiffMode.DOT;
+  return DiffMode.DEFAULT;
 }
 
 export function validateCommitish(commitish: string): boolean {

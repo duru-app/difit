@@ -20,6 +20,7 @@ export function useFileWatch(
   onReload?: () => Promise<void>,
   onCommentsChanged?: () => Promise<void>,
   onSymbolIndexChanged?: (commit: string, state: SymbolIndexState) => void,
+  onHeadMoved?: () => void,
 ): FileWatchHook {
   const socketRef = useRef<WebSocket | null>(null);
   // Read through a ref so a new callback identity never closes and reopens the connection,
@@ -29,6 +30,10 @@ export function useFileWatch(
   useEffect(() => {
     onSymbolIndexChangedRef.current = onSymbolIndexChanged;
   }, [onSymbolIndexChanged]);
+  const onHeadMovedRef = useRef(onHeadMoved);
+  useEffect(() => {
+    onHeadMovedRef.current = onHeadMoved;
+  }, [onHeadMoved]);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 15;
@@ -97,6 +102,10 @@ export function useFileWatch(
 
             case 'commentsChanged':
               void onCommentsChangedRef.current?.();
+              break;
+
+            case 'headMoved':
+              onHeadMovedRef.current?.();
               break;
 
             case 'symbolIndexChanged':

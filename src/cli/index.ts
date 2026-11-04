@@ -7,7 +7,6 @@ import pkg from '../../package.json' with { type: 'json' };
 import { startServer } from '../server/server.js';
 import { type CommentImport, type DiffSelection } from '../types/diff.js';
 import { createDiffSelection, isSameCommit } from '../utils/diffSelection.js';
-import { DiffMode } from '../types/watch.js';
 
 import {
   shouldReadStdin,
@@ -18,6 +17,7 @@ import {
   validateDiffArguments,
   getGitRoot,
   readStdin,
+  determineDiffMode,
   pinSelection,
   shortHash,
 } from './utils.js';
@@ -60,30 +60,6 @@ function resolveDiffSelection(
   }
 
   return createDiffSelection(baseCommitish, commitish, mergeBase ? 'merge-base' : undefined);
-}
-
-function determineDiffMode(selection: DiffSelection, compareWith?: string): DiffMode {
-  const { targetCommitish } = selection;
-
-  // If comparing specific commits/branches (not involving HEAD), no watching needed
-  // Exception: allow watching when targetCommitish is '.' even with compareWith
-  if (compareWith && targetCommitish !== 'HEAD' && targetCommitish !== '.') {
-    return DiffMode.SPECIFIC;
-  }
-
-  if (targetCommitish === 'working') {
-    return DiffMode.WORKING;
-  }
-
-  if (targetCommitish === 'staged') {
-    return DiffMode.STAGED;
-  }
-
-  if (targetCommitish === '.') {
-    return DiffMode.DOT;
-  }
-  // Default mode: HEAD^ vs HEAD or HEAD vs other commits (watch for HEAD changes)
-  return DiffMode.DEFAULT;
 }
 
 interface CliOptions {
@@ -320,7 +296,7 @@ program
         clearComments: options.clean,
         keepAlive: options.keepAlive,
         contextLines: options.context,
-        diffMode: determineDiffMode(selection, compareWith),
+        diffMode: determineDiffMode(selection),
         repoPath,
         ...(pinned.followedRef ? { followedRef: pinned.followedRef } : {}),
         ...(commentImports.length > 0 ? { commentImports } : {}),

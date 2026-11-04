@@ -89,10 +89,15 @@ describe('FileWatcherService', () => {
       });
     });
 
-    it('should not start watching for SPECIFIC mode', async () => {
+    it('watches only the git directory in SPECIFIC mode', async () => {
       await fileWatcher.start(DiffMode.SPECIFIC, TEST_REPO_PATH, 300);
 
-      expect(subscribe).not.toHaveBeenCalled();
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      expect(subscribe).toHaveBeenCalledWith(
+        resolve(TEST_REPO_PATH, '.git'),
+        expect.any(Function),
+        { ignore: ['.git/objects/**', '.git/refs/**'] },
+      );
     });
 
     it('should initialize git instance for gitignore checking', async () => {
@@ -258,6 +263,60 @@ describe('FileWatcherService', () => {
         .mocked(mockClient.send)
         .mock.calls.filter((call) => call[0].toString().includes('"type":"reload"'));
       expect(reloadCalls).toHaveLength(1);
+    });
+  });
+
+  describe('following HEAD', () => {
+    const sentTypes = () =>
+      vi
+        .mocked(mockClient.send)
+        .mock.calls.map((call) => (JSON.parse(String(call[0])) as { type: string }).type);
+
+    const startFollowing = async (mode: DiffMode) => {
+      vi.mocked(simpleGit).mockReturnValue({
+        checkIgnore: vi.fn().mockRejectedValue(new Error('No ignored files')),
+        revparse: vi.fn().mockResolvedValue('.git'),
+      } as any);
+      await fileWatcher.start(mode, TEST_REPO_PATH, 50);
+      fileWatcher.addClient(mockClient);
+      return vi.mocked(subscribe).mock.calls.find((call) => call[0].includes('.git'))![1];
+    };
+
+    const waitForDebounce = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+    it('tells clients HEAD moved, without a reload, when a commit lands in SPECIFIC mode', async () => {
+      const callback = await startFollowing(DiffMode.SPECIFIC);
+
+      await callback(null, [
+        { path: `${TEST_REPO_PATH}/.git/logs/HEAD`, type: 'update' },
+        { path: `${TEST_REPO_PATH}/.git/index`, type: 'update' },
+      ]);
+      await waitForDebounce();
+
+      expect(sentTypes()).toEqual(['connected', 'headMoved']);
+    });
+
+    it('ignores git files other than the HEAD of the watched checkout in SPECIFIC mode', async () => {
+      const callback = await startFollowing(DiffMode.SPECIFIC);
+
+      await callback(null, [
+        { path: `${TEST_REPO_PATH}/.git/index`, type: 'update' },
+        { path: `${TEST_REPO_PATH}/.git/ORIG_HEAD`, type: 'update' },
+        { path: `${TEST_REPO_PATH}/.git/worktrees/other/logs/HEAD`, type: 'update' },
+        { path: `${TEST_REPO_PATH}/.git/logs/refs/remotes/origin/HEAD`, type: 'update' },
+      ]);
+      await waitForDebounce();
+
+      expect(sentTypes()).toEqual(['connected']);
+    });
+
+    it('sends the reload and the HEAD move together in DEFAULT mode', async () => {
+      const callback = await startFollowing(DiffMode.DEFAULT);
+
+      await callback(null, [{ path: `${TEST_REPO_PATH}/.git/logs/HEAD`, type: 'update' }]);
+      await waitForDebounce();
+
+      expect(sentTypes()).toEqual(['connected', 'reload', 'headMoved']);
     });
   });
 
