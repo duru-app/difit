@@ -3,9 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
   type DiffFile,
+  type SharedViewedRecord,
   type ViewedFileRecord,
   type ViewedHashIndex,
   type ViewedHashIndexEntry,
+  type ViewedHashRemoval,
 } from '../../types/diff';
 
 import { useViewedFiles } from './useViewedFiles';
@@ -30,6 +32,9 @@ const mockRemoveViewedHashes = vi.fn(
   ) => {},
 );
 const mockClearViewedHashIndex = vi.fn((_repositoryId?: string) => {});
+const mockRecordViewedRemovals = vi.fn(
+  (_repositoryId: string | undefined, _removals: ViewedHashRemoval[]) => {},
+);
 
 vi.mock('../services/StorageService', () => ({
   VIEWED_HASH_VERSION: 1,
@@ -44,7 +49,25 @@ vi.mock('../services/StorageService', () => ({
       entries: Array<{ filePath: string; diffContentHash: string }>,
     ) => mockRemoveViewedHashes(repositoryId, entries),
     clearViewedHashIndex: (repositoryId?: string) => mockClearViewedHashIndex(repositoryId),
+    recordViewedRemovals: (repositoryId: string | undefined, removals: ViewedHashRemoval[]) =>
+      mockRecordViewedRemovals(repositoryId, removals),
   },
+}));
+
+const mockSyncViewedRecord = vi.fn(
+  async (
+    _repositoryId: string,
+    _entries: ViewedHashIndexEntry[],
+    _removed?: ViewedHashRemoval[],
+  ): Promise<SharedViewedRecord | null> => null,
+);
+
+vi.mock('../services/viewedRecord', () => ({
+  syncViewedRecord: (
+    repositoryId: string,
+    entries: ViewedHashIndexEntry[],
+    removed?: ViewedHashRemoval[],
+  ) => mockSyncViewedRecord(repositoryId, entries, removed),
 }));
 
 // Mock diffUtils
@@ -715,6 +738,245 @@ describe('useViewedFiles', () => {
       });
 
       expect(mockClearViewedHashIndex).toHaveBeenCalledWith('repo-1');
+    });
+  });
+
+  describe('shared viewed record', () => {
+    const file = createMockDiffFile('src/foo.ts', 'modified', false);
+    const hash = `hash-${'src/foo.ts-modified'.slice(0, 10)}`;
+    const entry: ViewedHashIndexEntry = {
+      filePath: 'src/foo.ts',
+      diffContentHash: hash,
+      hashVersion: 1,
+      viewedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const sharedRecord = (
+      entries: ViewedHashIndexEntry[],
+      removed: ViewedHashRemoval[] = [],
+    ): SharedViewedRecord => ({
+      version: 1,
+      lastModifiedAt: '2026-01-02T00:00:00.000Z',
+      entries,
+      removed,
+    });
+    const indexWith = (entries: ViewedHashIndexEntry[]): ViewedHashIndex => ({
+      version: 1,
+      lastModifiedAt: '2026-01-01T00:00:00.000Z',
+      entries,
+    });
+
+    const render = (repositoryId: string | undefined = 'repo-1', skipSharedOnLoad = false) =>
+      renderHook(() =>
+        useViewedFiles(
+          'main',
+          'HEAD',
+          'newhead',
+          undefined,
+          [file],
+          repositoryId,
+          [],
+          undefined,
+          skipSharedOnLoad,
+        ),
+      );
+
+    it('sends the marks already in this browser when the review loads', async () => {
+      mockGetViewedHashIndex.mockReturnValue(indexWith([entry]));
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [entry], undefined);
+    });
+
+    it('resends the unmarks kept in this browser when the review loads', async () => {
+      const removal = {
+        filePath: 'src/foo.ts',
+        diffContentHash: hash,
+        removedAt: '2026-01-02T00:00:00.000Z',
+      };
+      mockGetViewedHashIndex.mockReturnValue({ ...indexWith([]), removed: [removal] });
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [], [removal]);
+    });
+
+    it('keeps an unmark in this browser even when the request fails', async () => {
+      mockGetViewedFiles.mockReturnValue([
+        { filePath: 'src/foo.ts', viewedAt: entry.viewedAt, diffContentHash: hash },
+      ]);
+      mockSyncViewedRecord.mockResolvedValue(null);
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true));
+
+      await act(async () => {
+        await result.current.toggleFileViewed('src/foo.ts', file);
+      });
+
+      expect(mockRecordViewedRemovals).toHaveBeenCalledWith('repo-1', [
+        expect.objectContaining({ filePath: 'src/foo.ts', diffContentHash: hash }),
+      ]);
+    });
+
+    it('copies marks from the shared record into the local index', async () => {
+      mockSyncViewedRecord.mockResolvedValueOnce(sharedRecord([entry]));
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      expect(mockRecordViewedHashes).toHaveBeenCalledWith('repo-1', [entry]);
+    });
+
+    it('drops a local mark that was unmarked elsewhere', async () => {
+      const removal = {
+        filePath: 'src/foo.ts',
+        diffContentHash: hash,
+        removedAt: '2026-01-02T00:00:00.000Z',
+      };
+      mockGetViewedFiles.mockReturnValue([
+        { filePath: 'src/foo.ts', viewedAt: entry.viewedAt, diffContentHash: hash },
+      ]);
+      mockGetViewedHashIndex.mockReturnValue(indexWith([]));
+      mockSyncViewedRecord.mockResolvedValueOnce(sharedRecord([], [removal]));
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      expect(result.current.viewedFiles.has('src/foo.ts')).toBe(false);
+      expect(mockRemoveViewedHashes).toHaveBeenCalledWith('repo-1', [removal]);
+      expect(mockSaveViewedFiles.mock.lastCall?.[2]).toEqual([]);
+    });
+
+    it('keeps a local mark made after the unmark elsewhere', async () => {
+      mockGetViewedFiles.mockReturnValue([
+        { filePath: 'src/foo.ts', viewedAt: '2026-01-03T00:00:00.000Z', diffContentHash: hash },
+      ]);
+      mockSyncViewedRecord.mockResolvedValueOnce(
+        sharedRecord(
+          [],
+          [
+            {
+              filePath: 'src/foo.ts',
+              diffContentHash: hash,
+              removedAt: '2026-01-02T00:00:00.000Z',
+            },
+          ],
+        ),
+      );
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true);
+    });
+
+    it('falls back to the local index when the server fails', async () => {
+      mockGetViewedHashIndex.mockReturnValue(indexWith([entry]));
+      mockSyncViewedRecord.mockResolvedValueOnce(null);
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true));
+    });
+
+    it('sends a new mark and an unmark to the shared record', async () => {
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+      mockSyncViewedRecord.mockClear();
+
+      await act(async () => {
+        await result.current.toggleFileViewed('src/foo.ts', file);
+      });
+      expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
+        'repo-1',
+        [expect.objectContaining({ filePath: 'src/foo.ts', diffContentHash: hash })],
+        undefined,
+      );
+
+      await act(async () => {
+        await result.current.toggleFileViewed('src/foo.ts', file);
+      });
+      expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
+        'repo-1',
+        [],
+        [expect.objectContaining({ filePath: 'src/foo.ts', diffContentHash: hash })],
+      );
+    });
+
+    it('keeps marking in the browser when the write fails', async () => {
+      mockSyncViewedRecord.mockResolvedValue(null);
+
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      await act(async () => {
+        await result.current.toggleFileViewed('src/foo.ts', file);
+      });
+
+      expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true);
+      expect(mockRecordViewedHashes).toHaveBeenCalled();
+    });
+
+    it('sends folder marks and unmarks to the shared record', async () => {
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+      mockSyncViewedRecord.mockClear();
+
+      await act(async () => {
+        await result.current.setFilesViewed([file], true);
+      });
+      expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
+        'repo-1',
+        [expect.objectContaining({ filePath: 'src/foo.ts' })],
+        undefined,
+      );
+
+      await act(async () => {
+        await result.current.setFilesViewed([file], false);
+      });
+      expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
+        'repo-1',
+        [],
+        [expect.objectContaining({ filePath: 'src/foo.ts' })],
+      );
+    });
+
+    it('neither reads nor sends the record on load when told to skip it', async () => {
+      mockGetViewedHashIndex.mockReturnValue(indexWith([]));
+
+      const { result } = render('repo-1', true);
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      expect(mockSyncViewedRecord).not.toHaveBeenCalled();
+    });
+
+    it('leaves the shared record alone when clearing this browser', async () => {
+      const { result } = render();
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+      mockSyncViewedRecord.mockClear();
+
+      act(() => {
+        result.current.clearViewedFiles();
+      });
+
+      expect(mockClearViewedHashIndex).toHaveBeenCalledWith('repo-1');
+      expect(mockSyncViewedRecord).not.toHaveBeenCalled();
+    });
+
+    it('does not call the server without a repository id', async () => {
+      const { result } = renderHook(() =>
+        useViewedFiles('main', 'HEAD', 'newhead', undefined, [file]),
+      );
+      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+      await act(async () => {
+        await result.current.toggleFileViewed('src/foo.ts', file);
+      });
+
+      expect(mockSyncViewedRecord).not.toHaveBeenCalled();
+      expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true);
     });
   });
 });

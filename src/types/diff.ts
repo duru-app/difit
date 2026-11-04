@@ -394,10 +394,21 @@ export interface ViewedHashIndexEntry {
   viewedAt: string; // ISO 8601 format
 }
 
+export interface ViewedHashRemoval {
+  filePath: string;
+  diffContentHash: string;
+  removedAt: string; // ISO 8601 format
+}
+
 export interface ViewedHashIndex {
   version: 1;
   lastModifiedAt: string; // ISO 8601 format
   entries: ViewedHashIndexEntry[];
+  removed?: ViewedHashRemoval[];
+}
+
+export interface SharedViewedRecord extends ViewedHashIndex {
+  removed: ViewedHashRemoval[];
 }
 
 export interface LegacyDiffContextStorage {

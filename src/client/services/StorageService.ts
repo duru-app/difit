@@ -7,19 +7,20 @@ import {
   type LegacyDiffComment,
   type ViewedHashIndex,
   type ViewedHashIndexEntry,
+  type ViewedHashRemoval,
 } from '../../types/diff';
 import { isOnCommit } from '../../utils/commentPosition';
 import { normalizeBaseMode } from '../../utils/diffSelection';
+import {
+  isMarkedAfterUnmark,
+  MAX_VIEWED_INDEX_ENTRIES,
+  viewedEntryKey,
+} from '../../utils/viewedRecord';
 
 const STORAGE_KEY_PREFIX = 'difit-storage-v1';
 const VIEWED_INDEX_PREFIX = 'difit-viewed-index-v1';
 const DEFAULT_REPO_ID = '__default__';
-const MAX_VIEWED_INDEX_ENTRIES = 5000;
 export const VIEWED_HASH_VERSION = 1;
-
-function compositeKey(filePath: string, diffContentHash: string): string {
-  return `${filePath} ${diffContentHash}`;
-}
 
 function migrateLegacyComment(comment: LegacyDiffComment): DiffCommentThread {
   return {
@@ -524,11 +525,15 @@ export class StorageService {
   recordViewedHashes(repositoryId: string | undefined, entries: ViewedHashIndexEntry[]): void {
     if (entries.length === 0) return;
     const index = this.getViewedHashIndex(repositoryId);
-    const byKey = new Map(
-      index.entries.map((entry) => [compositeKey(entry.filePath, entry.diffContentHash), entry]),
+    const byKey = new Map(index.entries.map((entry) => [viewedEntryKey(entry), entry]));
+    const removedAtByKey = new Map(
+      (index.removed ?? []).map((removal) => [viewedEntryKey(removal), removal.removedAt]),
     );
     for (const entry of entries) {
-      byKey.set(compositeKey(entry.filePath, entry.diffContentHash), entry);
+      const key = viewedEntryKey(entry);
+      const removedAt = removedAtByKey.get(key);
+      if (removedAt !== undefined && !isMarkedAfterUnmark(entry.viewedAt, removedAt)) continue;
+      byKey.set(key, entry);
     }
 
     let next = Array.from(byKey.values());
@@ -537,11 +542,7 @@ export class StorageService {
       next = next.slice(0, MAX_VIEWED_INDEX_ENTRIES);
     }
 
-    this.writeViewedHashIndex(repositoryId, {
-      version: 1,
-      lastModifiedAt: index.lastModifiedAt,
-      entries: next,
-    });
+    this.writeViewedHashIndex(repositoryId, { ...index, entries: next });
   }
 
   /**
@@ -551,23 +552,39 @@ export class StorageService {
    */
   removeViewedHashes(
     repositoryId: string | undefined,
-    entries: Array<{ filePath: string; diffContentHash: string }>,
+    entries: Array<{ filePath: string; diffContentHash: string; removedAt?: string }>,
   ): void {
     if (entries.length === 0) return;
     const index = this.getViewedHashIndex(repositoryId);
-    const drop = new Set(
-      entries.map((entry) => compositeKey(entry.filePath, entry.diffContentHash)),
-    );
-    const next = index.entries.filter(
-      (entry) => !drop.has(compositeKey(entry.filePath, entry.diffContentHash)),
-    );
+    const drop = new Map(entries.map((entry) => [viewedEntryKey(entry), entry.removedAt]));
+    const next = index.entries.filter((entry) => {
+      const key = viewedEntryKey(entry);
+      if (!drop.has(key)) return true;
+      const removedAt = drop.get(key);
+      return removedAt !== undefined && isMarkedAfterUnmark(entry.viewedAt, removedAt);
+    });
     if (next.length === index.entries.length) return;
 
-    this.writeViewedHashIndex(repositoryId, {
-      version: 1,
-      lastModifiedAt: index.lastModifiedAt,
-      entries: next,
-    });
+    this.writeViewedHashIndex(repositoryId, { ...index, entries: next });
+  }
+
+  recordViewedRemovals(repositoryId: string | undefined, removals: ViewedHashRemoval[]): void {
+    if (removals.length === 0) return;
+    const index = this.getViewedHashIndex(repositoryId);
+    const byKey = new Map(
+      (index.removed ?? []).map((removal) => [viewedEntryKey(removal), removal]),
+    );
+    for (const removal of removals) {
+      byKey.set(viewedEntryKey(removal), removal);
+    }
+
+    let next = Array.from(byKey.values());
+    if (next.length > MAX_VIEWED_INDEX_ENTRIES) {
+      next.sort((a, b) => (a.removedAt < b.removedAt ? 1 : -1));
+      next = next.slice(0, MAX_VIEWED_INDEX_ENTRIES);
+    }
+
+    this.writeViewedHashIndex(repositoryId, { ...index, removed: next });
   }
 
   /**

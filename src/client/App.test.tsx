@@ -1252,6 +1252,7 @@ describe('App Component - Merge-base selection', () => {
       undefined,
       [],
       undefined,
+      undefined,
     );
   });
 

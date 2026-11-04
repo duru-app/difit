@@ -74,6 +74,12 @@ import {
 import { listSkills, skillLocations } from './skills.js';
 import { searchSymbol } from './symbol-search.js';
 import { parseUserSettingsPatch, readUserConfig, updateUserClientSettings } from './user-config.js';
+import {
+  clearViewedRecord,
+  getViewedRecordPath,
+  mergeViewedRecord,
+  parseViewedRecordUpdate,
+} from './viewed-record.js';
 
 import {
   type BaseMode,
@@ -270,9 +276,16 @@ export async function startServer(options: ServerOptions): Promise<{
   // A direct edit carries a whole hunk, which easily passes the default 100kb.
   const parseJson = express.json();
   const parseDirectEditJson = express.json({ limit: '64mb' });
+  // A page sends its whole viewed index, up to 5000 entries, when it loads.
+  const parseViewedRecordJson = express.json({ limit: '8mb' });
   app.use((req, res, next) => {
-    const directEdit = req.path === '/api/direct-edit' && isLocalRequest(req);
-    (directEdit ? parseDirectEditJson : parseJson)(req, res, next);
+    if (req.path === '/api/direct-edit' && isLocalRequest(req)) {
+      parseDirectEditJson(req, res, next);
+    } else if (req.path.startsWith('/api/viewed-record/') && isLocalRequest(req)) {
+      parseViewedRecordJson(req, res, next);
+    } else {
+      parseJson(req, res, next);
+    }
   });
   app.use(express.text()); // For sendBeacon text/plain requests
 
@@ -2239,6 +2252,26 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
 
+  app.post('/api/viewed-record/:repositoryId', async (req, res) => {
+    if (!isLocalRequest(req)) {
+      res.status(403).json({ error: 'Viewed record is only available on this machine' });
+      return;
+    }
+    const path = getViewedRecordPath(req.params.repositoryId);
+    const update = parseViewedRecordUpdate(req.body);
+    if (!path || !update) {
+      res.status(400).json({ error: 'Invalid viewed record request' });
+      return;
+    }
+
+    try {
+      res.json(await mergeViewedRecord(path, update));
+    } catch (error) {
+      console.error('Error saving viewed record:', error);
+      res.status(500).json({ error: 'Failed to save viewed record' });
+    }
+  });
+
   app.post('/api/open-in-editor', async (req, res) => {
     if (options.stdinDiff) {
       res.status(400).json({ error: 'Open in editor is not available for stdin diff' });
@@ -2459,6 +2492,15 @@ export async function startServer(options: ServerOptions): Promise<{
     } catch (error) {
       console.warn('⚠️  File watcher failed to start:', error);
       console.warn('   Continuing without file watching...');
+    }
+  }
+
+  if (options.clearComments && listensOnLoopbackOnly) {
+    const viewedRecordPath = getViewedRecordPath(repositoryId);
+    if (viewedRecordPath) {
+      await clearViewedRecord(viewedRecordPath).catch((error: unknown) => {
+        console.error('Error clearing viewed record:', error);
+      });
     }
   }
 
