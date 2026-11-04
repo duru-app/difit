@@ -46,10 +46,14 @@ export function useFixupLineReply({
   const lines = useMemo(() => chunks.flatMap((chunk) => chunk.lines), [chunks]);
   const store = useLinePickState(lines, null);
   const canHover = useCanHover();
-  const [drag, setDrag] = useState<{ from: LineSelection; to: LineSelection } | null>(null);
+  const [drag, setDrag] = useState<{
+    from: LineSelection;
+    to: LineSelection;
+    adds: boolean;
+  } | null>(null);
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const { open, openBetween } = store;
+  const { open, openBetween, addBetween } = store;
   const picking = store.pick !== null;
 
   useEffect(() => {
@@ -59,15 +63,23 @@ export function useFixupLineReply({
   useEffect(() => {
     if (!drag) return undefined;
     // Deferred past the click that follows mouseup, which closes empty comment forms.
-    const finish = () =>
+    const swallowClick = (event: Event) => event.stopPropagation();
+    const finish = () => {
+      if (drag.adds && !sameLine(drag.from, drag.to)) {
+        document.addEventListener('click', swallowClick, { capture: true, once: true });
+        setTimeout(() => document.removeEventListener('click', swallowClick, true), 0);
+      }
       setTimeout(() => {
-        if (sameLine(drag.from, drag.to)) open(drag.from.side, drag.from.lineNumber);
+        if (sameLine(drag.from, drag.to)) {
+          if (!drag.adds) open(drag.from.side, drag.from.lineNumber);
+        } else if (drag.adds) addBetween(drag.from, drag.to, 'unified');
         else openBetween(drag.from, drag.to, 'unified');
         setDrag(null);
       }, 0);
+    };
     document.addEventListener('mouseup', finish);
     return () => document.removeEventListener('mouseup', finish);
-  }, [drag, open, openBetween]);
+  }, [drag, open, openBetween, addBetween]);
 
   const target = threads.find(({ id }) => id === chosenId) ?? threads[0];
   if (!replyToThread || !target) return undefined;
@@ -93,16 +105,20 @@ export function useFixupLineReply({
     return Promise.resolve();
   };
 
-  const marked = drag ? store.between(drag.from, drag.to, 'unified') : store.pick?.lines;
+  const dragged = drag ? store.between(drag.from, drag.to, 'unified') : undefined;
+  const marked = drag?.adds
+    ? [...(store.pick?.lines ?? []), ...(dragged ?? [])]
+    : (dragged ?? store.pick?.lines);
 
   return {
     isPicked: (line) => marked?.some((picked) => sameLine(picked, line)) ?? false,
     press: (line, event) => {
       if (event.button !== 0) return;
       event.preventDefault();
-      if (picksOnClick(event)) return;
-      store.setAnchor(line);
-      setDrag({ from: line, to: line });
+      const adds = picksOnClick(event);
+      if (event.shiftKey) return;
+      if (!adds) store.setAnchor(line);
+      setDrag({ from: line, to: line, adds });
     },
     click: (line, event) => {
       if (!picksOnClick(event)) return;
