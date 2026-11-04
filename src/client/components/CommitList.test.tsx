@@ -53,14 +53,17 @@ function renderList(
 const list = () => screen.getByRole('list');
 const row = (name: RegExp | string) => within(list()).getByRole('button', { name });
 const header = () => screen.getByRole('button', { expanded: true });
-const painted = () =>
+const COPY_NAME = /^(해시 복사|복사됨)$/;
+const choices = () =>
   within(list())
     .getAllByRole('button')
+    .filter((item) => !COPY_NAME.test(item.getAttribute('aria-label') ?? ''));
+const painted = () =>
+  choices()
     .filter((item) => item.getAttribute('aria-current') === 'true')
     .map((item) => item.textContent);
 const previewed = () =>
-  within(list())
-    .getAllByRole('button')
+  choices()
     .filter((item) => item.hasAttribute('data-drag-preview'))
     .map((item) => item.textContent?.slice(0, 7));
 
@@ -68,11 +71,7 @@ describe('CommitList', () => {
   it('lists the whole review first and then the commits oldest first', () => {
     renderList();
 
-    expect(
-      within(list())
-        .getAllByRole('button')
-        .map((item) => item.textContent),
-    ).toEqual([
+    expect(choices().map((item) => item.textContent)).toEqual([
       '전체',
       '1111111pin the old behavior',
       '2222222change the behavior',
@@ -485,6 +484,57 @@ describe('CommitList', () => {
     });
   });
 
+  describe('copying the hash', () => {
+    let writeText: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const copyButtonOf = (name: RegExp) =>
+      within(row(name).closest('li')!).getByRole('button', { name: COPY_NAME });
+
+    it('copies the first ten characters of the full hash without choosing the commit', async () => {
+      const { onSelect } = renderList();
+
+      await act(async () => {
+        fireEvent.click(copyButtonOf(/2222222/));
+      });
+
+      expect(writeText).toHaveBeenCalledExactlyOnceWith('2222222222');
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('says it copied for two seconds, on that commit only', async () => {
+      vi.useFakeTimers();
+      renderList();
+
+      await act(async () => {
+        fireEvent.click(copyButtonOf(/2222222/));
+      });
+
+      expect(copyButtonOf(/2222222/)).toHaveAccessibleName('복사됨');
+      expect(copyButtonOf(/2222222/)).toHaveAttribute('title', '복사됨');
+      expect(copyButtonOf(/3333333/)).toHaveAccessibleName('해시 복사');
+
+      act(() => vi.advanceTimersByTime(1999));
+      expect(copyButtonOf(/2222222/)).toHaveAccessibleName('복사됨');
+      act(() => vi.advanceTimersByTime(1));
+      expect(copyButtonOf(/2222222/)).toHaveAccessibleName('해시 복사');
+    });
+
+    it('offers copying in the phone drawer too', () => {
+      renderList({ kind: 'all' }, { inDrawer: true });
+
+      expect(copyButtonOf(/2222222/)).toHaveAccessibleName('해시 복사');
+    });
+  });
+
   it('folds the list away and keeps naming what is shown', () => {
     renderList({ kind: 'commit', sha: COMMITS[0]!.sha });
 
@@ -608,10 +658,26 @@ describe('CommitList', () => {
         '3333333merge the side branch',
         '4444444document it',
       ]);
-      expect(within(branchRow('side first')).queryByRole('button')).not.toBeInTheDocument();
+      expect(
+        within(branchRow('side first'))
+          .getAllByRole('button')
+          .map((button) => button.getAttribute('aria-label')),
+      ).toEqual(['해시 복사']);
 
       fireEvent.click(within(list()).getByText('side first'));
       expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('copies the hash of a commit a merge brings in too', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      renderList({ kind: 'all' }, { commits: WITH_MERGE });
+
+      await act(async () => {
+        fireEvent.click(within(branchRow('side first')).getByRole('button', { name: '해시 복사' }));
+      });
+
+      expect(writeText).toHaveBeenCalledExactlyOnceWith('aaaaaaaaaa');
     });
 
     it('draws the dots of the branch the same size as the others', () => {
