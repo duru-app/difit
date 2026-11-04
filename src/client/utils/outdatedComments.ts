@@ -5,6 +5,7 @@ import type {
   DiffFile,
   DiffSelection,
   DiffSide,
+  FileCommentThread,
   LineNumber,
   ReviewScope,
   SidedLine,
@@ -12,6 +13,7 @@ import type {
 import { noVisibleLineContradictsAnchor, relocateAnchor } from '../../utils/anchorRelocation';
 import {
   extraLinesOfPosition,
+  isOnCommit,
   lineOfPosition,
   lineOfRange,
   rangeOfLineNumber,
@@ -54,7 +56,7 @@ export function buildFileLineIndex(file: Pick<DiffFile, 'chunks'>): FileLineInde
 // target commit (working tree, index, stdin) the thread is never moved, only checked at its stored
 // lines.
 export function locateThread(
-  thread: DiffCommentThread,
+  thread: FileCommentThread,
   index: FileLineIndex | undefined,
   targetCommit: string | null,
   madeOnThisView?: boolean,
@@ -147,17 +149,22 @@ export function placeThread(
   index: FileLineIndex | undefined,
   indexCommit?: string,
 ): Placement {
+  const shown =
+    !view ||
+    !review ||
+    isSameView(view, review.selection) ||
+    commitsOfView(view, review).some((commit) =>
+      isSameCommit(commit.sha, thread.fixupTarget ?? review.selection.targetCommitish),
+    );
+  if (isOnCommit(thread)) return { kind: shown ? 'stored' : 'hidden' };
+
   const stored: PlacedLines = {
     line: lineOfPosition(thread.position),
     extraLines: extraLinesOfPosition(thread.position),
   };
   let madeOnThisView: boolean | undefined;
   if (view && review) {
-    const fixupTarget = thread.fixupTarget ?? review.selection.targetCommitish;
-    if (
-      !isSameView(view, review.selection) &&
-      !commitsOfView(view, review).some((commit) => isSameCommit(commit.sha, fixupTarget))
-    ) {
+    if (!shown) {
       return { kind: 'hidden', ...placedLines(stored) };
     }
     const anchorCommit = thread.codeSnapshot?.commit;

@@ -43,6 +43,7 @@ difit comment wait --port <port>
 ```
 
 - `fixupTarget`은 그 지적에 답할 fixup을 걸 커밋이다. 없으면 리뷰 대상 커밋에 건다.
+- 커밋 하나 전체에 단 지적에는 `filePath`가 없고 `"position": { "scope": "commit" }`이다. 이때 `fixupTarget`이 그 커밋이다.
 - 리뷰어가 고를 거리 가운데 하나를 골랐으면 `answer`가 붙는다. 아래 「고를 거리를 붙여 묻기」를 본다.
 - `position`에 `extraRanges`가 있으면 그 줄들도 같은 지적이다. `line`은 지적을 단 보기에서 가장 아래에서 끝난 범위이고, `extraRanges`는 나머지 범위를 담는다. 카드는 지금 보는 보기에서 가장 아래에서 끝나는 범위 밑에 붙으므로, Unified 보기와 Split 보기에서 자리가 다를 수 있고 `line` 밑이 아닐 수도 있다. 텍스트 출력에는 `파일:L12,L40,L77-L80`처럼 모든 범위가 적힌다. 나머지 범위의 코드는 `codeSnapshot.extraContents`에 같은 순서로 담기므로, 뒤 커밋이 줄을 옮겼으면 범위마다 그 내용으로 자리를 찾는다. 모든 범위를 한 fixup에서 고치고, 답글과 고를 거리를 붙인 답글은 `extraRanges`까지 같은 `position`으로 단다. `line`만 적은 답글은 그 지적에 붙지 않는다. 범위가 지운 쪽과 남은 쪽에 걸치면 `position.side`와 다른 쪽 범위만 `{"side": "old", "start": 12, "end": 14}`처럼 쪽을 적어 `extraRanges`에 담는다. 한 줄이어도 `start`와 `end`를 모두 적고, 줄 번호는 그 쪽 트리의 줄이다. 저장된 `extraRanges`에는 `position.side` 쪽 범위가 먼저 오고 다른 쪽 범위가 뒤에 오며, 쪽마다 위에서부터 적힌다. 답글에는 받은 `position`을 그대로 옮겨 적는다. 이런 지적의 텍스트 출력 위치는 `파일:old:L12-L14,new:L12-L13`처럼 쪽마다 앞에 한 번 쪽을 적고 지운 쪽을 먼저 적으며, 뒤에 `(old)`는 붙지 않는다.
 - 알리는 경우는 여섯이다. 리뷰어가 마지막으로 말한 `[답변 대기]`, fixup을 만든 뒤에 리뷰어가 답글을 단 `[승인 대기]`, 승인한 뒤에 리뷰어가 답글을 달았거나 fixup을 만든 뒤에 단 답글에 에이전트가 아직 답하지 않은 `[승인됨]`(뒤의 경우는 승인한 fixup이 아직 범위에 있을 때만), 새 fixup도 그 뒤의 답도 없는 `[다시 수정 중]`, 되돌린 fixup이 아직 남은 `[되돌림]`, 리뷰어가 지운 `[지움]`. `rejectedFixupShas`는 버려야 할 fixup을 모두 담고, `rejectedFixupSha`는 그 가운데 첫째다. 고정할 커밋이 없는 리뷰에서는 리뷰어가 마지막으로 말한 지적을 모두 알린다.
@@ -69,6 +70,7 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
    - 줄 번호는 `view` 트리의 줄이다. 새 쪽(`"side": "new"`) 줄은 `git show <view.targetCommitish>:<파일>`, 옛 쪽 줄은 `git show <view.baseCommitish>:<파일>`로 읽는다. `view`가 없으면 리뷰 대상 커밋의 줄이다. fixup에서만 수정한 파일에 단 지적은 `codeSnapshot.commit`이 그 fixup 커밋이다. 새 쪽 줄은 `git show <codeSnapshot.commit>:<파일>`, 옛 쪽 줄은 그 fixup의 부모 커밋인 `git show <codeSnapshot.commit>^:<파일>`로 읽는다.
    - 고치는 곳은 HEAD의 파일이다. 뒤 커밋이 그 줄을 옮기거나 바꿨을 수 있으니 줄 번호 대신 `codeSnapshot.content`(지적한 줄의 내용)로 자리를 찾는다. 뒤 커밋이 그 줄을 바꿨어도 fixup은 하나만 만든다([docs/adr/0002](adr/0002-one-fixup-per-target-commit.md)). 접을 때 생기는 충돌은 아래 「범위 중간 커밋에 접다가 충돌하면」대로 푼다.
    - 파일 전체에 단 지적은 위치가 `"position": { "side": "new", "scope": "file" }`이고 `line`이 없다. diff가 지운 파일이면 `"side": "old"`이다. 텍스트 출력의 위치 줄에는 `:L<줄>` 없이 파일 경로만 나오고, 지운 파일이면 뒤에 `(old)`가 붙는다. 특정 줄이 아니라 파일 전체에 대한 지적이므로 파일을 통째로 읽고 지적이 가리키는 곳을 고치되, fixup은 역시 하나만 만든다. 이 지적의 `fixupTarget`은 그 화면의 커밋 가운데 그 파일을 마지막으로 바꾼 커밋이고, 그런 커밋이 없으면 그 화면의 마지막 커밋이다. 커밋 목록에 없는 커밋이 바꾼 것은 세지 않는다. 답글은 같은 `position`으로 단다([docs/adr/0010](adr/0010-file-level-comments.md)).
+   - 커밋 하나 전체에 단 지적은 `filePath`가 없고 위치가 `"position": { "scope": "commit" }`이며, `fixupTarget`이 그 커밋이다. 커밋 메시지, 커밋이 다루는 범위, 커밋을 나누거나 합치자는 이야기처럼 특정 파일이 아니라 그 커밋에 대한 지적이다. 텍스트 출력의 위치 줄은 `커밋 <짧은 SHA> <제목>`이고, `고쳐 넣을 커밋:` 줄은 따로 붙지 않는다. 코드나 메시지를 고쳐 답할 수 있으면 다른 지적처럼 그 커밋을 향한 `fixup!`이나 `amend!` 하나에 `Review-Thread` 트레일러를 붙인다. 커밋을 나누거나 순서를 바꾸자는 것처럼 fixup 하나로 답할 수 없는 요청이면 고치지 말고 답글로 어떻게 할지 묻는다. 답글은 `{"type": "reply", "position": {"scope": "commit"}, "fixupTarget": "<SHA>", "body": "..."}`처럼 `filePath` 없이 같은 `fixupTarget`으로 단다([docs/adr/0011](adr/0011-commit-level-comments.md)).
 
 2. 코드를 고친 뒤 fixup 커밋을 만들고 스레드 id를 트레일러로 붙인다. 대상은 지적의 `fixupTarget`이고, 없으면 리뷰 대상 SHA다.
 
@@ -209,7 +211,7 @@ difit comment add --port <새 port> "$(jq '[.threads[] | . as $t
                        body, author, createdAt, codeSnapshot: $t.codeSnapshot,
                        view: $t.view, fixupTarget: $t.fixupTarget}),
     ($t.messages[1:][] | {type: "reply", id, filePath: $t.filePath, position: $t.position,
-                          body, author, createdAt, choices, answer})
+                          fixupTarget: $t.fixupTarget, body, author, createdAt, choices, answer})
   | with_entries(select(.value != null))]' old.json)"
 
 jq '.decisions' old.json | curl -X POST "http://localhost:<새 port>/api/decisions" \

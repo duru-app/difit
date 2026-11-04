@@ -935,6 +935,24 @@ describe('selectThreadsAwaitingAgent', () => {
     ]);
   });
 
+  it('hands over a thread on a whole commit without a file path', () => {
+    const onCommit = {
+      id: 'commit',
+      position: { scope: 'commit' as const },
+      messages: thread('commit', ['User']).messages,
+      fixupTarget: 'abc1234',
+    };
+
+    expect(selectThreadsAwaitingAgent([onCommit], undefined, [])).toStrictEqual([
+      {
+        threadId: 'commit',
+        position: { scope: 'commit' },
+        message: 'User 0',
+        fixupTarget: 'abc1234',
+      },
+    ]);
+  });
+
   it('leaves a thread whose last agent reply says a fixup follows to the agent, without handing it over', () => {
     const asked = thread('t1', ['User'], [undefined]);
     const promised = {

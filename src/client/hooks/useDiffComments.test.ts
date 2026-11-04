@@ -392,7 +392,7 @@ const next = true;
         });
       });
 
-      expect(result.current.threads[0]?.codeSnapshot?.commit).toBeUndefined();
+      expect(result.current.threads[0]).toMatchObject({ codeSnapshot: { commit: undefined } });
     });
 
     it('binds a thread made on one commit to that commit and the view it was made on', () => {
@@ -422,11 +422,34 @@ const next = true;
       const [bound, plain] = result.current.threads;
       expect(bound?.view).toEqual(view);
       expect(bound?.fixupTarget).toBe(commit);
-      expect(bound?.codeSnapshot?.commit).toBe(commit);
-      expect(bound?.codeSnapshot?.content).toBe('const x = 1;');
+      expect(bound).toMatchObject({ codeSnapshot: { commit, content: 'const x = 1;' } });
       expect(plain).not.toHaveProperty('view');
       expect(plain).not.toHaveProperty('fixupTarget');
-      expect(plain?.codeSnapshot?.commit).toBe('abc1234');
+      expect(plain).toMatchObject({ codeSnapshot: { commit: 'abc1234' } });
+    });
+
+    it('makes a thread on a whole commit without a file or a code snapshot', () => {
+      const commit = '1111111'.padEnd(40, '1');
+      const view = { baseCommitish: '0000000'.padEnd(40, '0'), targetCommitish: commit };
+      const { result } = renderHook(() => useDiffComments('def4567', 'abc1234'));
+
+      act(() => {
+        result.current.addThread({
+          scope: 'commit',
+          body: 'Split this commit',
+          binding: { view, fixupTarget: commit, snapshotCommit: commit },
+        });
+      });
+
+      const [thread] = result.current.threads;
+      expect(thread).toMatchObject({
+        position: { scope: 'commit' },
+        view,
+        fixupTarget: commit,
+        messages: [{ body: 'Split this commit' }],
+      });
+      expect(thread).not.toHaveProperty('filePath');
+      expect(thread).not.toHaveProperty('codeSnapshot');
     });
 
     it('should remove comment by id', () => {

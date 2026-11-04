@@ -173,6 +173,25 @@ describe('spreadFixups', () => {
     expect(result.places.get('aaa1111:c.test.ts')).toEqual({ kind: 'fixup-only' });
   });
 
+  it('boxes reviewed files and groups the rest for a fixup answering a comment on a whole commit', () => {
+    const fixup = fixupOf(
+      'aaa1111',
+      ['c1'],
+      [file('a.ts', [replaceLine(5)]), file('notes.md', [insertTop(2)], { status: 'added' })],
+    );
+
+    const result = spreadFixups(
+      { enabled: true, fixupsByThread: byThread([fixup]), decisions: [] },
+      [fixup],
+      [{ id: 'c1', commit: 'bbb2222', isOutdated: false }],
+      [{ path: 'a.ts', status: 'modified' }],
+    );
+
+    expect(result.places.get('aaa1111:a.ts')).toEqual({ kind: 'box', reviewPath: 'a.ts' });
+    expect(boxesOf(result, 'a.ts')[0]?.threads.map(({ id }) => id)).toEqual(['c1']);
+    expect(result.places.get('aaa1111:notes.md')).toEqual({ kind: 'fixup-only' });
+  });
+
   it('puts a change above the first line below line 1', () => {
     const fixup = fixupOf(
       'aaa1111',

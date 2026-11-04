@@ -4,12 +4,12 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   type ChoiceAnswer,
   type AnchorStaleReason,
-  type CommentThread,
   type DiffCommentMessage,
+  type ShownThread,
   REVIEWER_AUTHOR,
 } from '../../types/diff';
 import { formatCommentContent } from '../../utils/commentFormatting';
-import { locationLabel } from '../../utils/commentPosition';
+import { commitLocationLabel, locationLabel } from '../../utils/commentPosition';
 import { isSameCommit } from '../../utils/diffSelection';
 import {
   appearsResolved,
@@ -244,7 +244,7 @@ const alignToVisibleTop = (target: HTMLElement) => {
 };
 
 interface CommentThreadCardProps {
-  thread: CommentThread;
+  thread: ShownThread;
   review?: ThreadReviewControls;
   showAuthorBadges?: boolean;
   onResolveThread: (threadId: string) => void;
@@ -314,16 +314,18 @@ export function CommentThreadCard({
 
   const reviewState = review?.state ?? deriveThreadReviewState(thread.id, [], [], thread);
 
+  const onFile = 'file' in thread ? thread : undefined;
+  const codeContent = onFile?.codeContent;
   const messageText = (message: DiffCommentMessage) =>
-    formatCommentContent(message.body, thread.codeContent);
+    formatCommentContent(message.body, codeContent);
 
   const anchorCommit =
     review &&
     thread.isOutdated &&
-    thread.anchorCommit &&
+    onFile?.anchorCommit &&
     !thread.madeView &&
-    !(review.targetCommit && isSameCommit(thread.anchorCommit, review.targetCommit))
-      ? thread.anchorCommit
+    !(review.targetCommit && isSameCommit(onFile.anchorCommit, review.targetCommit))
+      ? onFile.anchorCommit
       : null;
   const madeView = thread.isOutdated ? thread.madeView : undefined;
 
@@ -364,7 +366,9 @@ export function CommentThreadCard({
               color: 'var(--color-yellow-path-text)',
             }}
           >
-            {locationLabel(thread.file, thread.line, thread.extraLines, thread.side)}
+            {'file' in thread
+              ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
+              : commitLocationLabel(thread)}
           </span>
           {isResolved && (
             <span
@@ -469,7 +473,7 @@ export function CommentThreadCard({
 
       {!isCollapsed && (
         <div className="space-y-3">
-          {thread.fixupCommit && (
+          {onFile && thread.fixupCommit && (
             <div className="text-xs">
               <code
                 className="font-mono text-github-text-secondary"
@@ -484,8 +488,8 @@ export function CommentThreadCard({
             message={rootMessage}
             showAuthorBadge={showAuthorBadges}
             syntaxTheme={syntaxTheme}
-            filename={thread.file}
-            originalCode={thread.codeContent}
+            filename={onFile?.file}
+            originalCode={codeContent}
             onUpdate={(newBody) => onUpdateMessage(thread.id, rootMessage.id, newBody)}
             onCopy={() => messageText(rootMessage)}
             {...(isFolded ? {} : { onDelete: () => recordDecision(thread.id, 'deleted', '') })}
@@ -498,8 +502,8 @@ export function CommentThreadCard({
                 message={message}
                 showAuthorBadge={showAuthorBadges}
                 syntaxTheme={syntaxTheme}
-                filename={thread.file}
-                originalCode={thread.codeContent}
+                filename={onFile?.file}
+                originalCode={codeContent}
                 onUpdate={(newBody) => onUpdateMessage(thread.id, message.id, newBody)}
                 onCopy={() => messageText(message)}
                 onDelete={() => onRemoveMessage(thread.id, message.id)}
@@ -612,9 +616,9 @@ export function CommentThreadCard({
                   setIsReplying(false);
                 }}
                 onCancel={() => setIsReplying(false)}
-                selectedCode={thread.codeContent}
+                selectedCode={codeContent}
                 syntaxTheme={syntaxTheme}
-                filename={thread.file}
+                filename={onFile?.file}
                 embedded={true}
                 title="Reply to thread"
                 submitLabel={isResolved ? '답글 달고 다시 열기' : 'Reply'}

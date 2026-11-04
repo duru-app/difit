@@ -50,6 +50,11 @@ export type DiffCommentPosition =
   // On the whole file rather than on any of its lines; `old` for a file the diff deletes.
   | { side: DiffSide; scope: 'file' };
 
+// On the commit the thread's `fixupTarget` names, as a whole; such a thread has no file.
+export interface CommitCommentPosition {
+  scope: 'commit';
+}
+
 export interface DiffCommentCodeSnapshot {
   content: string;
   // The code of each of the position's `extraRanges`, in the same order.
@@ -296,16 +301,10 @@ export interface DiffCommentMessage {
   fixPending?: true;
 }
 
-// New data structures for enhanced comment and viewed state management
-export interface DiffCommentThread {
+interface DiffCommentThreadBase {
   id: string;
-  filePath: string;
   createdAt: string; // ISO 8601 format
   updatedAt: string; // ISO 8601 format
-
-  position: DiffCommentPosition;
-
-  codeSnapshot?: DiffCommentCodeSnapshot;
 
   messages: DiffCommentMessage[];
 
@@ -315,29 +314,51 @@ export interface DiffCommentThread {
   fixupTarget?: string;
 }
 
-interface CommentImportBase {
-  id?: string;
+export interface FileCommentThread extends DiffCommentThreadBase {
   filePath: string;
   position: DiffCommentPosition;
+  codeSnapshot?: DiffCommentCodeSnapshot;
+}
+
+export interface CommitCommentThread extends DiffCommentThreadBase {
+  position: CommitCommentPosition;
+  fixupTarget: string;
+}
+
+export type DiffCommentThread = FileCommentThread | CommitCommentThread;
+
+interface CommentImportCommon {
+  id?: string;
   body: string;
   author?: string;
   createdAt?: string;
   updatedAt?: string;
-  codeSnapshot?: DiffCommentCodeSnapshot;
   view?: DiffSelection;
+}
+
+interface FileCommentImportPlace {
+  filePath: string;
+  position: DiffCommentPosition;
+  codeSnapshot?: DiffCommentCodeSnapshot;
   fixupTarget?: string;
 }
 
-export interface ThreadCommentImport extends CommentImportBase {
-  type: 'thread';
+interface CommitCommentImportPlace {
+  position: CommitCommentPosition;
+  fixupTarget: string;
 }
 
-export interface ReplyCommentImport extends CommentImportBase {
-  type: 'reply';
-  choices?: ReplyChoice[];
-  answer?: ChoiceAnswer;
-  fixPending?: true;
-}
+type CommentImportPlace = FileCommentImportPlace | CommitCommentImportPlace;
+
+export type ThreadCommentImport = CommentImportCommon & CommentImportPlace & { type: 'thread' };
+
+export type ReplyCommentImport = CommentImportCommon &
+  CommentImportPlace & {
+    type: 'reply';
+    choices?: ReplyChoice[];
+    answer?: ChoiceAnswer;
+    fixPending?: true;
+  };
 
 export type CommentImport = ThreadCommentImport | ReplyCommentImport;
 
@@ -444,7 +465,7 @@ export const REVIEWER_AUTHOR = 'User';
 
 export const AGENT_AUTHOR = 'Agent';
 
-export interface ThreadAwaitingAgent {
+interface ThreadAwaitingAgentBase {
   threadId: string;
   // Absent on reviews without fixup states, where any reviewer word left unanswered counts.
   state?: Extract<
@@ -455,13 +476,14 @@ export interface ThreadAwaitingAgent {
   // Rejected, or answering a deleted thread.
   rejectedFixupShas?: string[];
   rejectedFixupSha?: string;
-  filePath: string;
-  position: DiffCommentPosition;
   message: string;
   // Present when the latest message picks one of the choices the agent offered.
   answer?: ChoiceAnswer;
   fixupTarget?: string;
 }
+
+export type ThreadAwaitingAgent = ThreadAwaitingAgentBase &
+  ({ filePath: string; position: DiffCommentPosition } | { position: CommitCommentPosition });
 
 export interface ThreadFixup {
   sha: string;
@@ -606,19 +628,10 @@ export interface FixupsResponse {
 // The saved snapshot is gone from the file, or occurs in more than one place.
 export type AnchorStaleReason = 'missing' | 'ambiguous';
 
-export interface CommentThread {
+interface ShownThreadBase {
   id: string;
-  file: string;
-  // Where the thread is drawn now, relocated by snapshot content; may differ from the stored position.
-  // Absent on a thread about the whole file.
-  line?: LineNumber;
-  // The thread's other ranges, placed like `line`, in the order of the position's `extraRanges`.
-  extraLines?: SidedLine[];
-  side?: DiffSide;
   createdAt: string;
   updatedAt: string;
-  codeContent?: string;
-  anchorCommit?: string;
   isOutdated?: boolean;
   outdatedReason?: AnchorStaleReason;
   messages: DiffCommentMessage[];
@@ -626,6 +639,24 @@ export interface CommentThread {
   // Set only when it is a view of this review other than the one shown.
   madeView?: DiffSelection;
 }
+
+export interface CommentThread extends ShownThreadBase {
+  file: string;
+  // Where the thread is drawn now, relocated by snapshot content; may differ from the stored position.
+  // Absent on a thread about the whole file.
+  line?: LineNumber;
+  // The thread's other ranges, placed like `line`, in the order of the position's `extraRanges`.
+  extraLines?: SidedLine[];
+  side?: DiffSide;
+  codeContent?: string;
+  anchorCommit?: string;
+}
+
+export interface CommitThreadView extends ShownThreadBase {
+  commit: string;
+}
+
+export type ShownThread = CommentThread | CommitThreadView;
 
 // Revision selector types
 interface RevisionOption {

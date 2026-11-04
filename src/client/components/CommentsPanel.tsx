@@ -10,8 +10,8 @@ import {
 } from 'react';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 
-import type { CommentThread } from '../../types/diff';
-import { locationLabel } from '../../utils/commentPosition';
+import type { CommentThread, ShownThread } from '../../types/diff';
+import { commitLocationLabel, locationLabel } from '../../utils/commentPosition';
 import type { CommentPanelStatus } from '../../utils/reviewDecisions';
 import { keyByPosition } from '../utils/keyByPosition';
 
@@ -24,14 +24,14 @@ export interface CommentsPanelHandle {
 
 interface CommentsPanelProps {
   ref?: Ref<CommentsPanelHandle>;
-  threads: CommentThread[];
+  threads: ShownThread[];
   // A thread missing here is not listed.
   statusById: ReadonlyMap<string, CommentPanelStatus>;
   resolvedThreadIds: ReadonlySet<string>;
   filter: CommentsPanelFilter;
   onFilterChange: (filter: CommentsPanelFilter) => void;
   pickedThreadId: string | null;
-  onPick: (thread: CommentThread) => void;
+  onPick: (thread: ShownThread) => void;
   onResolveThread: (threadId: string) => void;
   onEscape?: () => void;
   onClose: () => void;
@@ -58,9 +58,11 @@ const FILTER_ON_CLASS = 'border-blue-500 bg-blue-500/15 text-github-text-primary
 const FILTER_OFF_CLASS =
   'border-github-border text-github-text-secondary hover:text-github-text-primary';
 
-// A comment on the whole file comes before its lines.
+// Comments on whole commits come first, then each file's, the one on the whole file before its lines.
 const firstLine = (line: CommentThread['line']) =>
   line === undefined ? 0 : Array.isArray(line) ? line[0] : line;
+const fileOf = (thread: ShownThread) => ('file' in thread ? thread.file : '');
+const lineOf = (thread: ShownThread) => ('file' in thread ? firstLine(thread.line) : 0);
 
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
@@ -94,8 +96,9 @@ export function CommentsPanel({
         .filter((thread) => statusById.has(thread.id))
         .sort(
           (a, b) =>
-            a.file.localeCompare(b.file) ||
-            firstLine(a.line) - firstLine(b.line) ||
+            Number('file' in a) - Number('file' in b) ||
+            fileOf(a).localeCompare(fileOf(b)) ||
+            lineOf(a) - lineOf(b) ||
             a.createdAt.localeCompare(b.createdAt),
         ),
     [threads, statusById],
@@ -116,7 +119,7 @@ export function CommentsPanel({
     if (activeIndex !== -1) lastActiveIndexRef.current = activeIndex;
   });
 
-  const focusRow = (thread: CommentThread | undefined) => {
+  const focusRow = (thread: ShownThread | undefined) => {
     if (!thread) {
       listRef.current?.focus();
       return;
@@ -249,14 +252,16 @@ export function CommentsPanel({
                 <span className="flex w-full items-center gap-1.5">
                   <span
                     className="min-w-0 flex-1 truncate font-mono text-[11px] text-github-text-secondary"
-                    title={thread.file}
+                    title={'file' in thread ? thread.file : thread.commit}
                   >
-                    {locationLabel(
-                      baseName(thread.file),
-                      thread.line,
-                      thread.extraLines,
-                      thread.side,
-                    )}
+                    {'file' in thread
+                      ? locationLabel(
+                          baseName(thread.file),
+                          thread.line,
+                          thread.extraLines,
+                          thread.side,
+                        )
+                      : commitLocationLabel(thread)}
                   </span>
                   <span
                     className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${chip.className}`}

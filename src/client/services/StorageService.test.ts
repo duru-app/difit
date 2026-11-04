@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-import type { DiffCommentThread } from '../../types/diff';
+import type { DiffCommentThread, FileCommentThread } from '../../types/diff';
 
 import { StorageService } from './StorageService';
 
@@ -286,8 +286,36 @@ describe('StorageService - Repository Isolation', () => {
       expect(service.getDiffContextData('base', 'target')?.threads).toEqual([thread]);
     });
 
+    it('keeps a thread on a whole commit without a file path, and leaves it out of the old comment list', () => {
+      const onCommit: DiffCommentThread = {
+        id: 'commit',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        position: { scope: 'commit' },
+        fixupTarget: 'abc1234',
+        messages: [
+          {
+            id: 'commit',
+            body: 'Split this commit',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          },
+        ],
+      };
+      service.saveCommentThreads('base', 'target', [onCommit]);
+
+      expect(service.getDiffContextData('base', 'target')).toMatchObject({
+        version: 2,
+        threads: [onCommit],
+      });
+      expect(service.getDiffContextData('base', 'target')?.threads[0]).not.toHaveProperty(
+        'filePath',
+      );
+      expect(service.getComments('base', 'target')).toEqual([]);
+    });
+
     it('keeps a thread on the whole file next to line threads saved by an older difit', () => {
-      const thread = (id: string, position: DiffCommentThread['position']) => ({
+      const thread = (id: string, position: FileCommentThread['position']) => ({
         id,
         filePath: 'src/a.ts',
         createdAt: '2024-01-01T00:00:00Z',

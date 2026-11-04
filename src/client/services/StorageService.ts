@@ -8,6 +8,7 @@ import {
   type ViewedHashIndex,
   type ViewedHashIndexEntry,
 } from '../../types/diff';
+import { isOnCommit } from '../../utils/commentPosition';
 import { normalizeBaseMode } from '../../utils/diffSelection';
 
 const STORAGE_KEY_PREFIX = 'difit-storage-v1';
@@ -42,7 +43,7 @@ function migrateLegacyComment(comment: LegacyDiffComment): DiffCommentThread {
 
 function normalizeRootComment(thread: DiffCommentThread): LegacyDiffComment | null {
   const rootMessage = thread.messages[0];
-  if (!rootMessage) return null;
+  if (!rootMessage || isOnCommit(thread)) return null;
 
   return {
     id: thread.id,

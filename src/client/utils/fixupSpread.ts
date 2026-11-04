@@ -1,5 +1,6 @@
 import type {
   CommentThread,
+  CommitThreadView,
   DiffChunk,
   DiffFile,
   ReviewDecision,
@@ -25,17 +26,19 @@ export function fixupFileLabels(file: FixupFile): string[] {
   return [...(status ? [status] : []), ...(file.isGenerated ? ['생성된 파일'] : [])];
 }
 
-export type AnsweredThread = Pick<
-  CommentThread,
-  'id' | 'file' | 'line' | 'extraLines' | 'side' | 'isOutdated'
->;
+export type AnsweredThread =
+  | Pick<CommentThread, 'id' | 'file' | 'line' | 'extraLines' | 'side' | 'isOutdated'>
+  | (Pick<CommitThreadView, 'id' | 'commit' | 'fixupCommit'> & { isOutdated: false });
+
+const answeredKey = (thread: AnsweredThread) =>
+  JSON.stringify(
+    'file' in thread
+      ? [thread.id, thread.file, thread.line, thread.extraLines, thread.side, thread.isOutdated]
+      : [thread.id, thread.commit, thread.fixupCommit?.shortSha, thread.fixupCommit?.subject],
+  );
 
 export const sameAnsweredThread = (a: AnsweredThread, b: AnsweredThread) =>
-  a.id === b.id &&
-  a.file === b.file &&
-  JSON.stringify([a.line, a.extraLines, a.side]) ===
-    JSON.stringify([b.line, b.extraLines, b.side]) &&
-  a.isOutdated === b.isOutdated;
+  answeredKey(a) === answeredKey(b);
 
 export interface FixupFileRef {
   fixupSha: string;
@@ -329,10 +332,12 @@ export function spreadFixups<Thread extends OutsideThread>(
       if (isReviewed && !spread.touchedReviewFiles.has(reviewPath)) {
         spread.touchedReviewFiles.set(reviewPath, ref);
       }
-      const cardThread = answered.find((thread) =>
-        outsideIds.has(thread.id)
-          ? thread.file === parentPath
-          : isReviewed && thread.file === reviewPath,
+      const cardThread = answered.find(
+        (thread) =>
+          'file' in thread &&
+          (outsideIds.has(thread.id)
+            ? thread.file === parentPath
+            : isReviewed && thread.file === reviewPath),
       );
       if (cardThread) {
         spread.places.set(fixupFileKey(ref), { kind: 'card', threadId: cardThread.id });

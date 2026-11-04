@@ -4,13 +4,14 @@ import {
   type BaseMode,
   type ChoiceAnswer,
   type CommentImport,
-  type CommentThread,
+  type DiffCommentCodeSnapshot,
   type DiffContextStorage,
   type DiffCommentThread,
   type DiffLineRange,
   type ExtraLineRange,
   type DiffSide,
   type LegacyDiffComment,
+  type ShownThread,
   type FixupRef,
   type ReviewDecision,
   type ReviewDecisionKind,
@@ -23,13 +24,13 @@ import {
 } from '../../utils/commentFormatting';
 import { createId } from '../../utils/createId';
 import { mergeCommentImports } from '../../utils/commentImports';
-import { extraLinesOfPosition, lineOfPosition } from '../../utils/commentPosition';
+import { extraLinesOfPosition, isOnCommit, lineOfPosition } from '../../utils/commentPosition';
 import { isCommitTarget, type ViewBinding } from '../../utils/diffSelection';
 import { mergeReviewDecisions } from '../../utils/reviewDecisions';
 import { storageService } from '../services/StorageService';
 import { getLanguageFromPath } from '../utils/diffUtils';
 
-interface AddThreadParams {
+interface AddFileThreadParams {
   filePath: string;
   body: string;
   side: DiffSide;
@@ -37,9 +38,17 @@ interface AddThreadParams {
   line?: DiffLineRange;
   // The comment's other ranges, in the order of a position's `extraRanges`.
   extraRanges?: ExtraLineRange[];
-  codeSnapshot?: DiffCommentThread['codeSnapshot'];
+  codeSnapshot?: DiffCommentCodeSnapshot;
   binding?: ViewBinding;
 }
+
+interface AddCommitThreadParams {
+  scope: 'commit';
+  body: string;
+  binding: ViewBinding;
+}
+
+type AddThreadParams = AddFileThreadParams | AddCommitThreadParams;
 
 interface ReplyToThreadParams {
   threadId: string;
@@ -67,7 +76,7 @@ interface UseDiffCommentsReturn {
     fixups: readonly FixupRef[],
   ) => void;
   undoApproval: (threadId: string) => void;
-  addComment: (params: AddThreadParams) => LegacyDiffComment;
+  addComment: (params: AddFileThreadParams) => LegacyDiffComment;
   addThread: (params: AddThreadParams) => DiffCommentThread;
   removeComment: (commentId: string) => void;
   replyToThread: (params: ReplyToThreadParams) => void;
@@ -84,7 +93,16 @@ interface UseDiffCommentsReturn {
   ) => string;
 }
 
-function normalizeThread(thread: DiffCommentThread): CommentThread {
+function normalizeThread(thread: DiffCommentThread): ShownThread {
+  if (isOnCommit(thread)) {
+    return {
+      id: thread.id,
+      commit: thread.fixupTarget,
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+      messages: thread.messages,
+    };
+  }
   const line = lineOfPosition(thread.position);
   const extraLines = extraLinesOfPosition(thread.position);
   return {
@@ -102,7 +120,7 @@ function normalizeThread(thread: DiffCommentThread): CommentThread {
 
 function normalizeRootComment(thread: DiffCommentThread): LegacyDiffComment | null {
   const rootMessage = thread.messages[0];
-  if (!rootMessage) return null;
+  if (!rootMessage || isOnCommit(thread)) return null;
 
   return {
     id: thread.id,
@@ -306,41 +324,51 @@ export function useDiffComments(
       const now = new Date().toISOString();
       const threadId = createId();
       const { binding } = params;
+      const rootMessage = {
+        id: threadId,
+        body: params.body,
+        author: REVIEWER_AUTHOR,
+        createdAt: now,
+        updatedAt: now,
+      };
       const commit =
         binding?.snapshotCommit ??
         (targetCommitish && isCommitTarget(targetCommitish) ? targetCommitish : undefined);
-      const newThread: DiffCommentThread = {
-        id: threadId,
-        filePath: params.filePath,
-        createdAt: now,
-        updatedAt: now,
-        position:
-          params.line === undefined
-            ? { side: params.side, scope: 'file' }
-            : {
-                side: params.side,
-                line: params.line,
-                ...(params.extraRanges?.length ? { extraRanges: params.extraRanges } : {}),
+      const newThread: DiffCommentThread =
+        'scope' in params
+          ? {
+              id: threadId,
+              createdAt: now,
+              updatedAt: now,
+              position: { scope: 'commit' },
+              messages: [rootMessage],
+              ...(params.binding.view ? { view: params.binding.view } : {}),
+              fixupTarget: params.binding.fixupTarget,
+            }
+          : {
+              id: threadId,
+              filePath: params.filePath,
+              createdAt: now,
+              updatedAt: now,
+              position:
+                params.line === undefined
+                  ? { side: params.side, scope: 'file' }
+                  : {
+                      side: params.side,
+                      line: params.line,
+                      ...(params.extraRanges?.length ? { extraRanges: params.extraRanges } : {}),
+                    },
+              codeSnapshot: {
+                ...(params.codeSnapshot ?? {
+                  content: '',
+                  language: getLanguageFromPath(params.filePath),
+                }),
+                commit,
               },
-        codeSnapshot: {
-          ...(params.codeSnapshot ?? {
-            content: '',
-            language: getLanguageFromPath(params.filePath),
-          }),
-          commit,
-        },
-        messages: [
-          {
-            id: threadId,
-            body: params.body,
-            author: REVIEWER_AUTHOR,
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
-        ...(binding?.view ? { view: binding.view } : {}),
-        ...(binding ? { fixupTarget: binding.fixupTarget } : {}),
-      };
+              messages: [rootMessage],
+              ...(binding?.view ? { view: binding.view } : {}),
+              ...(binding ? { fixupTarget: binding.fixupTarget } : {}),
+            };
 
       const newThreads = [...threads, newThread];
       saveThreads(newThreads);
@@ -350,7 +378,7 @@ export function useDiffComments(
   );
 
   const addComment = useCallback(
-    (params: AddThreadParams): LegacyDiffComment => {
+    (params: AddFileThreadParams): LegacyDiffComment => {
       const thread = addThread(params);
       const rootComment = normalizeRootComment(thread);
       if (!rootComment) {

@@ -5,6 +5,7 @@ import type {
   DiffChunk,
   DiffLine,
   MessageAmendment,
+  ShownThread,
   ThreadFixup,
 } from '../../types/diff';
 import {
@@ -13,7 +14,7 @@ import {
   LEAVES_CODE_ALONE_TITLE,
   leavesCodeAlone,
 } from '../../utils/changeKind';
-import { locationLabel } from '../../utils/commentPosition';
+import { commitLocationLabel, locationLabel } from '../../utils/commentPosition';
 import { FileLevelTokensProvider } from '../contexts/FileLevelTokensContext';
 import {
   canEditFixupCard,
@@ -40,7 +41,7 @@ import type { AppearanceSettings } from './SettingsModal';
 interface FixupOverlayCardProps {
   fixup: ThreadFixup;
   threadId: string;
-  filePath: string;
+  filePath: string | undefined;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   // The fixups on the thread's cards an edit here approves; empty when the card takes no edits.
   approvedWith: readonly string[];
@@ -299,7 +300,11 @@ function FixupOverlayCard({
         />
       ))}
       {heldFiles.map((file) => (
-        <div key={file.path} className="border-t border-github-border">
+        <div
+          key={file.path}
+          id={fixupFileElementId(fixup.sha, file.path)}
+          className="border-t border-github-border"
+        >
           <div className="px-3 py-1 text-xs font-mono text-github-text-secondary">
             {fixupFileName(file)}
             <FixupFileLabels file={file} />
@@ -364,7 +369,9 @@ function FixupFileBox({
               onClick={() => pickThread(thread.id)}
               className="font-mono text-github-accent hover:underline"
             >
-              {locationLabel(thread.file, thread.line, thread.extraLines, thread.side)}
+              {'file' in thread
+                ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
+                : commitLocationLabel(thread)}
             </button>
           </span>
         ))}
@@ -436,15 +443,18 @@ interface FixupOverlayRowProps {
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
 }
 
-export function FixupOverlayBlock({
-  thread,
-  filePath,
-  syntaxTheme,
-}: Omit<FixupOverlayRowProps, 'colSpan'>) {
+interface FixupOverlayBlockProps {
+  thread: ShownThread;
+  filePath: string | undefined;
+  syntaxTheme?: AppearanceSettings['syntaxTheme'];
+}
+
+export function FixupOverlayBlock({ thread, filePath, syntaxTheme }: FixupOverlayBlockProps) {
   const overlay = useFixupOverlay();
   const fixups = overlaidFixups(overlay, thread);
-  if (fixups.length === 0 || !filePath) return null;
-  const approvedWith = canEditFixupCard(overlay, thread) ? fixups.map(({ sha }) => sha) : [];
+  if (fixups.length === 0) return null;
+  const approvedWith =
+    'file' in thread && canEditFixupCard(overlay, thread) ? fixups.map(({ sha }) => sha) : [];
   return fixups.map((fixup) => (
     <FixupOverlayCard
       key={fixup.sha}

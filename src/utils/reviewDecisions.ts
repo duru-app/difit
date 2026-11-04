@@ -1,12 +1,16 @@
 import {
   REVIEWER_AUTHOR,
   REVIEWER_EDIT_AUTHOR,
+  type CommitCommentThread,
   type DiffCommentThread,
+  type FileCommentThread,
   type ReviewDecision,
   type ThreadAwaitingAgent,
   type ThreadFixup,
   type ThreadReviewState,
 } from '../types/diff.js';
+
+import { isOnCommit } from './commentPosition.js';
 
 const REVIEW_DECISION_KINDS: ReviewDecision['kind'][] = [
   'rejected',
@@ -355,10 +359,9 @@ export function commentPanelStatus(
   return status;
 }
 
-type ThreadForAgent = Pick<
-  DiffCommentThread,
-  'id' | 'filePath' | 'position' | 'messages' | 'fixupTarget'
->;
+type ThreadForAgent =
+  | Pick<FileCommentThread, 'id' | 'filePath' | 'position' | 'messages' | 'fixupTarget'>
+  | Pick<CommitCommentThread, 'id' | 'position' | 'messages' | 'fixupTarget'>;
 
 type ThreadTurn = Pick<DiffCommentThread, 'id' | 'messages'>;
 
@@ -503,8 +506,9 @@ export function selectThreadsAwaitingAgent(
     return [
       {
         threadId: thread.id,
-        filePath: thread.filePath,
-        position: thread.position,
+        ...(isOnCommit(thread)
+          ? { position: thread.position }
+          : { filePath: thread.filePath, position: thread.position }),
         message: last?.body ?? '',
         ...(last?.answer ? { answer: { ...last.answer } } : {}),
         ...(thread.fixupTarget === undefined ? {} : { fixupTarget: thread.fixupTarget }),

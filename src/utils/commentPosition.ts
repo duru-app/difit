@@ -1,4 +1,6 @@
 import type {
+  CommitCommentPosition,
+  CommitThreadView,
   DiffCommentPosition,
   DiffLineRange,
   DiffSide,
@@ -6,6 +8,12 @@ import type {
   LineNumber,
   SidedLine,
 } from '../types/diff.js';
+
+export function isOnCommit<T extends { position: DiffCommentPosition | CommitCommentPosition }>(
+  thread: T,
+): thread is Extract<T, { position: CommitCommentPosition }> {
+  return 'scope' in thread.position && thread.position.scope === 'commit';
+}
 
 export function lineOfRange(range: ExtraLineRange): LineNumber {
   return typeof range === 'number' ? range : [range.start, range.end];
@@ -110,4 +118,12 @@ export function locationLabel(
 ): string {
   if (line === undefined) return file;
   return `${file}:${sidedRangesLabel([...(extraLines ?? []), { side, line }], spanLabel)}`;
+}
+
+export function commitLocationLabel({
+  commit,
+  fixupCommit,
+}: Pick<CommitThreadView, 'commit' | 'fixupCommit'>): string {
+  const shortSha = fixupCommit?.shortSha ?? commit.slice(0, 7);
+  return fixupCommit?.subject ? `커밋 ${shortSha} ${fixupCommit.subject}` : `커밋 ${shortSha}`;
 }

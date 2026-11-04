@@ -235,6 +235,13 @@ export function bindingForView(
   };
 }
 
+export function bindingForCommit(
+  review: Pick<ReviewScope, 'selection' | 'commits'>,
+  commit: Pick<ReviewCommit, 'sha' | 'parentSha'>,
+): ViewBinding | undefined {
+  return bindingForView(review, createDiffSelection(commit.parentSha, commit.sha), commit.sha);
+}
+
 // As the commit list or its 「전체」 entry requests it, so showing it records the same history entry.
 export function madeViewElsewhere(
   thread: Pick<DiffCommentThread, 'view'>,

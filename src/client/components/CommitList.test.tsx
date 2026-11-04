@@ -535,6 +535,85 @@ describe('CommitList', () => {
     });
   });
 
+  describe('commenting on a whole commit', () => {
+    const MERGE: ReviewCommit = {
+      ...commit('3', 'merge the side branch'),
+      isMerge: true,
+      merged: [{ sha: 'a'.repeat(40), shortSha: 'aaaaaaa', subject: 'side first' }],
+    };
+
+    function renderCommentable(shown: ReviewView = { kind: 'all' }, { inDrawer = false } = {}) {
+      const onAddCommitComment = vi.fn(async () => {});
+      render(
+        <CommitList
+          review={{ ...REVIEW, commits: [COMMITS[0]!, COMMITS[1]!, MERGE] }}
+          shown={shown}
+          onSelect={vi.fn()}
+          inDrawer={inDrawer}
+          onAddCommitComment={onAddCommitComment}
+        />,
+      );
+      return { onAddCommitComment };
+    }
+
+    const commentButtonOf = (shortSha: string) =>
+      within(row(new RegExp(shortSha)).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+
+    it('offers no comment button without a way to add one', () => {
+      renderList();
+
+      expect(screen.queryByRole('button', { name: /커밋에 지적 달기/ })).toBeNull();
+    });
+
+    it('adds a comment on the commit of the row from a view that shows another commit', async () => {
+      const { onAddCommitComment } = renderCommentable({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+      fireEvent.click(commentButtonOf('1111111'));
+      fireEvent.change(screen.getByPlaceholderText(/comment/i), {
+        target: { value: 'Split this commit' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+      await vi.waitFor(() =>
+        expect(onAddCommitComment).toHaveBeenCalledWith(COMMITS[0]!.sha, 'Split this commit'),
+      );
+      await vi.waitFor(() => expect(screen.queryByPlaceholderText(/comment/i)).toBeNull());
+    });
+
+    it('offers it on a merge but not on the commits the merge brings in', () => {
+      renderCommentable();
+
+      expect(commentButtonOf('3333333')).toBeInTheDocument();
+      expect(
+        within(
+          within(list())
+            .getByText(/aaaaaaa/)
+            .closest('li')!,
+        ).queryByRole('button', {
+          name: '커밋에 지적 달기',
+        }),
+      ).toBeNull();
+    });
+
+    it('lets the comment be selected and pasted inside the list', () => {
+      renderCommentable();
+
+      fireEvent.click(commentButtonOf('1111111'));
+      const field = screen.getByPlaceholderText(/comment/i);
+
+      expect(fireEvent.contextMenu(field)).toBe(true);
+      expect(field.closest('.select-text')).not.toBeNull();
+    });
+
+    it('keeps it on screen in the phone drawer', () => {
+      renderCommentable({ kind: 'all' }, { inDrawer: true });
+
+      expect(commentButtonOf('2222222').className).not.toContain('opacity-0');
+    });
+  });
+
   it('folds the list away and keeps naming what is shown', () => {
     renderList({ kind: 'commit', sha: COMMITS[0]!.sha });
 
