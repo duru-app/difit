@@ -29,6 +29,29 @@ vi.mock('./utils/fixupSpread', async (importOriginal) => {
   return { ...actual, spreadFixups: vi.fn(actual.spreadFixups) };
 });
 
+let forcedFileScrolledPast: boolean | undefined;
+const mockScrollFileIntoDiffContainer = vi.fn();
+vi.mock('./hooks/useLazyDiffRendering', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./hooks/useLazyDiffRendering')>();
+  return {
+    ...actual,
+    useLazyDiffRendering: (...args: Parameters<typeof actual.useLazyDiffRendering>) => {
+      const real = actual.useLazyDiffRendering(...args);
+      return {
+        ...real,
+        isFileScrolledPastContainerTop: (filePath: string) =>
+          forcedFileScrolledPast ?? real.isFileScrolledPastContainerTop(filePath),
+        scrollFileIntoDiffContainer: (
+          ...scrollArgs: Parameters<typeof real.scrollFileIntoDiffContainer>
+        ) => {
+          mockScrollFileIntoDiffContainer(...scrollArgs);
+          real.scrollFileIntoDiffContainer(...scrollArgs);
+        },
+      };
+    },
+  };
+});
+
 // Mock the useViewport hook
 vi.mock('./hooks/useViewport', () => ({
   useViewport: vi.fn(() => ({ isMobile: false, isDesktop: true })),
@@ -845,6 +868,52 @@ describe('App Component - Initial file collapsing', () => {
     await waitFor(() => {
       expect(screen.getByTitle('Expand file (Alt+Click to expand all)')).toBeInTheDocument();
     });
+  });
+});
+
+describe('App Component - Collapsing a file keeps the reader in place', () => {
+  afterEach(() => {
+    forcedFileScrolledPast = undefined;
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockComments = [];
+    mockFetch(mockDiffResponse);
+    forcedFileScrolledPast = false;
+  });
+
+  it('puts the collapsed header back in view when its top had scrolled away', async () => {
+    forcedFileScrolledPast = true;
+    renderApp();
+
+    await userEvent.click(await screen.findByTitle('Collapse file (Alt+Click to collapse all)'));
+
+    await waitFor(() => {
+      expect(mockScrollFileIntoDiffContainer).toHaveBeenCalledWith('test.ts');
+    });
+  });
+
+  it('leaves the scroll alone when the file header is still on screen', async () => {
+    renderApp();
+
+    await userEvent.click(await screen.findByTitle('Collapse file (Alt+Click to collapse all)'));
+    await screen.findByTitle('Expand file (Alt+Click to expand all)');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(mockScrollFileIntoDiffContainer).not.toHaveBeenCalled();
+  });
+
+  it('does not scroll when expanding a collapsed file', async () => {
+    forcedFileScrolledPast = true;
+    mockViewedFiles = new Set(['test.ts']);
+    renderApp();
+
+    await userEvent.click(await screen.findByTitle('Expand file (Alt+Click to expand all)'));
+    await screen.findByTitle('Collapse file (Alt+Click to collapse all)');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(mockScrollFileIntoDiffContainer).not.toHaveBeenCalled();
   });
 });
 
