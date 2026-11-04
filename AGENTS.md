@@ -16,6 +16,8 @@ The TypeScript sources live under `src`, split by runtime: `src/cli` handles com
 
 The codebase uses strict TypeScript (`tsconfig.strictest`) and 2-space indentation; avoid `any` and prefer explicit types. Import types with `import type` and keep module order consistent; oxlint enforces unused imports/variables and type-aware safety rules. React components live under `src/client`; use PascalCase filenames for components, kebab-case for utilities, and co-locate UI-specific helpers when practical. Run `pnpm format` before submitting to apply oxfmt formatting.
 
+A button, tab, count or chip in the web UI is named with one or two words or an icon, not a phrase. A guide next to a line or card is a short link, not a sentence: 「L370 지적으로 가기」, not 「이 줄도 L370 아래 지적에 함께 걸려 있습니다」. What it means goes in `title` and `aria-label`.
+
 ## Testing Guidelines
 
 Vitest with the `happy-dom` environment drives unit and integration coverage, and React work should lean on Testing Library helpers. Place new tests alongside the implementation using the `name.test.ts[x]` pattern and prefer descriptive `describe` blocks tied to features. Ensure asynchronous flows await their assertions and cover both CLI (`src/cli`) and server (`src/server`) branches when they change; use `pnpm test --runInBand` if watchers behave flakily in CI.
