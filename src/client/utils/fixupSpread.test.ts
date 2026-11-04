@@ -6,6 +6,7 @@ import {
   type AnsweredThread,
   anchorOf,
   fixupDiffFile,
+  laterEditsByCardLine,
   reviewPathsOf,
   revertedReviewFiles,
   sameAnsweredThread,
@@ -874,6 +875,116 @@ describe('a reviewed path the review deletes', () => {
     expect(result.places.get('aaa1111:gone.ts')).toEqual({ kind: 'card', threadId: 't1' });
     expect(result.fixupOnly).toEqual([]);
     expect(result.boxesByFile.size).toBe(0);
+  });
+});
+
+describe('laterEditsByCardLine', () => {
+  const shown = () => true;
+  const lineInsertedAtTop = (count: number) => ({
+    oldStart: 0,
+    oldLines: 0,
+    newStart: 1,
+    newLines: count,
+  });
+  const withPlain = (
+    fixup: ThreadFixup,
+    plainChangesBefore: ThreadFixup['plainChangesBefore'],
+  ) => ({ ...fixup, plainChangesBefore });
+
+  it('points a card line at the later fixup that replaced it', () => {
+    const earlier = fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)])]);
+    const later = fixupOf('bbb2222', ['t2'], [file('a.ts', [replaceLine(5)])]);
+
+    const laterEdits = laterEditsByCardLine([earlier, later], shown);
+
+    expect(laterEdits.size).toBe(1);
+    expect(laterEdits.get('aaa1111:a.ts')?.get(5)).toEqual({ fixupSha: 'bbb2222', path: 'a.ts' });
+  });
+
+  it('records nothing for a later fixup that only adds lines', () => {
+    const earlier = fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)])]);
+    const later = fixupOf('bbb2222', ['t2'], [file('a.ts', [insertTop(2)])]);
+
+    expect(laterEditsByCardLine([earlier, later], shown).size).toBe(0);
+  });
+
+  it('finds the line of the earlier card past the lines a plain commit inserted before the later one', () => {
+    const earlier = fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)])]);
+    const later = withPlain(fixupOf('bbb2222', ['t2'], [file('a.ts', [replaceLine(7)])]), [
+      { path: 'a.ts', shifts: [lineInsertedAtTop(2)] },
+    ]);
+
+    const laterEdits = laterEditsByCardLine([earlier, later], shown);
+
+    expect(laterEdits.get('aaa1111:a.ts')?.get(5)).toEqual({ fixupSha: 'bbb2222', path: 'a.ts' });
+  });
+
+  it('records nothing for a line a plain commit wrote in between', () => {
+    const earlier = fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)])]);
+    const later = withPlain(fixupOf('bbb2222', ['t2'], [file('a.ts', [replaceLine(2)])]), [
+      { path: 'a.ts', shifts: [lineInsertedAtTop(2)] },
+    ]);
+
+    expect(laterEditsByCardLine([earlier, later], shown).size).toBe(0);
+  });
+
+  it('records under the path the earlier fixup renamed the file to', () => {
+    const earlier = fixupOf(
+      'aaa1111',
+      ['t1'],
+      [file('b.ts', [replaceLine(5)], { oldPath: 'a.ts', status: 'renamed' })],
+    );
+    const later = fixupOf('bbb2222', ['t2'], [file('b.ts', [replaceLine(5)])]);
+
+    const laterEdits = laterEditsByCardLine([earlier, later], shown);
+
+    expect(laterEdits.get('aaa1111:b.ts')?.get(5)).toEqual({ fixupSha: 'bbb2222', path: 'b.ts' });
+  });
+
+  it('records nothing for a later fixup file that is not shown', () => {
+    const earlier = fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)])]);
+    const later = fixupOf('bbb2222', ['t2'], [file('a.ts', [replaceLine(5)])]);
+
+    expect(laterEditsByCardLine([earlier, later], () => false).size).toBe(0);
+  });
+
+  it('walks past a line a fixup in between shows only around its own change', () => {
+    const withContext = (line: number) =>
+      chunk(line - 3, 7, line - 3, 7, [
+        ...[3, 2, 1].map((back) => ({
+          type: 'normal' as const,
+          content: `line ${line - back}`,
+          oldLineNumber: line - back,
+          newLineNumber: line - back,
+        })),
+        { type: 'delete', content: 'old', oldLineNumber: line },
+        { type: 'add', content: 'new', newLineNumber: line },
+        ...[1, 2, 3].map((ahead) => ({
+          type: 'normal' as const,
+          content: `line ${line + ahead}`,
+          oldLineNumber: line + ahead,
+          newLineNumber: line + ahead,
+        })),
+      ]);
+    const first = fixupOf('aaa1111', ['t1'], [file('a.ts', [withContext(10)])]);
+    const middle = fixupOf('bbb2222', ['t2'], [file('a.ts', [withContext(13)])]);
+    const last = fixupOf('ccc3333', ['t3'], [file('a.ts', [withContext(10)])]);
+
+    const laterEdits = laterEditsByCardLine([first, middle, last], shown);
+
+    expect(laterEdits.get('aaa1111:a.ts')?.get(10)).toEqual({ fixupSha: 'ccc3333', path: 'a.ts' });
+    expect(laterEdits.get('aaa1111:a.ts')?.get(13)).toEqual({ fixupSha: 'bbb2222', path: 'a.ts' });
+  });
+
+  it('keeps the nearest later fixup that changed the line', () => {
+    const earlier = fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)])]);
+    const middle = fixupOf('bbb2222', ['t2'], [file('a.ts', [replaceLine(5)])]);
+    const last = fixupOf('ccc3333', ['t3'], [file('a.ts', [replaceLine(5)])]);
+
+    const laterEdits = laterEditsByCardLine([earlier, middle, last], shown);
+
+    expect(laterEdits.get('aaa1111:a.ts')?.get(5)).toEqual({ fixupSha: 'bbb2222', path: 'a.ts' });
+    expect(laterEdits.get('bbb2222:a.ts')?.get(5)).toEqual({ fixupSha: 'ccc3333', path: 'a.ts' });
   });
 });
 

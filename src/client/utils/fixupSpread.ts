@@ -252,6 +252,59 @@ export function revertedReviewFiles(
   return reverted;
 }
 
+// Keyed by fixupFileKey, then by a new line of that fixup file: the nearest later shown fixup file
+// that deleted or changed the line. A later fixup's deleted lines are walked back through the
+// fixups and the commits answering no thread before it; a line one of them added or changed is no
+// line of an older fixup and stops there.
+export function laterEditsByCardLine(
+  fixupsInLogOrder: readonly ThreadFixup[],
+  isShown: (ref: FixupFileRef) => boolean,
+): Map<string, Map<number, FixupFileRef>> {
+  const laterEdits = new Map<string, Map<number, FixupFileRef>>();
+  const through = <Shift extends LineShift>(
+    lines: readonly number[],
+    shifts: readonly Shift[],
+    insideShift: (shift: Shift, line: number) => number | null,
+  ) =>
+    lines.flatMap((line) => {
+      const old = oldLineOf(shifts, line, (shift) => insideShift(shift, line));
+      return old === null ? [] : [old];
+    });
+  const unchangedOldLine = (chunk: DiffChunk, line: number) => {
+    const shown = chunk.lines.find(({ newLineNumber }) => newLineNumber === line);
+    return shown?.type === 'normal' ? (shown.oldLineNumber ?? null) : null;
+  };
+  fixupsInLogOrder.forEach((later, index) => {
+    for (const file of later.files) {
+      const laterRef = { fixupSha: later.sha, path: file.path };
+      if (!isShown(laterRef)) continue;
+      let path = file.oldPath ?? file.path;
+      let lines = file.chunks.flatMap(deletedOldLines);
+      const stepBack = (change: ThreadFixup | undefined) => {
+        const plain = change?.plainChangesBefore?.find((candidate) => candidate.path === path);
+        if (!plain) return;
+        path = plain.oldPath ?? plain.path;
+        lines = through(lines, plain.shifts, () => null);
+      };
+      stepBack(later);
+      for (let at = index - 1; at >= 0 && lines.length > 0; at--) {
+        const earlier = fixupsInLogOrder[at];
+        const earlierFile = earlier?.files.find((candidate) => candidate.path === path);
+        if (earlier && earlierFile) {
+          const key = fixupFileKey({ fixupSha: earlier.sha, path: earlierFile.path });
+          const byLine = laterEdits.get(key) ?? new Map<number, FixupFileRef>();
+          for (const line of lines) if (!byLine.has(line)) byLine.set(line, laterRef);
+          laterEdits.set(key, byLine);
+          path = earlierFile.oldPath ?? earlierFile.path;
+          lines = through(lines, earlierFile.chunks, unchangedOldLine);
+        }
+        stepBack(earlier);
+      }
+    }
+  });
+  return laterEdits;
+}
+
 // A thread outside the review belongs to the group of the fixup its snapshot was taken on and is
 // placed there once, before any later fixup is spread. A thread whose snapshot names no listed
 // fixup, or whose fixup shows no fixup-only copy of its file, is placed on the latest group so far

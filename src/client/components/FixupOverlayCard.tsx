@@ -27,6 +27,7 @@ import { fixupFileElementId } from '../utils/domUtils';
 import {
   type FixupBox,
   type FixupFile,
+  type FixupFileRef,
   fixupFileKey,
   fixupFileLabels,
   fixupFileName,
@@ -102,13 +103,16 @@ function FixupChunksTable({
   file,
   syntaxTheme,
   editing,
+  laterEdits,
 }: {
   chunks: DiffChunk[];
   fixupSha: string;
   file: FixupFile;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   editing?: ChunksEditing;
+  laterEdits?: ReadonlyMap<number, FixupFileRef>;
 }) {
+  const { revealFixupFile } = useFixupOverlay();
   const canHover = useCanHover();
   const [hovered, setHovered] = useState<string | null>(null);
   return (
@@ -125,6 +129,12 @@ function FixupChunksTable({
                   const lineIndex = from + offset;
                   const lineNumber = line.type === 'add' ? line.newLineNumber : undefined;
                   const rowKey = `${chunkIndex}-${lineIndex}`;
+                  const laterEdit =
+                    line.newLineNumber === undefined
+                      ? undefined
+                      : laterEdits?.get(line.newLineNumber);
+                  const isEditHovered =
+                    editing !== undefined && hovered === rowKey && lineNumber !== undefined;
                   return (
                     <Fragment key={lineIndex}>
                       <tr
@@ -145,11 +155,28 @@ function FixupChunksTable({
                             filename={file.path}
                             showPrefixBorder={false}
                           />
-                          {editing && hovered === rowKey && lineNumber !== undefined && (
-                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex">
-                              <EditLineButton
-                                onClick={() => editing.open({ start: lineNumber, end: lineNumber })}
-                              />
+                          {(laterEdit || isEditHovered) && (
+                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1">
+                              {laterEdit && (
+                                <button
+                                  type="button"
+                                  data-testid="fixup-later-edit"
+                                  title={`${laterEdit.fixupSha.slice(0, 7)} 에서 다시 수정됨`}
+                                  onClick={() =>
+                                    revealFixupFile(laterEdit.fixupSha, laterEdit.path)
+                                  }
+                                  className="rounded px-1 bg-github-bg-secondary font-sans text-xs text-github-warning hover:underline"
+                                >
+                                  수정됨
+                                </button>
+                              )}
+                              {editing && isEditHovered && lineNumber !== undefined && (
+                                <EditLineButton
+                                  onClick={() =>
+                                    editing.open({ start: lineNumber, end: lineNumber })
+                                  }
+                                />
+                              )}
                             </div>
                           )}
                         </td>
@@ -205,7 +232,8 @@ function FixupOverlayCard({
   syntaxTheme,
   approvedWith,
 }: FixupOverlayCardProps) {
-  const { revealFixupFile, fixupReviewPaths, fixupPlaces, directEdit } = useFixupOverlay();
+  const { revealFixupFile, fixupReviewPaths, fixupPlaces, fixupLaterEdits, directEdit } =
+    useFixupOverlay();
   // approvedWith is null once a save was refused for a changed card: the next save sends what the
   // card shows then and keeps it for later saves.
   const [edit, setEdit] = useState<{
@@ -297,6 +325,7 @@ function FixupOverlayCard({
           file={file}
           syntaxTheme={syntaxTheme}
           editing={editingOf(file)}
+          laterEdits={fixupLaterEdits.get(keyOf(file))}
         />
       ))}
       {heldFiles.map((file) => (
@@ -315,6 +344,7 @@ function FixupOverlayCard({
             file={file}
             syntaxTheme={syntaxTheme}
             editing={editingOf(file)}
+            laterEdits={fixupLaterEdits.get(keyOf(file))}
           />
         </div>
       ))}

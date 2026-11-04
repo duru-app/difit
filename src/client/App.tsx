@@ -152,6 +152,7 @@ import {
   fixupFileKey,
   type FixupFileRef,
   type FixupSpread,
+  laterEditsByCardLine,
   reviewPathsOf,
   revertedReviewFiles,
   sameAnsweredThread,
@@ -1083,6 +1084,10 @@ function App() {
     [fixups, fixupReviewPaths, fixupSpread.places, diffData],
   );
   const { commitThreads } = reviewPlacement;
+  const fixupLaterEdits = useMemo(
+    () => laterEditsByCardLine(fixups, (ref) => fixupSpread.places.has(fixupFileKey(ref))),
+    [fixups, fixupSpread.places],
+  );
   const { normalizedThreads, hiddenThreadIds } = useMemo(() => {
     const { outsidePlacements } = fixupSpread;
     if (outsidePlacements.size === 0) return reviewPlacement;
@@ -1904,6 +1909,7 @@ function App() {
       fixupReviewPaths,
       fixupTouchedFiles: fixupSpread.touchedReviewFiles,
       fixupRevertedFiles,
+      fixupLaterEdits,
       focusedFixupFile,
       revealFixupFile,
       pickThread,
@@ -1923,6 +1929,7 @@ function App() {
       fixupSpread,
       fixupReviewPaths,
       fixupRevertedFiles,
+      fixupLaterEdits,
       focusedFixupFile,
       revealFixupFile,
       pickThread,
