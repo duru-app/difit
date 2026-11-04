@@ -13,7 +13,7 @@ import { ExternalLink, MessageSquare, Pencil } from 'lucide-react';
 import React, { useState } from 'react';
 
 import { CommentButton } from './CommentButton';
-import { EditLineButton } from './EditLineButton';
+import { EditLineButton, lineEndPlacement } from './EditLineButton';
 import { OpenInEditorButton } from './OpenInEditorButton';
 
 interface LineActionsProps {
@@ -48,10 +48,11 @@ export function LineNumberActions({
 export function LineEndActions({
   onEditLine,
   onOpenInEditor,
-}: Pick<LineActionsProps, 'onEditLine' | 'onOpenInEditor'>) {
+  placement = lineEndPlacement(false, 0),
+}: Pick<LineActionsProps, 'onEditLine' | 'onOpenInEditor'> & { placement?: string }) {
   if (!onEditLine && !onOpenInEditor) return null;
   return (
-    <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex gap-1">
+    <div className={`absolute ${placement} z-10 flex gap-1`}>
       {onOpenInEditor && <OpenInEditorButton onClick={onOpenInEditor} />}
       {onEditLine && <EditLineButton onClick={onEditLine} />}
     </div>

@@ -25,6 +25,7 @@ interface DiffLineRowProps {
   canHover: boolean;
   onOpenInEditor?: () => void;
   onEditLine?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  lineEndActionsPlacement?: string;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   onClick?: (e: React.MouseEvent<HTMLTableRowElement>) => void;
   filename?: string;
@@ -65,6 +66,7 @@ export const DiffLineRow: React.FC<DiffLineRowProps> = React.memo(
     canHover,
     onOpenInEditor,
     onEditLine,
+    lineEndActionsPlacement,
     syntaxTheme,
     onClick,
     filename,
@@ -126,7 +128,11 @@ export const DiffLineRow: React.FC<DiffLineRowProps> = React.memo(
             diffSegments={diffSegments}
           />
           {showLineActions && canHover && (
-            <LineEndActions onEditLine={onEditLine} onOpenInEditor={onOpenInEditor} />
+            <LineEndActions
+              onEditLine={onEditLine}
+              onOpenInEditor={onOpenInEditor}
+              placement={lineEndActionsPlacement}
+            />
           )}
         </td>
       </tr>

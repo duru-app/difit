@@ -29,6 +29,16 @@ export const EditLineButton: React.FC<EditLineButtonProps> = React.memo(({ onCli
 
 EditLineButton.displayName = 'EditLineButton';
 
+const AT_ROW_END = 'right-1.5 top-1/2 -translate-y-1/2';
+const HUNK_BUTTON_HEIGHT =
+  '[&>[data-edit-line-button]]:h-[calc(1.25rem+2px)] [&>[data-open-in-editor-button]]:h-[calc(1.25rem+2px)]';
+
+export const lineEndPlacement = (hasHunkButton: boolean, rowIndex: number) => {
+  if (!hasHunkButton) return AT_ROW_END;
+  if (rowIndex >= 2) return `${AT_ROW_END} ${HUNK_BUTTON_HEIGHT}`;
+  return `right-[7.625rem] ${HUNK_BUTTON_HEIGHT} ${rowIndex === 0 ? 'top-1' : 'top-1/2 -translate-y-1/2'}`;
+};
+
 export function EditHunkButton({
   onClick,
   alwaysShown = false,
@@ -39,7 +49,7 @@ export function EditHunkButton({
   return (
     <button
       type="button"
-      className={`${alwaysShown ? '' : 'invisible group-focus-within/hunk:visible group-hover/hunk:visible'} absolute right-2 top-1 z-[5] flex select-none items-center gap-1 rounded border border-github-accent bg-github-bg-secondary px-2 py-0.5 text-xs text-github-text-primary`}
+      className={`${alwaysShown ? '' : 'invisible group-focus-within/hunk:visible group-hover/hunk:visible'} absolute right-2 top-1 z-[5] flex w-[6.875rem] select-none items-center justify-center gap-1 whitespace-nowrap rounded border border-github-accent bg-github-bg-secondary px-1 py-0.5 text-xs text-github-text-primary`}
       onClick={(e) => {
         e.stopPropagation();
         onClick();
