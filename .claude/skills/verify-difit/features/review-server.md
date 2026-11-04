@@ -35,7 +35,7 @@ Proof: `/api/diff` returns `files[]` with `math.js`, `additions` 1 and `deletion
 
 ## Gotchas
 
-- `git show HEAD | difit - --background` fails with `No diff content received from stdin`, because the background child starts with stdin ignored. This is defect #219, not a sandbox problem, until that issue is closed.
+- `git show HEAD | difit - --background` works: the background child reads the same piped stdin. Empty stdin still exits 1 with `No diff content received from stdin`. `harness.sh start` passes `</dev/null`, so use a plain `difit - --background` call for piped diffs.
 - `harness.sh start` records its server for `doctor` and `stop`. A server you start by hand is yours to stop.
 - Without `--background` or `--no-open` a run opens a browser. Always pass one of them here.
 - Inside a Claude Code session difit inherits `CLAUDE_CODE_MESSAGING_SOCKET` and sends review messages to that session. `env.sh` unsets it, so sandbox runs stay silent.

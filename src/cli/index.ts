@@ -135,7 +135,7 @@ program
       }
 
       if (options.background && !isBackgroundChild) {
-        await startBackgroundProcess();
+        await startBackgroundProcess(undefined, commitish === '-');
         return;
       }
 
