@@ -5635,6 +5635,40 @@ describe('App Component - Commits of the review', () => {
       expect(new Set(indexes).size * 2).toBe(indexes.length);
     });
 
+    it('scrolls to the card, not the top of the file, when its thread is picked in the panel', async () => {
+      mockComments = [
+        createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' }),
+        {
+          ...createMockThread({
+            id: 'c4',
+            filePath: 'src/new.test.ts',
+            line: 2,
+            body: 'Name this',
+          }),
+          codeSnapshot: { content: 'second case', commit: FIXUP_SHA },
+          fixupTarget: COMMITS[1]!.sha,
+        },
+      ];
+      renderApp();
+      await waitFor(() => expect(sectionOf('src/new.test.ts')).toHaveTextContent('Name this'));
+      await userEvent.keyboard('{Shift>}L{/Shift}');
+      const row = await waitFor(() => {
+        const found = document.querySelector<HTMLElement>('[data-thread-id="c4"]');
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      mockScrollFileIntoDiffContainer.mockClear();
+
+      fireEvent.click(row);
+
+      await waitFor(() =>
+        expect(mockScrollFileIntoDiffContainer).toHaveBeenLastCalledWith(
+          'src/new.test.ts',
+          'comment-thread-c4',
+        ),
+      );
+    });
+
     it('places only their threads again and keeps the fixup spread when a thread gets a reply', async () => {
       const onFixupOnlyFile = {
         ...createMockThread({ id: 'c4', filePath: 'src/new.test.ts', line: 2, body: 'Name this' }),

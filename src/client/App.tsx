@@ -2251,7 +2251,11 @@ function App() {
     }
     const placed = fixupSpread.outsidePlacements.get(thread.id);
     if (placed) {
-      showFixupFile({ fixupSha: placed.fixupSha, path: thread.file }, restoring);
+      showFixupFile(
+        { fixupSha: placed.fixupSha, path: thread.file },
+        restoring,
+        `comment-thread-${thread.id}`,
+      );
       return;
     }
     if (restoring && collapsedFiles.has(thread.file)) {
@@ -2290,7 +2294,11 @@ function App() {
     if (afterRender) requestAnimationFrame(moveCursor);
     else moveCursor();
   };
-  const showFixupFile = (ref: FixupFileRef, restoring: boolean) => {
+  const showFixupFile = (
+    ref: FixupFileRef,
+    restoring: boolean,
+    scrollTargetId = fixupFileElementId(ref.fixupSha, ref.path),
+  ) => {
     const place = fixupSpread.places.get(fixupFileKey(ref));
     if (!place) return;
     setFocusedFixupFile(ref);
@@ -2320,10 +2328,7 @@ function App() {
         return next;
       });
     }
-    scrollFileIntoDiffContainer(
-      place.kind === 'box' ? place.reviewPath : ref.path,
-      fixupFileElementId(ref.fixupSha, ref.path),
-    );
+    scrollFileIntoDiffContainer(place.kind === 'box' ? place.reviewPath : ref.path, scrollTargetId);
   };
   showFixupFileRef.current = showFixupFile;
 
