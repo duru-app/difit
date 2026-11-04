@@ -27,7 +27,7 @@ const ELEMENT_GAP_BELOW_HEADER_PX = 8;
 // The file header sticks to the container top and covers an element of that file landing there.
 export const stickyHeaderCover = (target: HTMLElement) => {
   const header = target
-    .closest('[data-file-path]')
+    .closest('[data-file-path], [data-fixup-only-file]')
     ?.querySelector<HTMLElement>('[data-file-header]');
   if (!header || target.contains(header)) return 0;
   return header.getBoundingClientRect().height + ELEMENT_GAP_BELOW_HEADER_PX;
