@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 
 import {
-  type ChoiceAnswer,
+  type FixupLines,
   type CommitMessageResponse,
   type DiffCommentThread,
   type DiffResponse,
@@ -23,6 +23,7 @@ import {
   type DirectEditRequest,
   type DirectEditResponse,
   type ReviewDecision,
+  type ReviewerReplyFields,
   type DiffSide,
   type ExtraCommentLines,
   type LineNumber,
@@ -131,6 +132,7 @@ import { hasMultipleCommentAuthors } from './utils/commentAuthors';
 import { copyTextToClipboard } from './utils/clipboard';
 import { createDiffPathResolver, type DiffLineTarget, linesOf } from './utils/diffLineLinks';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
+import { fixupLinesPlace } from './utils/fixupLines';
 import {
   getElementId,
   getFileLineIdPrefix,
@@ -190,16 +192,18 @@ const YIELDING_PANEL_SHRINK = 1000;
 const LINE_LINK_CONTEXT = 3;
 const LINE_LINK_MAX_LINES = 200;
 const LINE_LINK_WAIT_MS = 1000;
+const PICK_SCOPE = '[data-line-pick-scope], [data-file-path]';
 const LINE_LINK_FLASH_MS = 1400;
 const LINE_LINK_FLASH_ATTRIBUTE = 'data-line-link-flash';
 
-const flashRows = (elementIds: readonly string[], deadline: number) => {
+const flashRows = (elementIds: readonly string[], deadline: number, scroll = false) => {
   requestAnimationFrame(() => {
     const rows = elementIds.flatMap((id) => document.getElementById(id)?.closest('tr') ?? []);
     if (rows.length === 0) {
-      if (Date.now() < deadline) flashRows(elementIds, deadline);
+      if (Date.now() < deadline) flashRows(elementIds, deadline, scroll);
       return;
     }
+    if (scroll) rows[0]?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     rows.forEach((row) => row.setAttribute(LINE_LINK_FLASH_ATTRIBUTE, ''));
     setTimeout(() => {
       rows.forEach((row) => row.removeAttribute(LINE_LINK_FLASH_ATTRIBUTE));
@@ -1892,6 +1896,20 @@ function App() {
     },
     [showsPartOfReview, selectView, fixupSpread, jumpWithinReview],
   );
+  const replyFromOverlay = useCallback(
+    (threadId: string, body: string, fields?: ReviewerReplyFields) =>
+      replyToThread({ threadId, body, ...fields }),
+    [replyToThread],
+  );
+  const revealFixupLines = useCallback(
+    (lines: FixupLines) => {
+      const place = fixupLinesPlace(lines, fixupsByThread);
+      const [first] = place.elementIds;
+      if (first && !document.getElementById(first)) revealFixupFile(place.fixupSha, place.path);
+      flashRows(place.elementIds, Date.now() + LINE_LINK_WAIT_MS, true);
+    },
+    [fixupsByThread, revealFixupFile],
+  );
   const fixupOverlay = useMemo<FixupOverlayState>(
     () => ({
       enabled: showFixupOverlay,
@@ -1914,6 +1932,8 @@ function App() {
       revealFixupFile,
       pickThread,
       showThreadCard,
+      replyToThread: replyFromOverlay,
+      revealFixupLines,
     }),
     [
       showFixupOverlay,
@@ -1934,6 +1954,8 @@ function App() {
       revealFixupFile,
       pickThread,
       showThreadCard,
+      replyFromOverlay,
+      revealFixupLines,
     ],
   );
 
@@ -2179,8 +2201,8 @@ function App() {
   };
 
   const handleReplyToThread = useCallback(
-    (threadId: string, body: string, answer?: ChoiceAnswer): Promise<void> => {
-      replyToThread({ threadId, body, ...(answer ? { answer } : {}) });
+    (threadId: string, body: string, fields?: ReviewerReplyFields): Promise<void> => {
+      replyToThread({ threadId, body, ...fields });
       return Promise.resolve();
     },
     [replyToThread],
@@ -2488,25 +2510,32 @@ function App() {
     }
     const isCommentButton = target.closest('[data-comment-button="true"]');
     const isOpenInEditorButton = target.closest('[data-open-in-editor-button="true"]');
-    const isShiftRangeClick = e.shiftKey && target.closest('[data-diff-line-row="true"]');
-    const pickingInFile =
-      (e.ctrlKey || e.metaKey || target.closest('[data-adds-lines="true"]')) &&
-      target.closest('[data-line-number-cell]')
-        ? target.closest('[data-file-path]')
-        : null;
+    const shiftRow = e.shiftKey ? target.closest('[data-diff-line-row="true"]') : null;
+    const pickScope =
+      (shiftRow ?? target.closest('[data-line-number-cell]'))?.closest(PICK_SCOPE) ?? null;
+    const addsLines = target.closest('[data-adds-lines="true"]');
+    const picksLines =
+      pickScope?.getAttribute('data-line-pick-scope') !== 'false' &&
+      (shiftRow !== null ||
+        e.ctrlKey ||
+        e.metaKey ||
+        (e.shiftKey && pickScope?.hasAttribute('data-line-pick-scope')) ||
+        (addsLines !== null && pickScope?.contains(addsLines)));
+    const pickingIn = picksLines ? pickScope : null;
 
     // Close empty comment forms (unless clicking on a comment button)
-    if (!isCommentButton && !isOpenInEditorButton && !isShiftRangeClick) {
-      closeEmptyCommentForms(e, pickingInFile);
+    if (!isCommentButton && !isOpenInEditorButton) {
+      closeEmptyCommentForms(e, pickingIn);
     }
   };
 
-  // A form in `pickingInFile` stays open: the click picks lines for it.
-  const closeEmptyCommentForms = (e: React.MouseEvent, pickingInFile: Element | null) => {
+  const closeEmptyCommentForms = (e: React.MouseEvent, pickingIn: Element | null) => {
     const emptyForms = document.querySelectorAll('form[data-empty="true"]');
     emptyForms.forEach((form) => {
-      // Don't close if clicking inside the form itself
-      if (!form.contains(e.target as Node) && !pickingInFile?.contains(form)) {
+      if (
+        !form.contains(e.target as Node) &&
+        (!pickingIn || form.closest(PICK_SCOPE) !== pickingIn)
+      ) {
         const cancelButton = form.querySelector<HTMLButtonElement>('[data-comment-cancel="true"]');
         cancelButton?.click();
       }

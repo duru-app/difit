@@ -130,6 +130,15 @@ function formatChoices(message: DiffCommentMessage, messages: DiffCommentMessage
   return lines;
 }
 
+function formatFixupLines({ fixupLines }: DiffCommentMessage): string[] {
+  if (!fixupLines) return [];
+  const { fixupSha, filePath, oldPath, ranges } = fixupLines;
+  return ranges.flatMap(({ side, line, code }) => [
+    `On fixup ${fixupSha.slice(0, 7)} ${side === 'old' ? (oldPath ?? filePath) : filePath} ${spanInfo(line)} (${side}):`,
+    ...code.split('\n').map((codeLine) => `  ${codeLine}`),
+  ]);
+}
+
 function normalizeLegacyComment(comment: Comment): CommentThread {
   return {
     id: comment.id,
@@ -203,6 +212,7 @@ export function formatCommentThreadPrompt(
     if (showEdits && wasEdited(message)) sections.push(`고친 시각: ${message.updatedAt}`);
     sections.push(
       formatCommentContent(message.body, onFile ? thread.codeContent : undefined),
+      ...formatFixupLines(message),
       ...formatChoices(message, thread.messages),
     );
   });

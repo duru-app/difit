@@ -878,7 +878,85 @@ describe('commentImports', () => {
 
     it('takes choices only on a reply', () => {
       expect(() => normalizeCommentImports({ ...askReply, type: 'thread' })).toThrow(
-        'choices, answer and fixPending belong on a reply',
+        'choices, answer, fixupLines and fixPending belong on a reply',
+      );
+    });
+  });
+
+  describe('a reply written on lines of a fixup card', () => {
+    const fixupLines = {
+      fixupSha: 'a'.repeat(40),
+      patchId: 'p'.repeat(40),
+      filePath: 'src/order.ts',
+      oldPath: 'src/legacy-order.ts',
+      ranges: [
+        { side: 'old', line: 41, code: 'return total;' },
+        { side: 'new', line: [42, 43], code: 'const sum = add(a, b);\nreturn sum;' },
+      ],
+    };
+    const lineReply = {
+      type: 'reply',
+      filePath: 'src/example.ts',
+      position: { side: 'new', line: 10 },
+      body: '여기는 왜 바꿨나요?',
+      author: 'User',
+      createdAt: '2024-02-01T00:00:00.000Z',
+      fixupLines,
+    };
+
+    it('keeps the lines on the reply when it is copied to another server', () => {
+      const { threads } = mergeCommentImports(
+        [createThread({ id: 'thread-1', body: '이름이 틀렸습니다.' })],
+        parseCommentImportValue(JSON.stringify(lineReply)),
+      );
+
+      expect(threads[0]!.messages[1]).toMatchObject({ body: lineReply.body, fixupLines });
+    });
+
+    it('adds the same words on other lines as another reply', () => {
+      const thread = mergeCommentImports(
+        [createThread({ id: 'thread-1', body: '이름이 틀렸습니다.' })],
+        parseCommentImportValue(JSON.stringify(lineReply)),
+      ).threads[0]!;
+
+      const { threads } = mergeCommentImports(
+        [thread],
+        parseCommentImportValue(
+          JSON.stringify({
+            ...lineReply,
+            fixupLines: { ...fixupLines, ranges: [fixupLines.ranges[0]] },
+          }),
+        ),
+      );
+
+      expect(threads[0]!.messages).toHaveLength(3);
+    });
+
+    it.each([
+      ['lines without a fixup', { fixupLines: { ...fixupLines, fixupSha: '' } }],
+      ['lines without a patch id', { fixupLines: { ...fixupLines, patchId: undefined } }],
+      ['lines without ranges', { fixupLines: { ...fixupLines, ranges: [] } }],
+      [
+        'a range on no side',
+        { fixupLines: { ...fixupLines, ranges: [{ side: 'both', line: 1, code: '' }] } },
+      ],
+      [
+        'a range without its code',
+        { fixupLines: { ...fixupLines, ranges: [{ side: 'new', line: 1 }] } },
+      ],
+      [
+        'a backwards range',
+        { fixupLines: { ...fixupLines, ranges: [{ side: 'new', line: [5, 3], code: '' }] } },
+      ],
+    ])('rejects %s', (_name, fields) => {
+      expect(() => normalizeCommentImports({ ...lineReply, ...fields })).toThrow(
+        'Invalid comment import field: fixupLines',
+      );
+    });
+
+    it('takes the lines only on a reply', () => {
+      expect(() => normalizeCommentImports({ ...lineReply, type: 'thread' })).toThrow(
+        'choices, answer, fixupLines and fixPending belong on a reply',
       );
     });
   });

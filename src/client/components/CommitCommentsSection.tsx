@@ -1,7 +1,7 @@
 import { MessageSquarePlus } from 'lucide-react';
 import { useState } from 'react';
 
-import type { ChoiceAnswer, CommitThreadView, ReviewCommit } from '../../types/diff';
+import type { CommitThreadView, ReviewCommit, ReviewerReplyFields } from '../../types/diff';
 import { commitLocationLabel } from '../../utils/commentPosition';
 import { isSameCommit } from '../../utils/diffSelection';
 import {
@@ -23,7 +23,7 @@ interface CommitCommentsSectionProps {
   showAuthorBadges: boolean;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   onResolveThread: (threadId: string) => void;
-  onReplyToThread: (threadId: string, body: string, answer?: ChoiceAnswer) => Promise<void>;
+  onReplyToThread: (threadId: string, body: string, fields?: ReviewerReplyFields) => Promise<void>;
   onRemoveMessage: (threadId: string, messageId: string) => void;
   onUpdateMessage: (threadId: string, messageId: string, newBody: string) => void;
 }

@@ -511,6 +511,7 @@ export function selectThreadsAwaitingAgent(
           : { filePath: thread.filePath, position: thread.position }),
         message: last?.body ?? '',
         ...(last?.answer ? { answer: { ...last.answer } } : {}),
+        ...(last?.fixupLines ? { fixupLines: last.fixupLines } : {}),
         ...(thread.fixupTarget === undefined ? {} : { fixupTarget: thread.fixupTarget }),
         ...turn,
       },

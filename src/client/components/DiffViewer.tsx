@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, memo } from 'react';
 
 import {
-  type ChoiceAnswer,
+  type ReviewerReplyFields,
   type DiffFile,
   type DiffViewMode,
   type DiffSide,
@@ -54,7 +54,7 @@ interface DiffViewerProps {
   // Left out where the file takes no comment on the whole file.
   onAddFileComment?: (file: string, body: string, side: DiffSide) => Promise<void>;
   onResolveThread: (threadId: string) => void;
-  onReplyToThread: (threadId: string, body: string, answer?: ChoiceAnswer) => Promise<void>;
+  onReplyToThread: (threadId: string, body: string, fields?: ReviewerReplyFields) => Promise<void>;
   onRemoveMessage: (threadId: string, messageId: string) => void;
   onUpdateMessage: (threadId: string, messageId: string, newBody: string) => void;
   onOpenInEditor?: (filePath: string, lineNumber: number) => void;

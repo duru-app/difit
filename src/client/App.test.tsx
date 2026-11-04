@@ -4561,6 +4561,181 @@ describe('App Component - Commits of the review', () => {
     }
   });
 
+  it('saves a reply written on a line of the card, and goes back to that line from the reply', async () => {
+    const fixupLines = {
+      fixupSha: 'f'.repeat(40),
+      patchId: 'patch-1',
+      filePath: 'test.ts',
+      ranges: [{ side: 'new' as const, line: 1, code: 'const a = 1;' }],
+    };
+    fixupsFor.current = [
+      {
+        sha: 'f'.repeat(40),
+        shortSha: 'fffffff',
+        patchId: 'patch-1',
+        authoredAt: '2026-01-01T00:00:00Z',
+        subject: 'fixup! second step',
+        threadIds: ['c1'],
+        files: [{ path: 'test.ts', status: 'modified', chunks: file.chunks }],
+      },
+    ];
+    const asked = createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' });
+    mockComments = [
+      {
+        ...asked,
+        messages: [
+          ...asked.messages,
+          { ...asked.messages[0]!, id: 'r1', body: '이 줄은?', fixupLines },
+        ],
+      },
+    ];
+    const replyToThread = vi.fn();
+    const defaultComments = vi.mocked(useDiffComments).getMockImplementation()!;
+    vi.mocked(useDiffComments).mockImplementation((...args) => ({
+      ...defaultComments(...args),
+      replyToThread,
+    }));
+
+    try {
+      renderApp();
+      const card = await screen.findByTestId('fixup-overlay-card');
+      const cell = card.querySelector<HTMLElement>('[data-line-number-cell]')!;
+      fireEvent.mouseDown(cell, { button: 0 });
+      fireEvent.mouseUp(cell);
+      fireEvent.click(cell.closest('tbody')!);
+      const form = await within(card).findByRole('form', { name: 'fixup 줄에 답글' });
+      fireEvent.change(within(form).getByPlaceholderText('이 줄에 답글...'), {
+        target: { value: '여기도 봐 주세요' },
+      });
+      fireEvent.click(within(form).getByRole('button', { name: '답글' }));
+
+      await waitFor(() =>
+        expect(replyToThread).toHaveBeenCalledWith({
+          threadId: 'c1',
+          body: '여기도 봐 주세요',
+          fixupLines,
+        }),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'fffffff · test.ts · 남은 줄 L1' }));
+
+      await waitFor(() => expect(cell.closest('tr')).toHaveAttribute('data-line-link-flash'));
+    } finally {
+      vi.mocked(useDiffComments).mockImplementation(defaultComments);
+    }
+  });
+
+  const openCardFormOnThreeLines = async () => {
+    const added = (line: number) => ({
+      type: 'add' as const,
+      content: `const v${line} = ${line};`,
+      newLineNumber: line,
+    });
+    fixupsFor.current = [
+      {
+        sha: 'f'.repeat(40),
+        shortSha: 'fffffff',
+        patchId: 'patch-1',
+        authoredAt: '2026-01-01T00:00:00Z',
+        subject: 'fixup! second step',
+        threadIds: ['c1'],
+        files: [
+          {
+            path: 'test.ts',
+            status: 'modified',
+            chunks: [
+              {
+                header: '@@ -0,0 +1,3 @@',
+                oldStart: 0,
+                oldLines: 0,
+                newStart: 1,
+                newLines: 3,
+                lines: [added(1), added(2), added(3)],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    mockComments = [
+      createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' }),
+    ];
+
+    renderApp();
+    const card = await screen.findByTestId('fixup-overlay-card');
+    const cells = [...card.querySelectorAll<HTMLElement>('[data-line-number-cell]')];
+    fireEvent.mouseDown(cells[0]!, { button: 0 });
+    fireEvent.mouseUp(cells[0]!);
+    fireEvent.click(cells[0]!.closest('tbody')!);
+    await within(card).findByRole('form', { name: 'fixup 줄에 답글' });
+    return { card, cells };
+  };
+
+  it.each([
+    { way: 'Shift+click', modifier: { shiftKey: true }, addButton: false, picked: 'L1-L3' },
+    { way: 'Ctrl+click', modifier: { ctrlKey: true }, addButton: false, picked: 'L1, L3' },
+    { way: 'click after the add button', modifier: {}, addButton: true, picked: 'L1, L3' },
+  ])(
+    'keeps the empty reply form of the card open on a $way that adds a line',
+    async ({ modifier, addButton, picked }) => {
+      const { card, cells } = await openCardFormOnThreeLines();
+      if (addButton) {
+        const box = within(card).getByPlaceholderText('이 줄에 답글...');
+        fireEvent.change(box, { target: { value: 'x' } });
+        fireEvent.click(within(card).getByRole('button', { name: '줄 더하기' }));
+        fireEvent.change(box, { target: { value: '' } });
+      }
+
+      fireEvent.mouseDown(cells[2]!, { button: 0, ...modifier });
+      expect(within(card).getByText('fffffff · test.ts · 남은 줄 L1')).toBeInTheDocument();
+      fireEvent.mouseUp(cells[2]!, modifier);
+      fireEvent.click(cells[2]!, modifier);
+
+      expect(
+        await within(card).findByText(`fffffff · test.ts · 남은 줄 ${picked}`),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    { key: 'Shift', modifier: { shiftKey: true } },
+    { key: 'Ctrl', modifier: { ctrlKey: true } },
+  ])(
+    'closes the empty reply form of the card on a $key+click in the diff around it',
+    async ({ modifier }) => {
+      const { card } = await openCardFormOnThreeLines();
+      const diffCell = document.querySelector<HTMLElement>(
+        '[data-diff-line-row="true"] [data-line-number-cell]',
+      )!;
+
+      fireEvent.mouseDown(diffCell, { button: 0, ...modifier });
+      fireEvent.mouseUp(diffCell, modifier);
+      fireEvent.click(diffCell, modifier);
+
+      await waitFor(() =>
+        expect(within(card).queryByRole('form', { name: 'fixup 줄에 답글' })).toBeNull(),
+      );
+    },
+  );
+
+  it('closes an empty comment form of the diff on a Ctrl+click in the card', async () => {
+    const { card, cells } = await openCardFormOnThreeLines();
+    const diffCell = document.querySelector<HTMLElement>(
+      '[data-diff-line-row="true"] [data-line-number-cell]',
+    )!;
+    fireEvent.mouseDown(diffCell, { button: 0, ctrlKey: true });
+    fireEvent.mouseUp(diffCell, { ctrlKey: true });
+    fireEvent.click(diffCell, { ctrlKey: true });
+    await screen.findByPlaceholderText('Leave a comment...');
+
+    fireEvent.mouseDown(cells[2]!, { button: 0, ctrlKey: true });
+    fireEvent.mouseUp(cells[2]!, { ctrlKey: true });
+    fireEvent.click(cells[2]!, { ctrlKey: true });
+
+    await waitFor(() => expect(screen.queryByPlaceholderText('Leave a comment...')).toBeNull());
+    expect(within(card).getByRole('form', { name: 'fixup 줄에 답글' })).toBeInTheDocument();
+  });
+
   it('unfolds a viewed file on the commit it opens to show a comment picked from the list', async () => {
     mockViewedFiles = new Set(['test.ts']);
     mockComments = [pinnedThread('const a = 1;')];
@@ -5643,6 +5818,16 @@ describe.each(['unified', 'split'] as const)('App Component - picking lines (%s)
     await clickNumber(3, { shiftKey: true }, 'middle');
 
     expect(picked()).toEqual(['line 2', 'line 3']);
+  });
+
+  it('keeps the empty form of the file open on a Shift+click on a line number', async () => {
+    renderApp();
+
+    await clickNumber(2, { ctrlKey: true }, 'edge');
+    await clickNumber(3, { shiftKey: true }, 'edge');
+
+    expect(picked()).toEqual(['line 2', 'line 3']);
+    expect(cancels).not.toHaveBeenCalled();
   });
 
   it('still closes an empty form in another file when lines are picked', async () => {

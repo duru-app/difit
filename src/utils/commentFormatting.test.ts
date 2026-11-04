@@ -302,6 +302,54 @@ Related entries are below.`);
     });
   });
 
+  describe('a reply written on lines of a fixup card', () => {
+    const at = '2024-01-01T00:00:00Z';
+    const thread: CommentThread = {
+      id: 't1',
+      file: 'src/order.ts',
+      line: 40,
+      side: 'new',
+      createdAt: at,
+      updatedAt: at,
+      messages: [
+        { id: 'm1', body: '이름이 틀렸습니다.', author: 'User', createdAt: at, updatedAt: at },
+        {
+          id: 'm2',
+          body: '여기는 왜 바꿨나요?',
+          author: 'User',
+          createdAt: at,
+          updatedAt: at,
+          fixupLines: {
+            fixupSha: 'abcdef1234567890abcdef1234567890abcdef12',
+            patchId: 'p'.repeat(40),
+            filePath: 'src/order.ts',
+            oldPath: 'src/legacy-order.ts',
+            ranges: [
+              { side: 'old', line: 41, code: 'return total;' },
+              { side: 'new', line: [42, 43], code: 'const sum = add(a, b);\nreturn sum;' },
+            ],
+          },
+        },
+      ],
+    };
+
+    it('writes each range under the reply with its fixup, file, side and code', () => {
+      expect(formatCommentThreadPrompt(thread)).toBe(
+        [
+          'src/order.ts:L40',
+          '이름이 틀렸습니다.',
+          'Reply 1 (User)',
+          '여기는 왜 바꿨나요?',
+          'On fixup abcdef1 src/legacy-order.ts L41 (old):',
+          '  return total;',
+          'On fixup abcdef1 src/order.ts L42-L43 (new):',
+          '  const sum = add(a, b);',
+          '  return sum;',
+        ].join('\n'),
+      );
+    });
+  });
+
   describe('choices on a reply', () => {
     const at = '2024-01-01T00:00:00Z';
     const thread: CommentThread = {

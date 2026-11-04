@@ -991,6 +991,34 @@ describe('selectThreadsAwaitingAgent', () => {
     expect(selectThreadsAwaitingAgent([picked], undefined, [])[0]).toHaveProperty('answer');
   });
 
+  it('hands over a reply written on lines of a fixup card with the lines', () => {
+    const asked = thread('t1', ['User'], [undefined]);
+    const fixupLines = {
+      fixupSha: 'a'.repeat(40),
+      patchId: 'p'.repeat(40),
+      filePath: 'a.ts',
+      ranges: [{ side: 'new' as const, line: 3, code: 'x();' }],
+    };
+    const onLines = {
+      ...asked,
+      messages: [
+        ...asked.messages,
+        {
+          id: 't1-2',
+          body: '이 줄은 왜?',
+          author: 'User',
+          createdAt: '2026-01-02T00:00:00Z',
+          updatedAt: '2026-01-02T00:00:00Z',
+          fixupLines,
+        },
+      ],
+    };
+
+    expect(selectThreadsAwaitingAgent([onLines], new Map(), [])).toEqual([
+      expect.objectContaining({ threadId: 't1', message: '이 줄은 왜?', fixupLines }),
+    ]);
+  });
+
   it('leaves out a resolved thread with or without fixups', () => {
     const threads = [thread('asked', ['User']), thread('resolved', ['User'])];
     const resolution = [decision('resolved', '', undefined, 'resolved')];

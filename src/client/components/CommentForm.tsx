@@ -17,6 +17,9 @@ interface CommentFormProps {
   submitLabel?: string;
   placeholder?: string;
   header?: ReactNode;
+  label?: string;
+  value?: string;
+  onValueChange?: (next: string) => void;
 }
 
 type CommentFormMode = 'edit' | 'preview';
@@ -34,8 +37,13 @@ export function CommentForm({
   submitLabel = 'Submit',
   placeholder = 'Leave a comment...',
   header,
+  label,
+  value,
+  onValueChange,
 }: CommentFormProps) {
-  const [body, setBody] = useState(initialValue);
+  const [ownBody, setOwnBody] = useState(initialValue);
+  const body = value ?? ownBody;
+  const setBody = onValueChange ?? setOwnBody;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mode, setMode] = useState<CommentFormMode>('edit');
   const hasSuggestion = hasSuggestionInBody(body);
@@ -74,6 +82,7 @@ export function CommentForm({
           ? 'bg-transparent'
           : 'm-2 mx-3 rounded-md border border-yellow-600/50 border-l-4 border-l-yellow-400 fixup-review:border-github-border fixup-review:border-l-github-text-muted bg-github-bg-tertiary p-3'
       }
+      aria-label={label}
       onSubmit={handleSubmit}
       onClick={(e) => e.stopPropagation()}
       data-empty={!body.trim()}
