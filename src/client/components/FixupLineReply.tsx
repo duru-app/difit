@@ -93,8 +93,10 @@ export function useFixupLineReply({
     return Promise.resolve();
   };
 
+  const marked = drag ? store.between(drag.from, drag.to, 'unified') : store.pick?.lines;
+
   return {
-    isPicked: (line) => store.pick?.lines.some((picked) => sameLine(picked, line)) ?? false,
+    isPicked: (line) => marked?.some((picked) => sameLine(picked, line)) ?? false,
     press: (line, event) => {
       if (event.button !== 0) return;
       event.preventDefault();

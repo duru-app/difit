@@ -188,6 +188,21 @@ describe('replying on lines of a fixup card', () => {
     );
   });
 
+  it('marks the lines under a drag before the button is released', () => {
+    render(view({ replyToThread: vi.fn().mockResolvedValue(undefined) }));
+    const card = screen.getByTestId('fixup-overlay-card');
+    const [first, deleted, added, last] = numberCells(card);
+
+    fireEvent.mouseDown(deleted!, { button: 0 });
+    fireEvent.mouseEnter(added!.closest('tr')!);
+
+    expect(deleted!.closest('tr')).toHaveClass('comment-selected');
+    expect(added!.closest('tr')).toHaveClass('comment-selected');
+    expect(first!.closest('tr')).not.toHaveClass('comment-selected');
+    expect(last!.closest('tr')).not.toHaveClass('comment-selected');
+    expect(within(card).queryByRole('form')).not.toBeInTheDocument();
+  });
+
   it('grows the pick with Shift and closes it on a second press of the same line', async () => {
     render(view({ replyToThread: vi.fn() }));
     const card = screen.getByTestId('fixup-overlay-card');
