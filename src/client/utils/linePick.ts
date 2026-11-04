@@ -192,6 +192,17 @@ export function extendTo(
   return { lines, anchor, span: lines, adding: false };
 }
 
+// Adds the lines of a drag to the picked ones; a later Shift+click moves only the dragged lines.
+export function addSpan(
+  pick: LinePick | null,
+  span: readonly LineSelection[],
+  anchor: LineSelection,
+): LinePick {
+  const kept = pick?.lines ?? [];
+  const added = span.filter((line) => !has(kept, line));
+  return { lines: union(kept, added), anchor, span: added, adding: true };
+}
+
 export const samePickLines = (a: LinePick | null, b: LinePick) =>
   !!a && sameLines(a.lines, b.lines);
 

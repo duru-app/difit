@@ -18,6 +18,7 @@ import type {
   SidedLine,
 } from '../../types/diff';
 import {
+  addSpan,
   extendTo,
   type LinePick,
   linesBetween,
@@ -44,6 +45,8 @@ export interface LinePickStore {
   open: (side: DiffSide, line: LineNumber) => void;
   // Like open, on every line of the rows from one line to the other.
   openBetween: (from: LineSelection, to: LineSelection, layout: PickLayout) => void;
+  // Adds every line of the rows from one line to the other to the lines already picked.
+  addBetween: (from: LineSelection, to: LineSelection, layout: PickLayout) => void;
   toggle: (selection: LineSelection) => void;
   extend: (selection: LineSelection, layout: PickLayout) => void;
   between: (from: LineSelection, to: LineSelection, layout: PickLayout) => LineSelection[];
@@ -136,6 +139,14 @@ export function useLinePickState(
     [pick, quote, close, apply, between],
   );
 
+  const addBetween = useCallback(
+    (from: LineSelection, to: LineSelection, layout: PickLayout) => {
+      apply(addSpan(pick, between(from, to, layout), from));
+      setAnchor(from);
+    },
+    [pick, apply, between],
+  );
+
   const toggle = useCallback(
     (selection: LineSelection) => {
       const seed = sameAnchor(anchor, cursorLineRef.current) ? (anchor ?? undefined) : undefined;
@@ -193,6 +204,7 @@ export function useLinePickState(
       start,
       open,
       openBetween,
+      addBetween,
       toggle,
       extend,
       between,
@@ -212,6 +224,7 @@ export function useLinePickState(
       start,
       open,
       openBetween,
+      addBetween,
       toggle,
       extend,
       between,

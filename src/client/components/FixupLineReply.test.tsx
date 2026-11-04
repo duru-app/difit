@@ -188,6 +188,28 @@ describe('replying on lines of a fixup card', () => {
     );
   });
 
+  it('adds the lines dragged over with Ctrl held to the lines already picked', async () => {
+    render(view({ replyToThread: vi.fn() }));
+    const card = screen.getByTestId('fixup-overlay-card');
+    const [first, , added, last] = numberCells(card);
+
+    pressNumber(first!, { ctrlKey: true });
+    await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    fireEvent.change(within(card).getByRole('textbox'), { target: { value: '이어서' } });
+
+    fireEvent.mouseDown(added!, { button: 0, ctrlKey: true });
+    fireEvent.mouseEnter(last!.closest('tr')!);
+    expect(added!.closest('tr')).toHaveClass('comment-selected');
+    expect(last!.closest('tr')).toHaveClass('comment-selected');
+    fireEvent.mouseUp(document);
+
+    await waitFor(() =>
+      expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L11-L13'),
+    );
+    expect(first!.closest('tr')).toHaveClass('comment-selected');
+    expect(within(card).getByRole('textbox')).toHaveValue('이어서');
+  });
+
   it('marks the lines under a drag before the button is released', () => {
     render(view({ replyToThread: vi.fn().mockResolvedValue(undefined) }));
     const card = screen.getByTestId('fixup-overlay-card');
