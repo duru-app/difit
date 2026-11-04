@@ -32,7 +32,7 @@ import { KeepPlaceWhenThreadLeaves } from './KeepPlaceWhenThreadLeaves';
 import { DiffLineRow } from './DiffLineRow';
 import { PickControls, ThreadMarker } from './LinePickParts';
 import { DirectEditForm } from './DirectEditForm';
-import { EditHunkButton } from './EditLineButton';
+import { EditHunkButton, lineEndPlacement } from './EditLineButton';
 import { FixupBoxRows, FixupOverlayRow } from './FixupOverlayCard';
 import {
   type FoldedLines,
@@ -537,6 +537,7 @@ export const DiffChunk = memo(function DiffChunk({
                   line={line}
                   index={index}
                   lineId={lineId}
+                  lineEndActionsPlacement={lineEndPlacement(Boolean(editHunk), index)}
                   isCurrentLine={isCurrentLine || false}
                   hoveredLineIndex={hoveredLine}
                   selectedLineStyle={getSelectedLineStyle(line, index)}

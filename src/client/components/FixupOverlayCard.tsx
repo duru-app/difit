@@ -38,7 +38,7 @@ import {
 
 import { DiffCodeLine } from './DiffCodeLine';
 import { DirectEditForm } from './DirectEditForm';
-import { EditHunkButton, EditLineButton } from './EditLineButton';
+import { EditHunkButton, EditLineButton, lineEndPlacement } from './EditLineButton';
 import { fixupLineOf, useFixupLineReply } from './FixupLineReply';
 import type { AppearanceSettings } from './SettingsModal';
 
@@ -204,7 +204,9 @@ function FixupChunksTable({
                               showPrefixBorder={false}
                             />
                             {(laterEdit || isEditHovered) && (
-                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1">
+                              <div
+                                className={`absolute ${lineEndPlacement(Boolean(editing && range), offset)} z-10 flex items-center gap-1`}
+                              >
                                 {laterEdit && (
                                   <button
                                     type="button"

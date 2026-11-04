@@ -30,7 +30,7 @@ import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
 import { KeepPlaceWhenThreadLeaves } from './KeepPlaceWhenThreadLeaves';
 import { DirectEditForm } from './DirectEditForm';
-import { EditHunkButton } from './EditLineButton';
+import { EditHunkButton, lineEndPlacement } from './EditLineButton';
 import { EnhancedPrismSyntaxHighlighter } from './EnhancedPrismSyntaxHighlighter';
 import { FixupBoxRows, FixupOverlayRow } from './FixupOverlayCard';
 import { PickControls, ThreadMarker } from './LinePickParts';
@@ -905,6 +905,7 @@ export function SideBySideDiffChunk({
                       <LineEndActions
                         onEditLine={editNewLine}
                         onOpenInEditor={openNewSideInEditor}
+                        placement={lineEndPlacement(Boolean(editHunk), index)}
                       />
                     )}
                   </td>

@@ -14,6 +14,7 @@ import { boxesByAnchor, type FixupBox } from '../utils/fixupSpread';
 import { symbolRequestFromTarget } from '../utils/symbolPeek';
 
 import { DiffChunk } from './DiffChunk';
+import { lineEndPlacement } from './EditLineButton';
 import { SideBySideDiffChunk } from './SideBySideDiffChunk';
 
 const testChunk: DiffChunkData = {
@@ -801,6 +802,15 @@ describe('DiffChunk fixup overlay', () => {
       expect(revealFixupFile).toHaveBeenCalledWith('ddd4444ddd4444', 'src/example.ts');
     });
 
+    it('keeps the pencil clear of the hunk button on the first rows of a part', () => {
+      const { card } = editable();
+
+      fireEvent.mouseEnter(card.querySelectorAll('tr')[1]!);
+
+      const pencil = within(card).getByRole('button', { name: '줄 직접 고치기' });
+      expect(pencil.parentElement).toHaveClass('right-[7.625rem]');
+    });
+
     it('edits one line of the card from the pencil on that line', async () => {
       const { card } = editable();
       const rows = card.querySelectorAll('tr');
@@ -1320,6 +1330,29 @@ describe('editing the reviewed code directly', () => {
     expect(decideFixups).toHaveBeenCalledWith('c1', 'rejected', [
       { fixupSha: fixup.sha, patchId: 'patch-e' },
     ]);
+  });
+
+  it.each(['unified', 'split'] as const)(
+    'moves the line buttons aside on the two rows under the hunk button and matches its height on every row (%s)',
+    (mode) => {
+      const { hover } = renderEditable({ mode });
+
+      const placements = [0, 1, 2].map((row) => {
+        hover(row);
+        return screen.getByRole('button', { name: '줄 직접 고치기' }).parentElement!.className;
+      });
+
+      expect(placements[0]).toContain('right-[7.625rem]');
+      expect(placements[0]).toContain('top-1 ');
+      expect(placements[1]).toContain('right-[7.625rem]');
+      expect(placements[1]).toContain('top-1/2');
+      expect(placements[2]).toContain('right-1.5');
+      expect(placements[2]).toContain('h-[calc(1.25rem+2px)]');
+    },
+  );
+
+  it('moves nothing when the hunk has no hunk button', () => {
+    expect(lineEndPlacement(false, 0)).toContain('right-1.5');
   });
 
   it('shows no pencil when the review cannot take edits', () => {
