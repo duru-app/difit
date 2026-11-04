@@ -1,9 +1,9 @@
 export enum DiffMode {
-  DEFAULT = 'default', // HEAD^ vs HEAD
+  DEFAULT = 'default', // a target with no commit, such as stdin
   WORKING = 'working', // staged vs working
   STAGED = 'staged', // HEAD vs staged
   DOT = 'dot', // HEAD vs working (all changes)
-  SPECIFIC = 'specific', // commit vs commit (watches only HEAD moves)
+  SPECIFIC = 'specific', // a pinned commit target (watches only HEAD moves)
 }
 
 type WatchChangeType = 'file' | 'commit' | 'staging';

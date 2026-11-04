@@ -76,7 +76,7 @@ For uncommitted changes, if files not yet added to git should also appear in the
 Keep at most one live difit server per Git root and review target. When you edit again after starting a review, reuse the running server instead of launching another one — repeated launches create duplicate ports and browser tabs.
 
 - Before starting difit, check whether a difit server you started earlier is still running for the same Git root (for example, the background process you launched is still alive).
-- If one is running for the same target, do not start another and do not reopen its URL. For working-tree targets (`.`, `working`, `staged`, and the HEAD default) difit watches the repository, and the open page prompts the user to reload when the diff changes.
+- If one is running for the same target, do not start another and do not reopen its URL. For working-tree targets (`.`, `working`, `staged`) difit watches the repository, and the open page prompts the user to reload when the diff changes.
 - If review rounds are expected to repeat, start the server with `--keep-alive` (the server survives browser disconnects) or `--background` (a detached keep-alive server; prints JSON like `{"port":4966,"url":"http://localhost:4966","pid":123}` and does not auto-open a browser, so share the URL with the user once).
 - While the server stays alive, exchange feedback without restarting it:
   - `<difit-command> comment get --port <port>` — read the user's review comments (`--format json` for structured output).
