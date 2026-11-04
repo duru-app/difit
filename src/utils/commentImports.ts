@@ -379,6 +379,13 @@ function cloneChoice(choice: ReplyChoice): ReplyChoice {
   };
 }
 
+function normalizeThreadId(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Invalid comment import field: threadId');
+  }
+  return value;
+}
+
 function normalizeFixPending(value: unknown): true | undefined {
   if (value === undefined || value === false) {
     return undefined;
@@ -441,10 +448,17 @@ function normalizeCommentImportEntry(value: unknown): CommentImport {
     throw new Error('Invalid comment import field: a reply takes choices or fixPending, not both');
   }
 
+  if (value.type === 'thread' && value.threadId !== undefined) {
+    throw new Error('Invalid comment import field: threadId belongs on a reply');
+  }
+
   const fixupTarget = normalizeFixupTarget(value.fixupTarget);
   const common = {
     type: value.type,
     id: normalizeOptionalString(value.id, 'id'),
+    ...(value.type === 'reply' && value.threadId !== undefined
+      ? { threadId: normalizeThreadId(value.threadId) }
+      : {}),
     body: normalizeRequiredBody(value.body),
     author: normalizeOptionalString(value.author, 'author'),
     createdAt,
@@ -887,9 +901,24 @@ export function serializeCommentImports(commentImports: CommentImport[]): string
           }
         : undefined,
       fixupTarget: commentImport.fixupTarget,
+      ...(commentImport.type === 'reply' && commentImport.threadId !== undefined
+        ? { threadId: commentImport.threadId }
+        : {}),
       ...(commentImport.type === 'reply' ? replyFields(commentImport) : {}),
     })),
   );
+}
+
+function findThreadByPlace(
+  threads: DiffCommentThread[],
+  place: Place,
+  takesReplies: (thread: DiffCommentThread) => boolean,
+  isResolved: (thread: DiffCommentThread) => boolean,
+): DiffCommentThread | undefined {
+  const candidates = threads
+    .filter((thread) => samePlace(thread, place) && takesReplies(thread))
+    .sort(sortByNewestThread);
+  return candidates.find((thread) => !isResolved(thread)) ?? candidates[0];
 }
 
 export function mergeCommentImports(
@@ -922,16 +951,30 @@ export function mergeCommentImports(
       continue;
     }
 
-    const targetThreads = threads
-      .filter((thread) => samePlace(thread, commentImport) && takesReplies(thread))
-      .sort(sortByNewestThread);
-
-    const targetThread = targetThreads.find((thread) => !isResolved(thread)) ?? targetThreads[0];
+    const named =
+      commentImport.threadId === undefined
+        ? undefined
+        : threads.find((thread) => thread.id === commentImport.threadId);
+    const targetThread =
+      commentImport.threadId === undefined
+        ? findThreadByPlace(threads, commentImport, takesReplies, isResolved)
+        : named && takesReplies(named)
+          ? named
+          : undefined;
     if (!targetThread) {
       warnings.push(
-        `Skipped reply import for ${placeLabel(commentImport)} because no matching thread was found.`,
+        commentImport.threadId === undefined
+          ? `Skipped reply import for ${placeLabel(commentImport)} because no matching thread was found.`
+          : named
+            ? `Skipped reply import because thread ${commentImport.threadId} was deleted.`
+            : `Skipped reply import because thread ${commentImport.threadId} was not found.`,
       );
       continue;
+    }
+    if (commentImport.threadId !== undefined && !samePlace(targetThread, commentImport)) {
+      warnings.push(
+        `Stored the reply on thread ${targetThread.id} as named, though the place it gave differs from that thread's.`,
+      );
     }
 
     const hasDuplicateReply = targetThread.messages.some((message) =>
@@ -941,7 +984,7 @@ export function mergeCommentImports(
       continue;
     }
 
-    if (isResolved(targetThread)) {
+    if (commentImport.threadId === undefined && isResolved(targetThread)) {
       warnings.push(
         `Stored the reply for ${placeLabel(commentImport)} on thread ${targetThread.id}, which is resolved; no open thread matched.`,
       );
