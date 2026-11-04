@@ -61,6 +61,8 @@ export interface FixupOverlayState {
   focusedFixupFile: FixupFileRef | null;
   revealFixupFile: (fixupSha: string, path: string) => void;
   pickThread: (threadId: string) => void;
+  // Picks a thread whose card is drawn in the shown view, without switching the view.
+  showThreadCard: (threadId: string) => void;
 }
 
 export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {
@@ -81,6 +83,7 @@ export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {
   focusedFixupFile: null,
   revealFixupFile: () => {},
   pickThread: () => {},
+  showThreadCard: () => {},
 };
 
 const FixupOverlayContext = createContext<FixupOverlayState>(EMPTY_FIXUP_OVERLAY);

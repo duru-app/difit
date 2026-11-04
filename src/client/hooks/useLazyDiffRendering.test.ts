@@ -480,20 +480,20 @@ describe('useLazyDiffRendering', () => {
       const setupLineAndBox = (boxTop: number) =>
         setup([...reviewSections, { id: 'line', top: 300 }, { id: 'box', top: boxTop }], 1000);
 
-      it('stays put when the line and the element are both in sight', async () => {
+      it('brings the line to the top even when it and the element are already in sight', async () => {
         const { scroll, scrollTo } = setupLineAndBox(500);
 
         scroll('b.ts', 'box', 'line');
 
-        await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0 }));
+        await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 300 }));
       });
 
-      it('scrolls just far enough to bring the element in under the line', async () => {
+      it('brings the line to the top with the element below it when the element is below the screen', async () => {
         const { scroll, scrollTo } = setupLineAndBox(1100);
 
         scroll('b.ts', 'box', 'line');
 
-        await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 200 }));
+        await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 300 }));
       });
 
       it('puts the element at the top when it and the line do not fit together', async () => {

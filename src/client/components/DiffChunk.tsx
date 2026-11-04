@@ -29,7 +29,7 @@ import {
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
 import { DiffLineRow } from './DiffLineRow';
-import { goToThreadCard, PickControls, ThreadMarker } from './LinePickParts';
+import { PickControls, ThreadMarker } from './LinePickParts';
 import { DirectEditForm } from './DirectEditForm';
 import { EditHunkButton } from './EditLineButton';
 import { FixupBoxRows, FixupOverlayRow } from './FixupOverlayCard';
@@ -305,7 +305,7 @@ export const DiffChunk = memo(function DiffChunk({
     (threadHoldsLine(flashedThread, 'old', line.oldLineNumber) ||
       threadHoldsLine(flashedThread, 'new', line.newLineNumber));
   const showThread = (thread: CommentThread) => {
-    goToThreadCard(thread.id);
+    overlay.showThreadCard(thread.id);
     linePick.flash(thread.id);
   };
 

@@ -98,9 +98,3 @@ export function ThreadMarker({
     </div>
   );
 }
-
-export function goToThreadCard(threadId: string) {
-  document
-    .getElementById(`comment-thread-${threadId}`)
-    ?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-}
