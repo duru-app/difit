@@ -71,7 +71,7 @@ export interface FixupOverlayState {
   showThreadCard: (threadId: string) => void;
   // Null when replies cannot be written here.
   replyToThread: ((threadId: string, body: string, fields?: ReviewerReplyFields) => void) | null;
-  revealFixupLines: (lines: FixupLines) => void;
+  revealFixupLines: (lines: FixupLines, threadId: string) => void;
 }
 
 export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {

@@ -196,9 +196,14 @@ const PICK_SCOPE = '[data-line-pick-scope], [data-file-path]';
 const LINE_LINK_FLASH_MS = 1400;
 const LINE_LINK_FLASH_ATTRIBUTE = 'data-line-link-flash';
 
-const flashRows = (elementIds: readonly string[], deadline: number, scroll = false) => {
+const flashRows = (
+  elementIds: readonly string[] | (() => readonly string[]),
+  deadline: number,
+  scroll = false,
+) => {
   requestAnimationFrame(() => {
-    const rows = elementIds.flatMap((id) => document.getElementById(id)?.closest('tr') ?? []);
+    const ids = typeof elementIds === 'function' ? elementIds() : elementIds;
+    const rows = ids.flatMap((id) => document.getElementById(id)?.closest('tr') ?? []);
     if (rows.length === 0) {
       if (Date.now() < deadline) flashRows(elementIds, deadline, scroll);
       return;
@@ -1902,11 +1907,21 @@ function App() {
     [replyToThread],
   );
   const revealFixupLines = useCallback(
-    (lines: FixupLines) => {
-      const place = fixupLinesPlace(lines, fixupsByThread);
+    (lines: FixupLines, threadId: string) => {
+      const place = fixupLinesPlace(lines, fixupsByThread, threadId);
       const [first] = place.elementIds;
-      if (first && !document.getElementById(first)) revealFixupFile(place.fixupSha, place.path);
-      flashRows(place.elementIds, Date.now() + LINE_LINK_WAIT_MS, true);
+      const [firstOwn] = place.cardElementIds;
+      const shown = (id: string | undefined) => id !== undefined && document.getElementById(id);
+      if (first && !shown(first) && !shown(firstOwn)) revealFixupFile(place.fixupSha, place.path);
+      flashRows(
+        () =>
+          place.elementIds.map((id, index) => {
+            const own = place.cardElementIds[index];
+            return own && document.getElementById(own) ? own : id;
+          }),
+        Date.now() + LINE_LINK_WAIT_MS,
+        true,
+      );
     },
     [fixupsByThread, revealFixupFile],
   );

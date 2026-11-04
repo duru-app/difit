@@ -44,7 +44,19 @@ describe('fixupLinesPlace', () => {
         fixupLineElementId(lines.fixupSha, 'src/deep/order.ts', 'old', 41),
         fixupLineElementId(lines.fixupSha, 'src/deep/order.ts', 'new', 50),
       ],
+      cardElementIds: [],
     });
+  });
+
+  it('names the lines of the card answering the given thread apart from the other thread card', () => {
+    const byThread = new Map([['t1', [fixupWith(lines.fixupSha, 'patch-1')]]]);
+
+    const first = fixupLinesPlace(lines, byThread, 't1').cardElementIds;
+    const second = fixupLinesPlace(lines, byThread, 't2').cardElementIds;
+
+    expect(first[0]).toBe(fixupLineElementId(lines.fixupSha, 'src/deep/order.ts', 'new', 42, 't1'));
+    expect(first).toHaveLength(4);
+    expect(first[0]).not.toBe(second[0]);
   });
 
   it('follows the fixup to its new commit after a rebase by its patch id', () => {

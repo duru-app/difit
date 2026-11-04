@@ -437,6 +437,6 @@ describe('the place a reply on fixup lines points at', () => {
     });
     act(() => fireEvent.click(place));
 
-    expect(revealFixupLines).toHaveBeenCalledWith(fixupLines);
+    expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
   });
 });

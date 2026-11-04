@@ -109,6 +109,7 @@ function FixupChunksTable({
   editing,
   laterEdits,
   replyThreads,
+  cardThreadId,
 }: {
   chunks: DiffChunk[];
   fixup: Pick<ThreadFixup, 'sha' | 'patchId'>;
@@ -117,6 +118,7 @@ function FixupChunksTable({
   editing?: ChunksEditing;
   laterEdits?: ReadonlyMap<number, FixupFileRef>;
   replyThreads: readonly AnsweredThread[];
+  cardThreadId?: string;
 }) {
   const { revealFixupFile } = useFixupOverlay();
   const canHover = useCanHover();
@@ -158,6 +160,7 @@ function FixupChunksTable({
                                   file.path,
                                   picked.side,
                                   picked.lineNumber,
+                                  cardThreadId,
                                 )
                               : undefined
                           }
@@ -382,6 +385,7 @@ function FixupOverlayCard({
           editing={editingOf(file)}
           laterEdits={fixupLaterEdits.get(keyOf(file))}
           replyThreads={replyThreads}
+          cardThreadId={threadId}
         />
       ))}
       {heldFiles.map((file) => (
@@ -402,6 +406,7 @@ function FixupOverlayCard({
             editing={editingOf(file)}
             laterEdits={fixupLaterEdits.get(keyOf(file))}
             replyThreads={replyThreads}
+            cardThreadId={threadId}
           />
         </div>
       ))}
