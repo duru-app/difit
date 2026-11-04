@@ -36,6 +36,7 @@ const REVEAL_ON_HOVER =
 
 interface ThreadMessageItemProps {
   message: DiffCommentMessage;
+  threadId: string;
   showAuthorBadge: boolean;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   filename?: string;
@@ -49,6 +50,7 @@ interface ThreadMessageItemProps {
 
 function ThreadMessageItem({
   message,
+  threadId,
   showAuthorBadge,
   syntaxTheme,
   filename,
@@ -129,7 +131,9 @@ function ThreadMessageItem({
               </div>
             )}
 
-            {message.fixupLines && <FixupLinesButton lines={message.fixupLines} />}
+            {message.fixupLines && (
+              <FixupLinesButton lines={message.fixupLines} threadId={threadId} />
+            )}
             <CommentBodyRenderer
               body={message.body}
               originalCode={originalCode}
@@ -488,6 +492,7 @@ export function CommentThreadCard({
 
           <ThreadMessageItem
             message={rootMessage}
+            threadId={thread.id}
             showAuthorBadge={showAuthorBadges}
             syntaxTheme={syntaxTheme}
             filename={onFile?.file}
@@ -502,6 +507,7 @@ export function CommentThreadCard({
             <div key={message.id} className="ml-4 border-l border-github-border pl-3">
               <ThreadMessageItem
                 message={message}
+                threadId={thread.id}
                 showAuthorBadge={showAuthorBadges}
                 syntaxTheme={syntaxTheme}
                 filename={onFile?.file}

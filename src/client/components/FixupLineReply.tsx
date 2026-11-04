@@ -155,7 +155,7 @@ export function useFixupLineReply({
   };
 }
 
-export function FixupLinesButton({ lines }: { lines: FixupLines }) {
+export function FixupLinesButton({ lines, threadId }: { lines: FixupLines; threadId: string }) {
   const { revealFixupLines, fixupsByThread } = useFixupOverlay();
   const { fixupSha } = fixupLinesPlace(lines, fixupsByThread);
   return (
@@ -164,7 +164,7 @@ export function FixupLinesButton({ lines }: { lines: FixupLines }) {
       title={lines.oldPath ? `${lines.oldPath} → ${lines.filePath}` : lines.filePath}
       onClick={(event) => {
         event.stopPropagation();
-        revealFixupLines(lines);
+        revealFixupLines(lines, threadId);
       }}
       className="mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary hover:text-github-text-primary hover:underline"
     >
