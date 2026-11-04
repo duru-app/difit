@@ -81,10 +81,6 @@ export function ThreadMarker({
   return (
     <div className="mx-4 my-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 border-l-[3px] border-yellow-400 px-2 py-0.5 text-xs text-github-text-secondary">
       <MessageSquare size={12} aria-hidden="true" />
-      <span>
-        이 줄도 {cardSide}
-        {rangeLabel(card.line)} 아래 지적에 함께 걸려 있습니다
-      </span>
       <button
         type="button"
         onClick={(e) => {
@@ -93,7 +89,8 @@ export function ThreadMarker({
         }}
         className="text-blue-500 hover:underline"
       >
-        지적으로 가기
+        {cardSide}
+        {rangeLabel(card.line)} 지적으로 가기
       </button>
     </div>
   );

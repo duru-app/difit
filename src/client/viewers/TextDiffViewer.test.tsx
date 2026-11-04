@@ -736,7 +736,7 @@ describe.each(['unified', 'split'] as const)(
         renderViewer({ ...open, threads: [thread] });
 
         expect(screen.getAllByText('Same mistake')).toHaveLength(1);
-        const marker = screen.getByText('이 줄도 L40-L41 아래 지적에 함께 걸려 있습니다');
+        const marker = screen.getByRole('button', { name: 'L40-L41 지적으로 가기' });
         expect(
           rowOf('f10();').compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
@@ -749,7 +749,7 @@ describe.each(['unified', 'split'] as const)(
         renderViewer({ ...open, threads: [thread] });
 
         expect(flashed()).toEqual([]);
-        fireEvent.click(screen.getByRole('button', { name: '지적으로 가기' }));
+        fireEvent.click(screen.getByRole('button', { name: /지적으로 가기$/ }));
 
         expect(flashed()).toEqual(['f10();', '// new 40', 'f40();']);
       });
@@ -786,7 +786,7 @@ describe.each(['unified', 'split'] as const)(
         renderViewer({ ...open, threads: [thread] });
 
         expect(screen.getAllByText('Same mistake')).toHaveLength(1);
-        const marker = screen.getByText('이 줄도 남은 줄 L40-L41 아래 지적에 함께 걸려 있습니다');
+        const marker = screen.getByRole('button', { name: '남은 줄 L40-L41 지적으로 가기' });
         expect(
           rowOf('// old 10').compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();

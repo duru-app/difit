@@ -1550,9 +1550,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
         rowWith('tail();').compareDocumentPosition(card[0]!) & Node.DOCUMENT_POSITION_PRECEDING,
       ).toBeTruthy();
       expect(directlyBelow(markerRow)).toHaveTextContent(
-        mode === 'unified'
-          ? '이 줄도 남은 줄 L10 아래 지적에 함께 걸려 있습니다'
-          : '이 줄도 지운 줄 L11 아래 지적에 함께 걸려 있습니다',
+        mode === 'unified' ? '남은 줄 L10 지적으로 가기' : '지운 줄 L11 지적으로 가기',
       );
     },
   );
@@ -1589,10 +1587,10 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     ).toBeTruthy();
     if (mode === 'unified') {
       expect(rowWith('alsoGone();').nextElementSibling).toHaveTextContent(
-        '이 줄도 남은 줄 L10-L11 아래 지적에 함께 걸려 있습니다',
+        '남은 줄 L10-L11 지적으로 가기',
       );
     } else {
-      expect(screen.queryByText(/이 줄도/)).toBeNull();
+      expect(screen.queryByText(/지적으로 가기/)).toBeNull();
     }
   });
 
@@ -1604,7 +1602,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     };
     renderChunk(mode, { threads: [thread], overlay: { showThreadCard } });
 
-    fireEvent.click(screen.getByRole('button', { name: '지적으로 가기' }));
+    fireEvent.click(screen.getByRole('button', { name: /지적으로 가기$/ }));
 
     expect(showThreadCard).toHaveBeenCalledWith(thread.id);
   });
