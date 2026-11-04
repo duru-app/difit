@@ -188,6 +188,8 @@ Fold once, when the branch is wrapped up: every remaining fixup is `[승인됨]`
 
 Run the tests and the code review the change needs once, on the tip with every approved fixup, before folding. A failure or a review finding is answered like a comment: a new fixup for the user to approve, then one more run.
 
+When the `track-retro` skill is installed, read the diff of each fixup about to fold, the user's viewer edits included, and append one line per fixup to `~/.claude/projects/<project>/retro/<track>.md` before folding: `- YYYY-MM-DD | fixup: <what was wrong and why> | <owner commit subject>`.
+
 The JSON `decisions` only accumulate. Approving a comment with several fixups adds one `approved` per fixup, all at the same time. When the user unapproves, `"kind": "unapproved"` is added; the later of `approved` and `unapproved` for a thread wins, and a `rejected` later than the approval wins over both. Read the current state from the text output labels.
 
 On a git older than 2.32 (`git --version`), add `--keep-empty` to the fold command below and do not run the `Review-Thread` line-removal command after it. Without `--keep-empty` the user's commit message edits are lost, and the line-removal command rebases without it too, so it drops the `amend!` commits the fold kept. What to do instead is in the git 2.32 paragraph after it.
