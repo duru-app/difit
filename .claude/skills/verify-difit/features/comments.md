@@ -7,6 +7,7 @@
 - `add`: new threads and replies, from an argument or stdin
 - `get`: text for reading, `--format json` for thread IDs and `decisions`
 - `wait`: blocks until a thread is the agent's turn, prints one JSON line per thread, exits 0
+- `add` reply with `threadId`: attaches to that thread; duplicates are judged inside it
 - `resolve` (alias `remove`): resolves threads by ID
 
 ## How to get to it (user POV)
@@ -34,6 +35,16 @@ Proof:
 - `wait` prints a line with `threadId` and `"label":"답변 대기"`, and exits 0.
 - `get --format json` then has a `decisions` entry of kind `handed` for that thread.
 - `resolve` with one real and one unknown ID prints the first under `resolved` and the second under `notFound`, and exits 1.
+
+## Reply with `threadId`
+
+Two User threads at `math.js` line 2, then replies naming each by `"threadId"`:
+
+- the same body sent to both leaves each thread with two messages, and a repeat changes nothing;
+- after `resolve` of the first thread, the same reply (same `id`) naming it again leaves both threads unchanged (no copy on the other);
+- `threadId` that does not exist prints a `warnings` entry and stores nothing;
+- `threadId` with another `position` stores on the named thread and prints a `warnings` entry;
+- the same replies without `threadId` still go to the newest open thread at the place.
 
 ## Gotchas
 

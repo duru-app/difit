@@ -372,6 +372,7 @@ export type ThreadCommentImport = CommentImportCommon & CommentImportPlace & { t
 export type ReplyCommentImport = CommentImportCommon &
   CommentImportPlace & {
     type: 'reply';
+    threadId?: string;
     choices?: ReplyChoice[];
     answer?: ChoiceAnswer;
     fixupLines?: FixupLines;

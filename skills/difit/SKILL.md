@@ -122,6 +122,10 @@ The user can also edit code in the viewer. difit then commits a `fixup! <target 
 
 The user can also reword a commit from the commit list. difit then commits an `amend! <target SHA>` commit that changes no file, whose message below the first paragraph is the new message with a `Review-Thread` trailer, and records it as approved under a new thread whose `filePath` is `/COMMIT_MSG` (line 1), with `fixupTarget` the reworded commit and author `reviewer-edit`. It needs nothing from you until folding.
 
+### Naming the thread a reply answers
+
+A reply attaches by `filePath` and `position`. When several threads share a place, add `"threadId": "<id from comment get or comment wait>"` to the reply: it attaches to that thread and is checked for duplicates only inside it, so a retry after the thread was resolved does not copy onto a neighbour and the same text on two threads at one place is stored on both. An unknown or deleted `threadId` stores nothing and puts a line in `warnings`; a `filePath`/`position` that disagrees with the thread still attaches to the named thread and warns. Only `"type": "reply"` takes `threadId`.
+
 ### Asking the user to pick
 
 When the user has to choose between options, attach them to a reply instead of listing them in the body; the user picks one by clicking its card in the thread. Only `"type": "reply"` takes `choices`.

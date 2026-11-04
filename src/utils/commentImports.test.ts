@@ -287,6 +287,92 @@ describe('commentImports', () => {
       expect(result.threads[1]?.messages[1]?.body).toBe('Imported reply');
     });
 
+    describe('a reply that names its thread', () => {
+      const place = { filePath: 'src/example.ts', position: { side: 'new', line: 10 } } as const;
+      const reply = (extra: object = {}) =>
+        ({ type: 'reply', ...place, body: 'Same text', author: 'AI', ...extra }) as CommentImport;
+      const a = () =>
+        createThread({ id: 'a', body: 'Root A', updatedAt: '2024-01-01T00:00:00.000Z' });
+      const b = () =>
+        createThread({ id: 'b', body: 'Root B', updatedAt: '2024-01-02T00:00:00.000Z' });
+
+      it('stores the same text once on each of two open threads at one place', () => {
+        const first = mergeCommentImports(
+          [a(), b()],
+          [reply({ threadId: 'a' }), reply({ threadId: 'b' })],
+        );
+        expect(first.warnings).toEqual([]);
+        expect(first.threads.map((t) => t.messages.length)).toEqual([2, 2]);
+        const retried = mergeCommentImports(first.threads, [
+          reply({ threadId: 'a' }),
+          reply({ threadId: 'b' }),
+        ]);
+        expect(retried.threads.map((t) => t.messages.length)).toEqual([2, 2]);
+      });
+
+      it('does not copy a retry onto the neighbour when its thread is resolved', () => {
+        const resolved = (t: DiffCommentThread) => t.id === 'a';
+        const first = mergeCommentImports(
+          [a(), b()],
+          [reply({ threadId: 'a', id: 'r1' })],
+          () => true,
+          resolved,
+        );
+        expect(first.threads.map((t) => t.messages.length)).toEqual([2, 1]);
+        const retried = mergeCommentImports(
+          first.threads,
+          [reply({ threadId: 'a', id: 'r1' })],
+          () => true,
+          resolved,
+        );
+        expect(retried.threads.map((t) => t.messages.length)).toEqual([2, 1]);
+      });
+
+      it('skips with a warning when the thread does not exist', () => {
+        const result = mergeCommentImports([a()], [reply({ threadId: 'missing' })]);
+        expect(result.threads[0]?.messages).toHaveLength(1);
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0]).toContain('missing');
+      });
+
+      it('says deleted when the named thread is deleted, and stays quiet for a resolved one', () => {
+        const deleted = mergeCommentImports([a()], [reply({ threadId: 'a' })], () => false);
+        expect(deleted.warnings[0]).toContain('deleted');
+        const resolved = mergeCommentImports(
+          [a()],
+          [reply({ threadId: 'a' })],
+          () => true,
+          () => true,
+        );
+        expect(resolved.warnings).toEqual([]);
+        expect(resolved.threads[0]?.messages).toHaveLength(2);
+      });
+
+      it('attaches to the named thread and warns when the position disagrees', () => {
+        const result = mergeCommentImports(
+          [a()],
+          [reply({ threadId: 'a', position: { side: 'new', line: 99 } })],
+        );
+        expect(result.threads[0]?.messages).toHaveLength(2);
+        expect(result.warnings).toHaveLength(1);
+      });
+
+      it('keeps looking up by position without a threadId', () => {
+        const result = mergeCommentImports([a(), b()], [reply()]);
+        expect(result.threads.map((t) => t.messages.length)).toEqual([1, 2]);
+      });
+
+      it('reads threadId from input and rejects a non-string', () => {
+        expect(normalizeCommentImports({ ...reply(), threadId: 'a' })[0]).toMatchObject({
+          threadId: 'a',
+        });
+        expect(() => normalizeCommentImports({ ...reply(), threadId: 3 })).toThrow('threadId');
+        expect(() =>
+          normalizeCommentImports({ ...reply(), type: 'thread', threadId: 'a' }),
+        ).toThrow('threadId');
+      });
+    });
+
     it('puts a reply on the open thread even when a resolved one is newer', () => {
       const open = createThread({
         id: 'open',
