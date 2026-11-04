@@ -135,7 +135,14 @@ program
       }
 
       if (options.background && !isBackgroundChild) {
-        await startBackgroundProcess();
+        await startBackgroundProcess(
+          undefined,
+          shouldReadStdin({
+            commitish,
+            hasPositionalArgs: program.args.length > 0,
+            hasPrOption: Boolean(options.pr),
+          }),
+        );
         return;
       }
 

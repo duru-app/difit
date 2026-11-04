@@ -93,6 +93,18 @@ describe('background process lifecycle', () => {
     expect(child.listenerCount('close')).toBe(0);
   });
 
+  it('hands its own stdin to the child when the diff is piped in', async () => {
+    const result = startBackgroundProcess(spawnProcess, true);
+    child.emit('message', { port: 4967, url: 'http://localhost:4967', pid: 42 });
+    await result;
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      process.execPath,
+      expect.any(Array),
+      expect.objectContaining({ stdio: ['inherit', 'ignore', 'pipe', 'ipc'] }),
+    );
+  });
+
   it('preserves stderr when the child exits before the handshake', async () => {
     const result = startBackgroundProcess(spawnProcess);
     child.stderr.write('Error: Invalid or non-existent commit: bad-ref\n');
