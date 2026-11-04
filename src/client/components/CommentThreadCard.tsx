@@ -18,12 +18,11 @@ import {
   isThreadFolded,
   reviewStateLabel,
 } from '../../utils/reviewDecisions';
-import { NAVIGATION_SELECTORS } from '../constants/navigation';
 import { type ThreadReviewControls, useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { usePickedThreadId } from '../contexts/PickedThreadContext';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { copyTextToClipboard } from '../utils/clipboard';
-import { stickyHeaderCover } from '../utils/domUtils';
+import { runsOffTheTopOf, visibleTopOf } from '../utils/domUtils';
 
 import { CommentBodyRenderer } from './CommentBodyRenderer';
 import { CommentForm } from './CommentForm';
@@ -232,17 +231,16 @@ const OUTDATED_REASON_TITLE: Record<AnchorStaleReason, string> = {
 
 const RESPONDING_DOT_DELAYS_MS = [0, 150, 300];
 
-const visibleTopOf = (card: HTMLElement) => {
-  const diff = card.closest<HTMLElement>(NAVIGATION_SELECTORS.SCROLL_CONTAINER);
-  if (!diff) return null;
-  return { diff, top: diff.getBoundingClientRect().top + stickyHeaderCover(card) };
-};
-
 const runsOffTheTop = (card: HTMLElement | null) => {
   const visible = card && visibleTopOf(card);
   if (!card || !visible) return false;
   const { top, bottom } = card.getBoundingClientRect();
-  return top < visible.top && bottom > visible.top;
+  return runsOffTheTopOf(top, bottom, visible.top);
+};
+
+const alignToVisibleTop = (target: HTMLElement) => {
+  const visible = visibleTopOf(target);
+  if (visible) visible.diff.scrollTop += target.getBoundingClientRect().top - visible.top;
 };
 
 interface CommentThreadCardProps {
@@ -299,8 +297,7 @@ export function CommentThreadCard({
     const card = cardRef.current;
     if (!isCollapsed || !headWasOffTheTop.current || !card) return;
     headWasOffTheTop.current = false;
-    const visible = visibleTopOf(card);
-    if (visible) visible.diff.scrollTop += card.getBoundingClientRect().top - visible.top;
+    alignToVisibleTop(card);
   }, [isCollapsed]);
 
   const toggleCollapsed = (e: React.MouseEvent) => {
