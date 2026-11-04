@@ -280,5 +280,8 @@ export const endsOnRow = (
     ({ side, line }) => spanOf(line)[1] === (side === 'old' ? oldLineNumber : newLineNumber),
   );
 
-export const rangeLabel = (line: LineNumber) =>
-  Array.isArray(line) ? `L${line[0]}-L${line[1]}` : `L${line}`;
+export const rangeLabel = (line: LineNumber) => {
+  if (!Array.isArray(line)) return `L${line}`;
+  const [start, end] = line;
+  return start === end ? `L${start}` : `L${start}-L${end}`;
+};
