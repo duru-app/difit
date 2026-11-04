@@ -61,7 +61,7 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
    difit comment get --port <port> --format json
    ```
 
-   JSON에는 이미 해결된 스레드도 들어 있다. `decisions`에서 그 스레드의 `resolved`·`unresolved` 기록 가운데 가장 나중 것이 `resolved`이면 건너뛴다. `comment resolve`로 해결한 스레드도 같은 식으로 목록에 남는다.
+   JSON에는 이미 해결된 스레드도 들어 있다. `decisions`에서 그 스레드의 `resolved`·`unresolved` 기록 가운데 가장 나중 것이 `resolved`이면 건너뛴다. `comment resolve`로 해결한 스레드도 같은 식으로 목록에 남는다. `comment resolve`와 `remove`는 모든 글의 작성자가 `Agent`이고 리뷰어가 다시 연 적 없는 스레드만 닫는다. 리뷰어가 단 지적, GitHub에서 가져온 지적, 다른 작성자로 단 지적, 리뷰어가 답글을 달거나 다시 연 지적은 기록을 남기지 않고 종료 코드 1로 거부하며 출력의 `errors`에 어느 ID인지 적는다. 그런 지적은 리뷰어가 ✓를 누르거나 fixup을 승인할 때까지 열려 있으므로, 고치거나 답글로 답하고 닫지 않는다. 리뷰어가 ✓로 이미 닫은 지적은 기록을 더 남기지 않고 `resolved`로 알려 준다. 한 번에 여러 ID를 주면 닫을 수 있는 것은 닫고 나머지만 거부한다. 서버의 HTTP API에는 이 검사가 없고, 에이전트가 잘못 친 명령을 막는 장치일 뿐 보안 경계가 아니다.
 
    리뷰어가 커밋 하나나 커밋 범위를 보며 단 지적에는 필드가 둘 더 있다. `view`는 지적을 단 화면의 기준(`baseCommitish`)과 대상(`targetCommitish`)이고, `fixupTarget`은 fixup을 걸 커밋의 SHA다. 전체 화면에서 단 지적에는 `fixupTarget`만 있다. 텍스트 출력에도 그 지적의 위치 줄 바로 아래에 `고쳐 넣을 커밋: <짧은 SHA> <제목>`이 붙는다. `view`가 없는 지적은 전체 화면에서 단 지적이다.
 

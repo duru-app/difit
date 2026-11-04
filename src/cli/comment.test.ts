@@ -376,7 +376,13 @@ describe('comment subcommand integration', () => {
   });
 
   describe('resolve', () => {
-    const thread = (id: string) => ({ id, messages: [] });
+    const thread = (id: string, ...opener: [author?: string]) => {
+      const author = opener.length > 0 ? opener[0] : 'Agent';
+      return {
+        id,
+        messages: [{ id: `${id}-m1`, body: 'x', ...(author === undefined ? {} : { author }) }],
+      };
+    };
     const decision = (threadId: string, kind: string, at: string) => ({
       threadId,
       kind,
@@ -384,7 +390,7 @@ describe('comment subcommand integration', () => {
       at,
     });
     const state = (ids: string[], decisions: unknown[] = []) =>
-      jsonResponse({ version: 1, threads: ids.map(thread), decisions });
+      jsonResponse({ version: 1, threads: ids.map((id) => thread(id)), decisions });
     const decisionPosts = () => mockFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
 
     it('records resolved decisions without deleting the threads', async () => {
@@ -457,45 +463,225 @@ describe('comment subcommand integration', () => {
       expect(process.exit).not.toHaveBeenCalled();
     });
 
-    it('records a new resolution for a thread the reviewer reopened', async () => {
-      mockFetch
-        .mockResolvedValueOnce(
-          state(
-            ['abc123'],
-            [
-              decision('abc123', 'resolved', '2026-01-01T00:00:00Z'),
-              decision('abc123', 'unresolved', '2026-01-01T00:01:00Z'),
-            ],
-          ),
-        )
-        .mockResolvedValueOnce(jsonResponse({ success: true }));
+    it('refuses a thread the agent opened once the reviewer reopened it', async () => {
+      mockFetch.mockResolvedValueOnce(
+        state(
+          ['abc123'],
+          [
+            decision('abc123', 'resolved', '2026-01-01T00:00:00Z'),
+            decision('abc123', 'unresolved', '2026-01-01T00:01:00Z'),
+          ],
+        ),
+      );
 
       const command = createCommentCommand();
       await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123']);
 
-      expect(decisionPosts()).toHaveLength(1);
-      expect(consoleOutput[0]).toContain('"resolved":["abc123"]');
+      expect(decisionPosts()).toHaveLength(0);
+      expect(consoleOutput[0]).toContain('Refused');
+      expect(process.exit).toHaveBeenCalledWith(1);
     });
 
-    it('stamps the resolution after a reopening made on a clock ahead of this one', async () => {
-      const ahead = new Date(Date.now() + 3_600_000).toISOString();
+    it('refuses a thread the agent opened once the reviewer replied to it', async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          version: 1,
+          threads: [
+            {
+              id: 'mine',
+              messages: [
+                { id: 'm1', body: 'x', author: 'Agent' },
+                { id: 'm2', body: 'still wrong', author: 'User' },
+              ],
+            },
+          ],
+          decisions: [],
+        }),
+      );
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'mine']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('closes a thread the agent replied to itself', async () => {
       mockFetch
         .mockResolvedValueOnce(
-          state(
-            ['abc123'],
-            [
-              decision('abc123', 'resolved', '2026-01-01T00:00:00Z'),
-              decision('abc123', 'unresolved', ahead),
+          jsonResponse({
+            version: 1,
+            threads: [
+              {
+                id: 'mine',
+                messages: [
+                  { id: 'm1', body: 'x', author: 'Agent' },
+                  { id: 'm2', body: 'y', author: 'Agent' },
+                ],
+              },
             ],
-          ),
+            decisions: [],
+          }),
         )
         .mockResolvedValueOnce(jsonResponse({ success: true }));
 
       const command = createCommentCommand();
-      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123']);
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'mine']);
 
-      const body = JSON.parse(decisionPosts()[0]![1]!.body as string) as Array<{ at: string }>;
-      expect(Date.parse(body[0]!.at)).toBeGreaterThan(Date.parse(ahead));
+      expect(decisionPosts()).toHaveLength(1);
+      expect(process.exit).not.toHaveBeenCalled();
+    });
+
+    it('refuses a thread the reviewer opened and records nothing', async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ version: 1, threads: [thread('rev1', 'User')], decisions: [] }),
+      );
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'rev1']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      const output = JSON.parse(consoleOutput[0]!) as {
+        success: boolean;
+        resolved: string[];
+        errors: Array<{ threadId: string; error: string }>;
+      };
+      expect(output.success).toBe(false);
+      expect(output.resolved).toEqual([]);
+      expect(output.errors.map((e) => e.threadId)).toEqual(['rev1']);
+      expect(output.errors[0]!.error).toContain('reviewer');
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it.each([
+      ['a GitHub login', 'octocat'],
+      ['a custom author', 'bot-x'],
+      ['no author', undefined],
+    ])('refuses a thread opened by %s', async (_name, author) => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ version: 1, threads: [thread('t1', author)], decisions: [] }),
+      );
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'remove', '--port', '4966', 't1']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('reports a reviewer thread the reviewer already closed as resolved, writing nothing', async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          version: 1,
+          threads: [thread('rev1', 'User')],
+          decisions: [decision('rev1', 'resolved', '2026-01-01T00:00:00Z')],
+        }),
+      );
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'rev1']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      expect(consoleOutput[0]).toBe(
+        JSON.stringify({ success: true, resolved: ['rev1'], notFound: [], errors: [] }),
+      );
+      expect(process.exit).not.toHaveBeenCalled();
+    });
+
+    it('refuses a reviewer thread the reviewer reopened', async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          version: 1,
+          threads: [thread('rev1', 'User')],
+          decisions: [
+            decision('rev1', 'resolved', '2026-01-01T00:00:00Z'),
+            decision('rev1', 'unresolved', '2026-01-01T00:01:00Z'),
+          ],
+        }),
+      );
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'rev1']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('keeps the refused IDs in the output when writing the others fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce(
+          jsonResponse({
+            version: 1,
+            threads: [thread('rev1', 'User'), thread('mine')],
+            decisions: [],
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse({ error: 'disk full' }, 500));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'rev1', 'mine']);
+
+      const output = JSON.parse(consoleOutput[0]!) as {
+        resolved: string[];
+        errors: Array<{ threadId: string; error: string }>;
+      };
+      expect(output.resolved).toEqual([]);
+      expect(output.errors.map((e) => [e.threadId, e.error.includes('Refused')])).toEqual([
+        ['rev1', true],
+        ['mine', false],
+      ]);
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('refuses a reviewer thread even when an agent replied to it', async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          version: 1,
+          threads: [
+            {
+              id: 'rev1',
+              messages: [
+                { id: 'm1', body: 'x', author: 'User' },
+                { id: 'm2', body: 'y', author: 'Agent' },
+              ],
+            },
+          ],
+          decisions: [],
+        }),
+      );
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'rev1']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('resolves the agent threads of a mixed call and refuses the rest', async () => {
+      mockFetch
+        .mockResolvedValueOnce(
+          jsonResponse({
+            version: 1,
+            threads: [thread('mine'), thread('rev1', 'User')],
+            decisions: [],
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse({ success: true }));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'mine', 'rev1']);
+
+      const body = JSON.parse(decisionPosts()[0]![1]!.body as string) as Array<{
+        threadId: string;
+      }>;
+      expect(body.map((d) => d.threadId)).toEqual(['mine']);
+      const output = JSON.parse(consoleOutput[0]!) as {
+        resolved: string[];
+        errors: Array<{ threadId: string }>;
+      };
+      expect(output.resolved).toEqual(['mine']);
+      expect(output.errors.map((e) => e.threadId)).toEqual(['rev1']);
+      expect(process.exit).toHaveBeenCalledWith(1);
     });
 
     it('reports unknown and deleted thread IDs and exits with an error', async () => {
