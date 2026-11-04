@@ -1,5 +1,6 @@
 import type { DiffSide, FixupLines, LineNumber, SidedLine, ThreadFixup } from '../../types/diff';
 import { endOfLine, startOfLine } from '../../utils/commentPosition';
+import { currentFixupSha } from '../../utils/fixupLines';
 
 import { fixupFileElementId } from './domUtils';
 import { rangeLabel, SIDE_NAMES } from './linePick';
@@ -32,9 +33,7 @@ export function fixupLinesPlace(
   fixupsByThread: ReadonlyMap<string, readonly ThreadFixup[]>,
 ): { fixupSha: string; path: string; elementIds: string[] } {
   const fixups = [...fixupsByThread.values()].flat();
-  const shown =
-    fixups.find(({ sha }) => sha === fixupSha) ?? fixups.find((fixup) => fixup.patchId === patchId);
-  const sha = shown?.sha ?? fixupSha;
+  const sha = currentFixupSha({ fixupSha, patchId }, fixups);
   return {
     fixupSha: sha,
     path: filePath,

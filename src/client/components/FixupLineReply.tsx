@@ -6,7 +6,7 @@ import { appearsResolved } from '../../utils/reviewDecisions';
 import { useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { useLinePickState } from '../contexts/LinePickContext';
 import { useCanHover } from '../hooks/useCanHover';
-import { fixupLinesLabel } from '../utils/fixupLines';
+import { fixupLinesLabel, fixupLinesPlace } from '../utils/fixupLines';
 import type { AnsweredThread, FixupFile } from '../utils/fixupSpread';
 
 import { CommentForm } from './CommentForm';
@@ -156,7 +156,8 @@ export function useFixupLineReply({
 }
 
 export function FixupLinesButton({ lines }: { lines: FixupLines }) {
-  const { revealFixupLines } = useFixupOverlay();
+  const { revealFixupLines, fixupsByThread } = useFixupOverlay();
+  const { fixupSha } = fixupLinesPlace(lines, fixupsByThread);
   return (
     <button
       type="button"
@@ -167,7 +168,7 @@ export function FixupLinesButton({ lines }: { lines: FixupLines }) {
       }}
       className="mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary hover:text-github-text-primary hover:underline"
     >
-      {fixupLinesLabel(lines)}
+      {fixupLinesLabel({ ...lines, fixupSha })}
     </button>
   );
 }
