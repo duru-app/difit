@@ -389,7 +389,7 @@ describe('commits answering no thread before a fixup', () => {
     expect(result.fixupOnly).toEqual([]);
   });
 
-  it('leaves a file the fixup changed on lines they added to the card', () => {
+  it('draws a file the fixup changed on lines they added below the line above them', () => {
     const fixup = after(
       fixupOf('aaa1111', ['t1'], [file('a.ts', [replaceLine(5)]), file('b.ts', [replaceLine(5)])]),
       [{ path: 'b.ts', shifts: [insertedAtTop(10)] }],
@@ -397,12 +397,12 @@ describe('commits answering no thread before a fixup', () => {
 
     const result = spread([fixup], [thread('t1', 'a.ts')], ['a.ts', 'b.ts']);
 
-    expect(result.boxesByFile.size).toBe(0);
-    expect(result.places.get('aaa1111:b.ts')).toEqual({ kind: 'card', threadId: 't1' });
+    expect(result.places.get('aaa1111:b.ts')).toEqual({ kind: 'box', reviewPath: 'b.ts' });
+    expect(boxesOf(result, 'b.ts').map((box) => box.anchor)).toEqual([1]);
     expect(result.touchedReviewFiles.get('b.ts')).toEqual({ fixupSha: 'aaa1111', path: 'b.ts' });
   });
 
-  it('leaves a chunk that also changes lines they added above its anchor to the card', () => {
+  it('draws a chunk that also changes lines they added above its anchor below the line above them', () => {
     const deleted = chunk(
       10,
       4,
@@ -421,8 +421,45 @@ describe('commits answering no thread before a fixup', () => {
 
     const result = spread([fixup], [thread('t1', 'a.ts')], ['a.ts', 'b.ts']);
 
-    expect(result.boxesByFile.size).toBe(0);
-    expect(result.places.get('aaa1111:b.ts')).toEqual({ kind: 'card', threadId: 't1' });
+    expect(result.places.get('aaa1111:b.ts')).toEqual({ kind: 'box', reviewPath: 'b.ts' });
+    expect(boxesOf(result, 'b.ts').map((box) => box.anchor)).toEqual([11]);
+  });
+
+  it('marks each chunk by whether it changes lines they changed', () => {
+    const fixup = after(
+      fixupOf(
+        'aaa1111',
+        ['t1'],
+        [file('a.ts', [replaceLine(5)]), file('b.ts', [replaceLine(21), replaceLine(50)])],
+      ),
+      [{ path: 'b.ts', shifts: [{ oldStart: 20, oldLines: 2, newStart: 20, newLines: 3 }] }],
+    );
+
+    const result = spread([fixup], [thread('t1', 'a.ts')], ['a.ts', 'b.ts']);
+
+    expect(boxesOf(result, 'b.ts').map((box) => box.anchor)).toEqual([19, 49]);
+  });
+
+  it('marks a later fixup by the lines they wrote after an earlier fixup, not by the lines it added', () => {
+    const added = chunk(9, 0, 10, 1, [{ type: 'add', content: 'added', newLineNumber: 10 }]);
+    const first = fixupOf('aaa1111', ['t1'], [file('b.ts', [added])]);
+    const second = after(
+      fixupOf('bbb2222', ['t2'], [file('b.ts', [replaceLine(2), replaceLine(13)])]),
+      [{ path: 'b.ts', shifts: [insertedAtTop(3)] }],
+    );
+
+    const result = spread(
+      [first, second],
+      [thread('t1', 'a.ts'), thread('t2', 'a.ts', 30)],
+      ['a.ts', 'b.ts'],
+    );
+
+    expect(
+      boxesOf(result, 'b.ts')
+        .filter((box) => box.fixup.sha === 'bbb2222')
+        .map((box) => box.anchor)
+        .sort((above, below) => above - below),
+    ).toEqual([1, 9]);
   });
 });
 
