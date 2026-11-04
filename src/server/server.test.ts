@@ -1105,6 +1105,68 @@ describe('Server Integration Tests', () => {
       expect(output).toContain('test.js:L50 [접힘]\nFolded');
     });
 
+    it('GET /api/comments-output keeps a resolved thread whose approved fixup was amended', async () => {
+      await fetch(`http://localhost:${port}/api/diff?base=abc1234%5E&target=abc1234`);
+      await fetch(`http://localhost:${port}/api/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comments: [{ file: 'test.js', line: 10, body: 'Amended' }] }),
+      });
+      const { threads } = (await (
+        await fetch(`http://localhost:${port}/api/comments-json`)
+      ).json()) as { threads: Array<{ id: string }> };
+      const threadId = threads[0]!.id;
+      parserInstances.at(-1)?.listThreadFixups.mockResolvedValue([
+        {
+          sha: 'b'.repeat(40),
+          shortSha: 'bbbbbbb',
+          patchId: 'patch-amended',
+          authoredAt: '2026-01-01T00:00:00Z',
+          subject: 'fixup! x',
+          threadIds: [threadId],
+          files: [],
+        },
+      ]);
+      await fetch(`http://localhost:${port}/api/decisions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([
+          { threadId, kind: 'approved', fixupSha: 'a'.repeat(40), at: '2026-01-01T00:00:00Z' },
+          { threadId, kind: 'resolved', fixupSha: '', at: '2026-01-01T00:01:00Z' },
+        ]),
+      });
+
+      const output = await (await fetch(`http://localhost:${port}/api/comments-output`)).text();
+
+      expect(output).toContain('test.js:L10 [승인 대기]\nAmended');
+    });
+
+    it('GET /api/comments-output reads no fixups when only deleted threads are left', async () => {
+      await fetch(`http://localhost:${port}/api/diff?base=abc1234%5E&target=abc1234`);
+      await fetch(`http://localhost:${port}/api/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comments: [{ file: 'test.js', line: 10, body: 'Gone' }] }),
+      });
+      const { threads } = (await (
+        await fetch(`http://localhost:${port}/api/comments-json`)
+      ).json()) as { threads: Array<{ id: string }> };
+      await fetch(`http://localhost:${port}/api/decisions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([
+          { threadId: threads[0]!.id, kind: 'deleted', fixupSha: '', at: '2026-01-01T00:00:00Z' },
+        ]),
+      });
+      const parser = parserInstances.at(-1)!;
+      parser.listThreadFixups.mockClear();
+
+      const output = await (await fetch(`http://localhost:${port}/api/comments-output`)).text();
+
+      expect(output).toBe('');
+      expect(parser.listThreadFixups).not.toHaveBeenCalled();
+    });
+
     it('GET /api/comments-output leaves out resolved threads but keeps their record', async () => {
       const comments = [
         { file: 'test.js', line: 10, body: 'Still open' },

@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CommentThread, ReviewDecision } from '../../types/diff';
+import type { CommentThread, ReviewDecision, ThreadFixup } from '../../types/diff';
 import {
   EMPTY_FIXUP_OVERLAY,
   FixupOverlayProvider,
@@ -784,6 +784,80 @@ describe('CommentThreadCard', () => {
       it('stays put when the head of the card was on screen', () => {
         expect(approveScrolledTo(200)).toBe(3000);
       });
+    });
+  });
+
+  describe('when the approved fixup was amended', () => {
+    const fixup = (sha: string): ThreadFixup => ({
+      sha,
+      shortSha: sha.slice(0, 7),
+      patchId: `patch-${sha}`,
+      authoredAt: '2026-01-01T00:00:00Z',
+      subject: 'fixup! x',
+      threadIds: ['thread-1'],
+      files: [],
+    });
+    const approvedThenResolved: ReviewDecision[] = [
+      {
+        threadId: 'thread-1',
+        kind: 'approved',
+        fixupSha: '8adfc858050f',
+        patchId: 'patch-8adfc858050f',
+        at: '2026-01-01T00:00:00Z',
+      },
+      { threadId: 'thread-1', kind: 'resolved', fixupSha: '', at: '2026-01-01T00:01:00Z' },
+    ];
+    const card = (fixups: ThreadFixup[], onResolveThread = vi.fn()) => (
+      <FixupOverlayProvider
+        value={{
+          ...EMPTY_FIXUP_OVERLAY,
+          decisions: approvedThenResolved,
+          fixupsByThread: new Map([['thread-1', fixups]]),
+        }}
+      >
+        <CommentThreadCard
+          thread={mockThread}
+          review={{
+            state: 'awaiting-approval',
+            pendingFixups: fixups.map(({ sha }) => ({ fixupSha: sha })),
+            revertibleFixups: [],
+            targetCommit: 'b7c2e10',
+            responding: false,
+            onDecide: vi.fn(),
+            onUndoApproval: vi.fn(),
+            onOpenReviewAt: vi.fn(),
+            onShowView: vi.fn(),
+          }}
+          onResolveThread={onResolveThread}
+          onReplyToThread={vi.fn()}
+          onRemoveMessage={vi.fn()}
+          onUpdateMessage={vi.fn()}
+        />
+      </FixupOverlayProvider>
+    );
+
+    it('opens up again as awaiting approval', () => {
+      const { rerender } = render(card([fixup('8adfc858050f')]));
+      expect(screen.getByTestId('resolved-chip')).toBeInTheDocument();
+      expect(screen.queryByText('Reply comment')).not.toBeInTheDocument();
+
+      rerender(card([fixup('b50f2257077f')]));
+
+      expect(screen.queryByTestId('resolved-chip')).not.toBeInTheDocument();
+      expect(screen.getByText('Reply comment')).toBeInTheDocument();
+      expect(screen.getByTestId('review-state-chip')).toHaveTextContent('승인 대기');
+    });
+
+    it('asks for a judgment on the new fixup instead of resolving', async () => {
+      const user = userEvent.setup();
+      const onResolveThread = vi.fn();
+      render(card([fixup('b50f2257077f')], onResolveThread));
+
+      const check = screen.getByRole('button', { name: 'Resolve thread' });
+      expect(check).toBeDisabled();
+      expect(check).toHaveAttribute('title', '바뀐 fixup 을 먼저 승인하거나 거절해 주세요');
+      await user.click(check);
+      expect(onResolveThread).not.toHaveBeenCalled();
     });
   });
 
