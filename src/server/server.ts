@@ -13,6 +13,7 @@ import { AUTOSQUASH_PREFIX, COMMIT_MESSAGE_PATH, REVIEWER_EDIT_AUTHOR } from '..
 import { type DiffMode, type WatchEvent } from '../types/watch.js';
 import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
+import { withCurrentFixupShas } from '../utils/fixupLines.js';
 import {
   extraLinesOfPosition,
   isOnCommit,
@@ -2184,7 +2185,9 @@ export async function startServer(options: ServerOptions): Promise<{
       );
     const commits = findReviewOf(selection)?.commits;
     return formatCommentsOutput(
-      threads.map((thread) => toCommentThread(thread, commits)),
+      threads.map((thread) =>
+        withCurrentFixupShas(toCommentThread(thread, commits), fixupsOf(thread.id)),
+      ),
       reviewStates,
     );
   }
