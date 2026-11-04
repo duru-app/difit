@@ -4225,7 +4225,7 @@ describe('App Component - Commits of the review', () => {
       await screen.findByText('These lines');
       const scrollTo = layOut();
 
-      fireEvent.click(screen.getByRole('button', { name: '지적으로 가기' }));
+      fireEvent.click(screen.getByRole('button', { name: /지적으로 가기$/ }));
 
       await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 500 - 8 }));
       expect(document.getElementById('comment-thread-r1')).toHaveAttribute('data-picked', 'true');

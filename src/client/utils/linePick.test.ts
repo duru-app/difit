@@ -10,6 +10,7 @@ import {
   placeCard,
   pickRows,
   type PickRows,
+  rangeLabel,
   rangesOfPick,
   threadHoldsLine,
   toggleLine,
@@ -42,6 +43,14 @@ const rangesAfter = (pick: LinePick | null, rows: PickRows = ROWS) =>
   pick
     ? rangesOfPick(pick, rows).map(({ side, line }) => (side === 'new' ? line : { old: line }))
     : null;
+
+describe('the label of a line range', () => {
+  it('names one line once, however it was stored', () => {
+    expect(rangeLabel(21)).toBe('L21');
+    expect(rangeLabel([21, 21])).toBe('L21');
+    expect(rangeLabel([21, 23])).toBe('L21-L23');
+  });
+});
 
 describe('picking separate lines for one comment', () => {
   it('starts with the clicked line, and with the line clicked before it when there is one', () => {
