@@ -118,9 +118,14 @@ export function overlaidFixups(
   return pendingFixupsFor(thread.id, fixups, overlay.decisions);
 }
 
+type LineShift = Pick<DiffChunk, 'oldStart' | 'oldLines' | 'newStart' | 'newLines'>;
+
+const oldLineAbove = ({ oldStart, oldLines }: LineShift) =>
+  oldLines === 0 ? oldStart : oldStart - 1;
+
 // The last line on the chunk's old side at or above its last change; 0 when that is above line 1.
 export function anchorOf(chunk: DiffChunk): number {
-  let last = chunk.oldLines === 0 ? chunk.oldStart : chunk.oldStart - 1;
+  let last = oldLineAbove(chunk);
   let anchor = last;
   for (const line of chunk.lines) {
     if (line.type !== 'add') last = line.oldLineNumber ?? last;
@@ -136,13 +141,11 @@ const deletedOldLines = (chunk: DiffChunk) =>
 
 const nextLineAfter = (start: number, count: number) => (count === 0 ? start + 1 : start + count);
 
-type LineShift = Pick<DiffChunk, 'oldStart' | 'oldLines' | 'newStart' | 'newLines'>;
-
-function oldLineOf<Shift extends LineShift>(
+function oldLineOf<Shift extends LineShift, Inside>(
   shifts: readonly Shift[],
   newLine: number,
-  insideShift: (shift: Shift) => number | null,
-): number | null {
+  insideShift: (shift: Shift) => Inside,
+): number | Inside {
   let offset = 0;
   for (const shift of shifts) {
     const isAbove = shift.newLines === 0 ? newLine <= shift.newStart : newLine < shift.newStart;
@@ -155,7 +158,7 @@ function oldLineOf<Shift extends LineShift>(
 }
 
 const lastOldLineAtOrAbove = (newLine: number) => (chunk: DiffChunk) => {
-  let last = chunk.oldLines === 0 ? chunk.oldStart : chunk.oldStart - 1;
+  let last = oldLineAbove(chunk);
   for (const line of chunk.lines) {
     if (line.type !== 'add') last = line.oldLineNumber ?? last;
     if (line.newLineNumber === newLine) return last;
@@ -163,18 +166,16 @@ const lastOldLineAtOrAbove = (newLine: number) => (chunk: DiffChunk) => {
   return last;
 };
 
-type Lines = Array<number | null>;
-
 // Walks a path and lines on the old side of fixupsInLogOrder[index] back to the review target. A
-// line an earlier fixup added maps to the old line above it; a line a commit answering no thread
-// added or changed maps to null, as the review has no such line.
+// line an earlier fixup or a commit answering no thread added or changed maps to the old line above
+// it.
 function toReviewedSide(
   path: string,
-  lines: Lines,
+  lines: readonly number[],
   fixupsInLogOrder: readonly ThreadFixup[],
   index: number,
-): { path: string; lines: Lines } {
-  let current = { path, lines };
+): { path: string; lines: number[] } {
+  let current = { path, lines: [...lines] };
   for (let at = index; at >= 0; at--) {
     const fixup = fixupsInLogOrder[at];
     if (!fixup) continue;
@@ -183,7 +184,7 @@ function toReviewedSide(
       current = {
         path: file.oldPath ?? file.path,
         lines: current.lines.map((line) =>
-          line === null ? null : oldLineOf(file.chunks, line, lastOldLineAtOrAbove(line)),
+          oldLineOf(file.chunks, line, lastOldLineAtOrAbove(line)),
         ),
       };
     }
@@ -191,9 +192,7 @@ function toReviewedSide(
     if (plain) {
       current = {
         path: plain.oldPath ?? plain.path,
-        lines: current.lines.map((line) =>
-          line === null ? null : oldLineOf(plain.shifts, line, () => null),
-        ),
+        lines: current.lines.map((line) => oldLineOf(plain.shifts, line, oldLineAbove)),
       };
     }
   }
@@ -231,9 +230,8 @@ export function reviewPathsOf(fixupsInLogOrder: readonly ThreadFixup[]): Map<str
 // that shows its file, and placed again on each later group that shows it. A fixup file goes to the
 // card of a thread on its reviewed file, matched by its reviewed path, or of a placed thread outside
 // the review, matched by its path before the fixup; to the fixup-only group when neither of its
-// paths is a reviewed file; under the lines of its reviewed file; or, when the review deletes that
-// file or lacks a line the fixup changed or changed next to, to the card of the first thread it
-// answers.
+// paths is a reviewed file; under the lines of its reviewed file, below the line above any line the
+// review lacks; or, when the review deletes that file, to the card of the first thread it answers.
 export function spreadFixups<Thread extends OutsideThread>(
   overlay: ShownFixups,
   fixupsInLogOrder: readonly ThreadFixup[],
@@ -300,18 +298,12 @@ export function spreadFixups<Thread extends OutsideThread>(
     const outside: FixupFile[] = [];
     for (const file of fixup.files) {
       const ref = { fixupSha: fixup.sha, path: file.path };
-      const reviewed = toReviewedSide(
-        file.oldPath ?? file.path,
-        [...file.chunks.map(anchorOf), ...file.chunks.flatMap(deletedOldLines)],
-        fixupsInLogOrder,
-        logIndex,
-      );
-      const reviewPath = reviewed.path;
+      const parentPath = file.oldPath ?? file.path;
+      const reviewPath = toReviewedSide(parentPath, [], fixupsInLogOrder, logIndex).path;
       const isReviewed = reviewPaths.has(reviewPath);
       if (isReviewed && !spread.touchedReviewFiles.has(reviewPath)) {
         spread.touchedReviewFiles.set(reviewPath, ref);
       }
-      const parentPath = file.oldPath ?? file.path;
       const cardThread = answered.find((thread) =>
         outsideIds.has(thread.id)
           ? thread.file === parentPath
@@ -326,18 +318,26 @@ export function spreadFixups<Thread extends OutsideThread>(
         spread.places.set(fixupFileKey(ref), { kind: 'fixup-only' });
         continue;
       }
-      if (!drawnPaths.has(reviewPath) || reviewed.lines.includes(null)) {
+      if (!drawnPaths.has(reviewPath)) {
         spread.places.set(fixupFileKey(ref), { kind: 'card', threadId: firstAnswered.id });
         continue;
       }
-      const boxes = file.chunks.map((chunk, chunkIndex) => ({
-        fixup,
-        threads: answered,
-        file,
-        chunk,
-        chunkIndex,
-        anchor: Math.max(1, reviewed.lines[chunkIndex] ?? 1),
-      }));
+      const boxes = file.chunks.map((chunk, chunkIndex) => {
+        const reviewed = toReviewedSide(
+          parentPath,
+          [anchorOf(chunk), ...deletedOldLines(chunk)],
+          fixupsInLogOrder,
+          logIndex,
+        );
+        return {
+          fixup,
+          threads: answered,
+          file,
+          chunk,
+          chunkIndex,
+          anchor: Math.max(1, reviewed.lines[0] ?? 1),
+        };
+      });
       boxesOfFile.set(reviewPath, [...(boxesOfFile.get(reviewPath) ?? []), ...boxes]);
       spread.places.set(fixupFileKey(ref), { kind: 'box', reviewPath });
     }
