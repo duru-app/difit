@@ -86,7 +86,7 @@ function FoldedLinesButton({ fold }: { fold: FoldedLines }) {
 
 export function FoldedLinesRow({ fold, colSpan }: { fold: FoldedLines; colSpan: number }) {
   return (
-    <tr>
+    <tr data-folded-lines>
       <td colSpan={colSpan} className="p-0">
         <FoldedLinesButton fold={fold} />
       </td>

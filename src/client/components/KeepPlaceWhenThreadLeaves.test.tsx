@@ -104,6 +104,20 @@ describe('KeepPlaceWhenThreadLeaves', () => {
     expect(scrollTop).toBe(START_SCROLL - 920 - HEADER_COVER);
   });
 
+  it('puts the folded row under the file header when the thread leaves with its lines folded', async () => {
+    const scrollTop = await leave(
+      <>
+        {codeRow}
+        {cardRow('a')}
+      </>,
+      <tr id="fold-row" data-folded-lines>
+        <td />
+      </tr>,
+      { 'comment-thread-a': [-1500, 300], 'code-row': [-1520, -1500], 'fold-row': [-1520, -1490] },
+    );
+    expect(scrollTop).toBe(START_SCROLL - 1520 - HEADER_COVER);
+  });
+
   it('puts the end of the thread above it under the file header, not the code line past it', async () => {
     const scrollTop = await leave(
       <>
