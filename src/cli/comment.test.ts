@@ -376,18 +376,36 @@ describe('comment subcommand integration', () => {
   });
 
   describe('resolve', () => {
-    it('sends DELETE requests for each thread ID', async () => {
-      mockFetch.mockResolvedValue(jsonResponse({ success: true, threadId: 'abc123', version: 2 }));
+    const thread = (id: string) => ({ id, messages: [] });
+    const decision = (threadId: string, kind: string, at: string) => ({
+      threadId,
+      kind,
+      fixupSha: '',
+      at,
+    });
+    const state = (ids: string[], decisions: unknown[] = []) =>
+      jsonResponse({ version: 1, threads: ids.map(thread), decisions });
+    const decisionPosts = () => mockFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+
+    it('records resolved decisions without deleting the threads', async () => {
+      mockFetch
+        .mockResolvedValueOnce(state(['abc123', 'def456']))
+        .mockResolvedValueOnce(jsonResponse({ success: true, changed: true }));
 
       const command = createCommentCommand();
       await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123', 'def456']);
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments/abc123', {
-        method: 'DELETE',
-      });
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments/def456', {
-        method: 'DELETE',
-      });
+      expect(mockFetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+      expect(mockFetch.mock.calls[0]![0]).toBe('http://localhost:4966/api/comments-json');
+      const posts = decisionPosts();
+      expect(posts).toHaveLength(1);
+      expect(posts[0]![0]).toBe('http://localhost:4966/api/decisions');
+      const body = JSON.parse(posts[0]![1]!.body as string) as Array<Record<string, string>>;
+      expect(body.map((d) => [d.threadId, d.kind, d.fixupSha])).toEqual([
+        ['abc123', 'resolved', ''],
+        ['def456', 'resolved', ''],
+      ]);
+      expect(Number.isNaN(Date.parse(body[0]!.at!))).toBe(false);
       expect(consoleOutput[0]).toBe(
         JSON.stringify({
           success: true,
@@ -399,52 +417,125 @@ describe('comment subcommand integration', () => {
       expect(process.exit).not.toHaveBeenCalled();
     });
 
+    it('records each thread once when an ID is repeated', async () => {
+      mockFetch
+        .mockResolvedValueOnce(state(['abc123']))
+        .mockResolvedValueOnce(jsonResponse({ success: true }));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123', 'abc123']);
+
+      const body = JSON.parse(decisionPosts()[0]![1]!.body as string) as unknown[];
+      expect(body).toHaveLength(1);
+      expect(consoleOutput[0]).toContain('"resolved":["abc123"]');
+    });
+
     it('works via the remove alias', async () => {
-      mockFetch.mockResolvedValue(jsonResponse({ success: true, threadId: 'abc123', version: 2 }));
+      mockFetch
+        .mockResolvedValueOnce(state(['abc123']))
+        .mockResolvedValueOnce(jsonResponse({ success: true }));
 
       const command = createCommentCommand();
       await command.parseAsync(['node', 'difit', 'remove', '--port', '4966', 'abc123']);
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments/abc123', {
-        method: 'DELETE',
-      });
+      expect(decisionPosts()).toHaveLength(1);
       expect(consoleOutput[0]).toContain('"success":true');
     });
 
-    it('URL-encodes thread IDs', async () => {
-      mockFetch.mockResolvedValue(jsonResponse({ success: true }));
+    it('does not write again for an already resolved thread', async () => {
+      mockFetch.mockResolvedValueOnce(
+        state(['abc123'], [decision('abc123', 'resolved', '2026-01-01T00:00:00Z')]),
+      );
 
       const command = createCommentCommand();
-      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'a/b c']);
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123']);
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments/a%2Fb%20c', {
-        method: 'DELETE',
-      });
+      expect(decisionPosts()).toHaveLength(0);
+      expect(consoleOutput[0]).toBe(
+        JSON.stringify({ success: true, resolved: ['abc123'], notFound: [], errors: [] }),
+      );
+      expect(process.exit).not.toHaveBeenCalled();
     });
 
-    it('reports unknown thread IDs and exits with an error', async () => {
+    it('records a new resolution for a thread the reviewer reopened', async () => {
       mockFetch
-        .mockResolvedValueOnce(jsonResponse({ success: true, threadId: 'abc123', version: 2 }))
-        .mockResolvedValueOnce(jsonResponse({ error: 'Thread not found: missing' }, 404));
+        .mockResolvedValueOnce(
+          state(
+            ['abc123'],
+            [
+              decision('abc123', 'resolved', '2026-01-01T00:00:00Z'),
+              decision('abc123', 'unresolved', '2026-01-01T00:01:00Z'),
+            ],
+          ),
+        )
+        .mockResolvedValueOnce(jsonResponse({ success: true }));
 
       const command = createCommentCommand();
-      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123', 'missing']);
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123']);
 
+      expect(decisionPosts()).toHaveLength(1);
+      expect(consoleOutput[0]).toContain('"resolved":["abc123"]');
+    });
+
+    it('stamps the resolution after a reopening made on a clock ahead of this one', async () => {
+      const ahead = new Date(Date.now() + 3_600_000).toISOString();
+      mockFetch
+        .mockResolvedValueOnce(
+          state(
+            ['abc123'],
+            [
+              decision('abc123', 'resolved', '2026-01-01T00:00:00Z'),
+              decision('abc123', 'unresolved', ahead),
+            ],
+          ),
+        )
+        .mockResolvedValueOnce(jsonResponse({ success: true }));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123']);
+
+      const body = JSON.parse(decisionPosts()[0]![1]!.body as string) as Array<{ at: string }>;
+      expect(Date.parse(body[0]!.at)).toBeGreaterThan(Date.parse(ahead));
+    });
+
+    it('reports unknown and deleted thread IDs and exits with an error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(
+          state(['abc123', 'gone'], [decision('gone', 'deleted', '2026-01-01T00:00:00Z')]),
+        )
+        .mockResolvedValueOnce(jsonResponse({ success: true }));
+
+      const command = createCommentCommand();
+      await command.parseAsync([
+        'node',
+        'difit',
+        'resolve',
+        '--port',
+        '4966',
+        'abc123',
+        'missing',
+        'gone',
+      ]);
+
+      const body = JSON.parse(decisionPosts()[0]![1]!.body as string) as Array<{
+        threadId: string;
+      }>;
+      expect(body.map((d) => d.threadId)).toEqual(['abc123']);
       expect(consoleOutput[0]).toBe(
         JSON.stringify({
           success: false,
           resolved: ['abc123'],
-          notFound: ['missing'],
+          notFound: ['missing', 'gone'],
           errors: [],
         }),
       );
       expect(process.exit).toHaveBeenCalledWith(1);
     });
 
-    it('collects server errors without dropping remaining thread IDs', async () => {
+    it('reports every thread to be recorded as an error when the write fails', async () => {
       mockFetch
-        .mockResolvedValueOnce(jsonResponse({ error: 'Internal error' }, 500))
-        .mockResolvedValueOnce(jsonResponse({ success: true, threadId: 'def456', version: 2 }));
+        .mockResolvedValueOnce(state(['abc123', 'def456']))
+        .mockResolvedValueOnce(jsonResponse({ error: 'Internal error' }, 500));
 
       const command = createCommentCommand();
       await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123', 'def456']);
@@ -452,11 +543,25 @@ describe('comment subcommand integration', () => {
       expect(consoleOutput[0]).toBe(
         JSON.stringify({
           success: false,
-          resolved: ['def456'],
+          resolved: [],
           notFound: [],
-          errors: [{ threadId: 'abc123', error: 'Internal error' }],
+          errors: [
+            { threadId: 'abc123', error: 'Internal error' },
+            { threadId: 'def456', error: 'Internal error' },
+          ],
         }),
       );
+      expect(process.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('reports a failed thread lookup as an error for every thread', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ error: 'boom' }, 500));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'resolve', '--port', '4966', 'abc123']);
+
+      expect(decisionPosts()).toHaveLength(0);
+      expect(consoleOutput[0]).toContain('"errors":[{"threadId":"abc123"');
       expect(process.exit).toHaveBeenCalledWith(1);
     });
 

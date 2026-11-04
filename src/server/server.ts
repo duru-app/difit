@@ -1585,6 +1585,7 @@ export async function startServer(options: ServerOptions): Promise<{
         session.threads,
         commentImports,
         (thread) => !isThreadDeleted(thread.id, session.decisions),
+        (thread) => isThreadResolved(thread.id, session.decisions),
       );
       const changed = updateCommentSession(selection, merged.threads);
 

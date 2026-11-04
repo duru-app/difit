@@ -141,6 +141,8 @@ difit comment add --port <port> '{"type":"reply","filePath":"src/config.ts","pos
    difit comment get --port <port> --format json
    ```
 
+   The JSON also lists threads that are already resolved, so skip a thread whose latest `resolved` or `unresolved` entry in `decisions` is `resolved`. `comment resolve` leaves its thread in this list the same way.
+
    A comment the user made while viewing one commit or a run of commits has two more fields: `view` (the `baseCommitish` and `targetCommitish` of the diff it was made on) and `fixupTarget` (the SHA of the commit to fix into). A comment made on the whole review has `fixupTarget` only. The text output adds `고쳐 넣을 커밋: <short SHA> <subject>` right under that comment's location line. A comment without `view` was made on the whole review.
 
    On a run or the whole review, `fixupTarget` is the commit of that view that last changed the lines: the latest one when they came from several, judged by the kept lines alone when the comment also covers removed lines, and the view's last commit when every line is removed or the view left the lines unchanged. Lines rewritten by a commit the commit list leaves out, such as an earlier round's fixup, count for the commit that made them. A comment without `fixupTarget` predates this rule, or the server could not choose one when it was made.
