@@ -2,12 +2,12 @@ import { type MouseEvent, type ReactNode, useEffect, useMemo, useState } from 'r
 
 import type { DiffChunk, DiffLine, FixupLines, LineSelection, ThreadFixup } from '../../types/diff';
 import { commitLocationLabel, endOfLine, locationLabel } from '../../utils/commentPosition';
-import { appearsResolved } from '../../utils/reviewDecisions';
+import { appearsResolved, deriveThreadReviewState } from '../../utils/reviewDecisions';
 import { useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { useLinePickState } from '../contexts/LinePickContext';
 import { useCanHover } from '../hooks/useCanHover';
 import { fixupLinesLabel, fixupLinesPlace } from '../utils/fixupLines';
-import type { AnsweredThread, FixupFile } from '../utils/fixupSpread';
+import { type AnsweredThread, type FixupFile, fixupFileKey } from '../utils/fixupSpread';
 
 import { CommentForm } from './CommentForm';
 import { PickControls } from './LinePickParts';
@@ -97,7 +97,11 @@ export function useFixupLineReply({
       patchId: fixup.patchId,
       filePath: file.path,
       ...(file.oldPath && file.oldPath !== file.path ? { oldPath: file.oldPath } : {}),
-      ranges: ranges.map(({ side, line }) => ({ side, line, code: store.contentOf(side, line) })),
+      ranges: ranges.map(({ side, line }) => ({
+        side,
+        line,
+        code: store.contentOf(side, line),
+      })),
     };
     replyToThread(target.id, body, { fixupLines });
     if (resolved) recordDecision(target.id, 'unresolved', '');
@@ -135,7 +139,11 @@ export function useFixupLineReply({
       <div className="font-sans">
         <CommentForm
           label="fixup 줄에 답글"
-          title={fixupLinesLabel({ fixupSha: fixup.sha, filePath: file.path, ranges })}
+          title={fixupLinesLabel({
+            fixupSha: fixup.sha,
+            filePath: file.path,
+            ranges,
+          })}
           header={
             <>
               {threads.length > 1 && (
@@ -171,20 +179,70 @@ export function useFixupLineReply({
   };
 }
 
+const NO_PLACE_REASONS = {
+  hidden: '수정을 겹쳐 보기를 켜면 갈 수 있습니다',
+  gone: '이력에서 빠진 fixup이라 갈 곳이 없습니다',
+  rejected: '거절한 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다',
+  notShown: '이 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다',
+};
+
+function noPlaceReason(state: {
+  loaded: boolean;
+  inHistory: boolean;
+  drawn: boolean | undefined;
+  rejected: boolean;
+  enabled: boolean;
+}): string | undefined {
+  if (!state.loaded) return undefined;
+  if (!state.inHistory) return NO_PLACE_REASONS.gone;
+  if (state.drawn === false) {
+    return state.rejected ? NO_PLACE_REASONS.rejected : NO_PLACE_REASONS.notShown;
+  }
+  return state.enabled ? undefined : NO_PLACE_REASONS.hidden;
+}
+
 export function FixupLinesButton({ lines, threadId }: { lines: FixupLines; threadId: string }) {
-  const { revealFixupLines, fixupsByThread } = useFixupOverlay();
-  const { fixupSha } = fixupLinesPlace(lines, fixupsByThread);
+  const {
+    revealFixupLines,
+    fixupsByThread,
+    decisions,
+    enabled,
+    fixupsLoaded,
+    reachableFixupFiles,
+  } = useFixupOverlay();
+  const place = fixupLinesPlace(lines, fixupsByThread);
+  const label = fixupLinesLabel({ ...lines, fixupSha: place.fixupSha });
+  const rejected = [...fixupsByThread].some(
+    ([id, fixups]) =>
+      fixups.some(({ sha }) => sha === place.fixupSha) &&
+      deriveThreadReviewState(id, fixups, decisions) === 'rejected',
+  );
+  const drawn = reachableFixupFiles?.has(
+    fixupFileKey({ fixupSha: place.fixupSha, path: place.path }),
+  );
+  const noPlace = noPlaceReason({
+    loaded: fixupsLoaded,
+    inHistory: place.inHistory,
+    drawn,
+    rejected,
+    enabled,
+  });
+  const where = lines.oldPath ? `${lines.oldPath} → ${lines.filePath}` : lines.filePath;
   return (
     <button
       type="button"
-      title={lines.oldPath ? `${lines.oldPath} → ${lines.filePath}` : lines.filePath}
+      title={noPlace ? `${where}\n${noPlace}` : where}
+      aria-label={noPlace ? `${label}, ${noPlace}` : undefined}
+      aria-disabled={noPlace ? true : undefined}
       onClick={(event) => {
         event.stopPropagation();
-        revealFixupLines(lines, threadId);
+        if (!noPlace) revealFixupLines(lines, threadId);
       }}
-      className="mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary hover:text-github-text-primary hover:underline"
+      className={`mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary ${
+        noPlace ? 'cursor-not-allowed opacity-50' : 'hover:text-github-text-primary hover:underline'
+      }`}
     >
-      {fixupLinesLabel({ ...lines, fixupSha })}
+      {label}
     </button>
   );
 }
