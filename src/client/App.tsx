@@ -1922,11 +1922,11 @@ function App() {
         selectView({ kind: 'all' }, place);
         return;
       }
-      if (!reachableFixupFiles?.has(fixupFileKey(place))) return;
+      if (!fixupSpread.places.has(fixupFileKey(place))) return;
       jumpWithinReview(place);
       showFixupFileRef.current(place, false);
     },
-    [showsPartOfReview, selectView, reachableFixupFiles, jumpWithinReview],
+    [showsPartOfReview, selectView, fixupSpread, jumpWithinReview],
   );
   const replyFromOverlay = useCallback(
     (threadId: string, body: string, fields?: ReviewerReplyFields) =>
@@ -1967,7 +1967,7 @@ function App() {
       boxesByFile: fixupSpread.boxesByFile,
       fixupPlaces: fixupSpread.places,
       reachableFixupFiles,
-      fixupsLoaded,
+      fixupsLoaded: fixupsLoaded && targetCommit !== null,
       fixupReviewPaths,
       fixupTouchedFiles: fixupSpread.touchedReviewFiles,
       fixupRevertedFiles,

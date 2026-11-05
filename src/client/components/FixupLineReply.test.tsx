@@ -563,7 +563,7 @@ describe('the place a reply on fixup lines points at', () => {
       fixupsByThread: new Map([['t2', [{ ...fixup, sha: 'other', patchId: 'other' }]]]),
     });
 
-    click(`${placeName}, 이력에서 빠진 fixup이라 갈 곳이 없습니다`);
+    click(`${placeName}, 지금 이력에 없는 fixup이라 갈 곳이 없습니다`);
 
     expect(revealFixupLines).not.toHaveBeenCalled();
   });
@@ -586,6 +586,38 @@ describe('the place a reply on fixup lines points at', () => {
 
     expect(revealFixupLines).not.toHaveBeenCalled();
   });
+
+  const rejectedFixup = [
+    { threadId: 't1', kind: 'rejected', fixupSha: fixup.sha, at: '2026-01-03T00:00:00Z' },
+  ] as FixupOverlayState['decisions'];
+  const rejectedName = `${placeName}, 거절한 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다`;
+
+  it('says the fixup was rejected after another fixup replaced it', () => {
+    const replacement = { ...fixup, sha: 'def5678def5678' };
+    renderReplied({
+      fixupsByThread: new Map([['t1', [fixup, replacement]]]),
+      reachableFixupFiles: new Set(),
+      decisions: rejectedFixup,
+    });
+
+    click(rejectedName);
+  });
+
+  it.each([{ enabled: true }, { enabled: false }])(
+    'says a fixup is rejected while a part of the review is shown (overlay $enabled)',
+    ({ enabled }) => {
+      const revealFixupLines = renderReplied({
+        enabled,
+        fixupsByThread: byThread,
+        reachableFixupFiles: null,
+        decisions: rejectedFixup,
+      });
+
+      click(rejectedName);
+
+      expect(revealFixupLines).not.toHaveBeenCalled();
+    },
+  );
 
   it('says a fixup that is in the history but not drawn is not shown', () => {
     renderReplied({ fixupsByThread: byThread, reachableFixupFiles: new Set() });

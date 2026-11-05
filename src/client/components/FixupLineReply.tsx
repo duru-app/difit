@@ -2,7 +2,7 @@ import { type MouseEvent, type ReactNode, useEffect, useMemo, useState } from 'r
 
 import type { DiffChunk, DiffLine, FixupLines, LineSelection, ThreadFixup } from '../../types/diff';
 import { commitLocationLabel, endOfLine, locationLabel } from '../../utils/commentPosition';
-import { appearsResolved, deriveThreadReviewState } from '../../utils/reviewDecisions';
+import { appearsResolved, pendingFixupsFor } from '../../utils/reviewDecisions';
 import { useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { useLinePickState } from '../contexts/LinePickContext';
 import { useCanHover } from '../hooks/useCanHover';
@@ -181,7 +181,7 @@ export function useFixupLineReply({
 
 const NO_PLACE_REASONS = {
   hidden: '수정을 겹쳐 보기를 켜면 갈 수 있습니다',
-  gone: '이력에서 빠진 fixup이라 갈 곳이 없습니다',
+  gone: '지금 이력에 없는 fixup이라 갈 곳이 없습니다',
   rejected: '거절한 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다',
   notShown: '이 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다',
 };
@@ -195,9 +195,8 @@ function noPlaceReason(state: {
 }): string | undefined {
   if (!state.loaded) return undefined;
   if (!state.inHistory) return NO_PLACE_REASONS.gone;
-  if (state.drawn === false) {
-    return state.rejected ? NO_PLACE_REASONS.rejected : NO_PLACE_REASONS.notShown;
-  }
+  if (state.rejected) return NO_PLACE_REASONS.rejected;
+  if (state.drawn === false) return NO_PLACE_REASONS.notShown;
   return state.enabled ? undefined : NO_PLACE_REASONS.hidden;
 }
 
@@ -212,11 +211,11 @@ export function FixupLinesButton({ lines, threadId }: { lines: FixupLines; threa
   } = useFixupOverlay();
   const place = fixupLinesPlace(lines, fixupsByThread);
   const label = fixupLinesLabel({ ...lines, fixupSha: place.fixupSha });
-  const rejected = [...fixupsByThread].some(
-    ([id, fixups]) =>
-      fixups.some(({ sha }) => sha === place.fixupSha) &&
-      deriveThreadReviewState(id, fixups, decisions) === 'rejected',
-  );
+  const threadFixups = fixupsByThread.get(threadId) ?? [];
+  const isPlaceFixup = ({ sha }: { sha: string }) => sha === place.fixupSha;
+  const rejected =
+    threadFixups.some(isPlaceFixup) &&
+    !pendingFixupsFor(threadId, threadFixups, decisions).some(isPlaceFixup);
   const drawn = reachableFixupFiles?.has(
     fixupFileKey({ fixupSha: place.fixupSha, path: place.path }),
   );
@@ -239,7 +238,9 @@ export function FixupLinesButton({ lines, threadId }: { lines: FixupLines; threa
         if (!noPlace) revealFixupLines(lines, threadId);
       }}
       className={`mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary ${
-        noPlace ? 'cursor-not-allowed opacity-50' : 'hover:text-github-text-primary hover:underline'
+        noPlace
+          ? 'cursor-not-allowed! opacity-50'
+          : 'hover:text-github-text-primary hover:underline'
       }`}
     >
       {label}
