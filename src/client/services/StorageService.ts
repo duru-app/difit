@@ -13,7 +13,7 @@ import { isOnCommit } from '../../utils/commentPosition';
 import { normalizeBaseMode } from '../../utils/diffSelection';
 import {
   isMarkedAfterUnmark,
-  MAX_VIEWED_INDEX_ENTRIES,
+  keepNewestViewedItems,
   viewedEntryKey,
 } from '../../utils/viewedRecord';
 
@@ -536,11 +536,7 @@ export class StorageService {
       byKey.set(key, entry);
     }
 
-    let next = Array.from(byKey.values());
-    if (next.length > MAX_VIEWED_INDEX_ENTRIES) {
-      next.sort((a, b) => (a.viewedAt < b.viewedAt ? 1 : -1));
-      next = next.slice(0, MAX_VIEWED_INDEX_ENTRIES);
-    }
+    const next = keepNewestViewedItems(Array.from(byKey.values()), (entry) => entry.viewedAt);
 
     this.writeViewedHashIndex(repositoryId, { ...index, entries: next });
   }
@@ -578,11 +574,7 @@ export class StorageService {
       byKey.set(viewedEntryKey(removal), removal);
     }
 
-    let next = Array.from(byKey.values());
-    if (next.length > MAX_VIEWED_INDEX_ENTRIES) {
-      next.sort((a, b) => (a.removedAt < b.removedAt ? 1 : -1));
-      next = next.slice(0, MAX_VIEWED_INDEX_ENTRIES);
-    }
+    const next = keepNewestViewedItems(Array.from(byKey.values()), (removal) => removal.removedAt);
 
     this.writeViewedHashIndex(repositoryId, { ...index, removed: next });
   }

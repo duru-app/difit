@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'timers/promises';
 import type { SharedViewedRecord, ViewedHashIndexEntry, ViewedHashRemoval } from '../types/diff.js';
 import {
   isMarkedAfterUnmark,
-  MAX_VIEWED_INDEX_ENTRIES,
+  keepNewestViewedItems,
   viewedEntryKey,
 } from '../utils/viewedRecord.js';
 
@@ -70,7 +70,6 @@ const emptyRecord = (): SharedViewedRecord => ({
   removed: [],
 });
 
-// A merge overwrites what this returns, so only a missing or corrupt file reads as empty.
 export async function readViewedRecord(path: string): Promise<SharedViewedRecord> {
   let parsed: unknown;
   try {
@@ -94,11 +93,6 @@ export async function readViewedRecord(path: string): Promise<SharedViewedRecord
       : new Date(0).toISOString(),
     ...update,
   };
-}
-
-function newest<T>(items: T[], timeOf: (item: T) => number): T[] {
-  if (items.length <= MAX_VIEWED_INDEX_ENTRIES) return items;
-  return [...items].sort((a, b) => timeOf(b) - timeOf(a)).slice(0, MAX_VIEWED_INDEX_ENTRIES);
 }
 
 const viewedTime = (entry: ViewedHashIndexEntry) => Date.parse(entry.viewedAt);
@@ -126,8 +120,8 @@ function applyUpdate(current: ViewedRecordUpdate, update: ViewedRecordUpdate): V
   }
 
   return {
-    entries: newest([...entries.values()], viewedTime),
-    removed: newest([...removed.values()], removedTime),
+    entries: keepNewestViewedItems([...entries.values()], (entry) => entry.viewedAt),
+    removed: keepNewestViewedItems([...removed.values()], (removal) => removal.removedAt),
   };
 }
 

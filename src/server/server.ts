@@ -276,7 +276,6 @@ export async function startServer(options: ServerOptions): Promise<{
   // A direct edit carries a whole hunk, which easily passes the default 100kb.
   const parseJson = express.json();
   const parseDirectEditJson = express.json({ limit: '64mb' });
-  // A page sends its whole viewed index, up to 5000 entries, when it loads.
   const parseViewedRecordJson = express.json({ limit: '8mb' });
   app.use((req, res, next) => {
     if (req.path === '/api/direct-edit' && isLocalRequest(req)) {

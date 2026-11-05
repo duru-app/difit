@@ -1,7 +1,3 @@
-// Client access to the viewed record shared by every server on this machine
-// (~/.difit/viewed/<repositoryId>.json). localStorage stays as the synchronous
-// cache and as the only store when the request fails.
-
 import type { SharedViewedRecord, ViewedHashIndexEntry, ViewedHashRemoval } from '../../types/diff';
 
 const REQUEST_TIMEOUT_MS = 3000;
@@ -27,7 +23,7 @@ export async function syncViewedRecord(
       keepalive: body.length < KEEPALIVE_BODY_LIMIT,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!response?.ok) return null;
+    if (!response.ok) return null;
     const data: unknown = await response.json();
     return isSharedViewedRecord(data) ? data : null;
   } catch {
