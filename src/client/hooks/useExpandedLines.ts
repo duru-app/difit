@@ -212,12 +212,14 @@ function buildMergedChunks(
         const lines: DiffLine[] = [];
         for (let oldLine = from; oldLine <= to; oldLine++) {
           const newLine = oldLine + shift;
+          const content = oldContent[oldLine - 1] ?? newContent[newLine - 1];
           const line: ExpandedLine = {
             type: 'normal',
-            content: oldContent[oldLine - 1] ?? newContent[newLine - 1] ?? '',
+            content: content ?? '',
             oldLineNumber: oldLine,
             newLineNumber: newLine,
             isExpanded: true,
+            ...(content === undefined ? { contentUnread: true } : {}),
           };
           lines.push(line);
         }

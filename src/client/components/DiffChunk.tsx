@@ -286,7 +286,7 @@ export const DiffChunk = memo(function DiffChunk({
     await onAddComment(
       lineNumber,
       quote === undefined ? body : quoteSelection(quote, body),
-      linePick.contentOf(side, lineNumber),
+      linePick.snapshotOf(side, lineNumber),
       side,
       ...(extraLines.length > 0
         ? [

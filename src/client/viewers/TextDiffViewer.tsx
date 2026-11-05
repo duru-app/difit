@@ -1,14 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { CommentThread, DiffLine } from '../../types/diff';
+import type {
+  CommentThread,
+  DiffLine,
+  DiffSide,
+  DiffViewMode,
+  ExpandedRange,
+  LineNumber,
+} from '../../types/diff';
 import { LEAVES_CODE_ALONE_LABEL, leavesCodeAlone } from '../../utils/changeKind';
 import { DiffChunk } from '../components/DiffChunk';
 import { DEFAULT_EXPAND_COUNT, ExpandButton } from '../components/ExpandButton';
 import type { FoldedLines } from '../components/FoldedLines';
+import { SelectionCommentBar } from '../components/SelectionCommentBar';
 import { useFixupOverlay } from '../contexts/FixupOverlayContext';
-import { cursorLineOf, LinePickProvider } from '../contexts/LinePickContext';
+import { cursorLineOf, LinePickProvider, useLinePick } from '../contexts/LinePickContext';
 import type { CursorPosition } from '../hooks/keyboardNavigation';
-import { rangesAroundNewLines } from '../hooks/useExpandedLines';
+import { useCanHover } from '../hooks/useCanHover';
+import { useCodeSelection } from '../hooks/useCodeSelection';
+import { type MergedChunk, rangesAroundNewLines } from '../hooks/useExpandedLines';
+import { clipToFile } from '../utils/codeSelection';
 
 import type { DiffViewerBodyProps } from './types';
 
@@ -55,6 +66,51 @@ function changedLineCount(lines: DiffLine[]) {
     }
   }
   return total + Math.max(adds, deletes);
+}
+
+function hiddenLinesWithin(
+  chunks: readonly MergedChunk[],
+  side: DiffSide,
+  line: LineNumber,
+): ExpandedRange[] {
+  const [first, last] = Array.isArray(line) ? line : [line, line];
+  return chunks.flatMap(({ oldStart, newStart, hiddenLinesBefore: hidden }) => {
+    const below = side === 'old' ? oldStart : newStart;
+    return hidden > 0 && below > first && below - hidden <= last
+      ? [{ start: oldStart - hidden, end: oldStart - 1 }]
+      : [];
+  });
+}
+
+function SelectionAcrossChunksBar({
+  fileRef,
+  lines,
+  layout,
+  openHiddenWithin,
+}: {
+  fileRef: RefObject<HTMLDivElement | null>;
+  lines: readonly DiffLine[];
+  layout: DiffViewMode;
+  openHiddenWithin: (side: DiffSide, line: LineNumber) => Promise<void>;
+}) {
+  const linePick = useLinePick(lines, null);
+  const canHover = useCanHover();
+  const { selected, hold, clear } = useCodeSelection(fileRef, layout, clipToFile);
+  // Chunks are direct children of the file's element; a range inside one is that chunk's to show.
+  if (!selected || selected.range.commonAncestorContainer !== fileRef.current) return null;
+  return (
+    <SelectionCommentBar
+      range={selected.range}
+      container={fileRef.current}
+      canHover={canHover}
+      onPress={hold}
+      onComment={() => {
+        const openForm = () => linePick.start(selected.side, selected.lineNumber, selected.text);
+        openHiddenWithin(selected.side, selected.lineNumber).then(openForm, openForm);
+        clear();
+      }}
+    />
+  );
 }
 
 export function TextDiffViewer({
@@ -140,6 +196,7 @@ export function TextDiffViewer({
     [cursor, mergedChunks],
   );
 
+  const fileRef = useRef<HTMLDivElement>(null);
   const fileBoxes = useFixupOverlay().boxesByFile.get(file.path);
   const boxAnchors = useMemo(() => new Set(fileBoxes?.keys()), [fileBoxes]);
 
@@ -220,48 +277,60 @@ export function TextDiffViewer({
 
   return (
     <LinePickProvider lines={fileLines} cursorLine={cursorLine}>
-      {mergedChunks.map((mergedChunk, mergedIndex) => {
-        const isFirstMerged = mergedIndex === 0;
-        const isLastMerged = mergedIndex === mergedChunks.length - 1;
-        const folds = shownFolds[mergedIndex] ?? NO_FOLD_ENTRIES;
+      {onAddComment && (
+        <SelectionAcrossChunksBar
+          fileRef={fileRef}
+          lines={fileLines}
+          layout={diffMode}
+          openHiddenWithin={(side, line) =>
+            openHiddenLines(file, hiddenLinesWithin(mergedChunks, side, line))
+          }
+        />
+      )}
+      <div ref={fileRef}>
+        {mergedChunks.map((mergedChunk, mergedIndex) => {
+          const isFirstMerged = mergedIndex === 0;
+          const isLastMerged = mergedIndex === mergedChunks.length - 1;
+          const folds = shownFolds[mergedIndex] ?? NO_FOLD_ENTRIES;
 
-        return (
-          <React.Fragment key={mergedIndex}>
-            {renderExpandButton(isFirstMerged ? 'top' : 'middle', mergedChunk)}
+          return (
+            <React.Fragment key={mergedIndex}>
+              {renderExpandButton(isFirstMerged ? 'top' : 'middle', mergedChunk)}
 
-            <div id={`chunk-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}-${mergedIndex}`}>
-              <DiffChunk
-                chunk={mergedChunk}
-                chunkIndex={mergedIndex}
-                threads={threads}
-                showAuthorBadges={showAuthorBadges}
-                onAddComment={onAddComment}
-                onResolveThread={onResolveThread}
-                onReplyToThread={onReplyToThread}
-                onRemoveMessage={onRemoveMessage}
-                onUpdateMessage={onUpdateMessage}
-                onOpenInEditor={onOpenInEditor}
-                mode={diffMode}
-                syntaxTheme={syntaxTheme}
-                cursor={cursor && cursor.chunkIndex === mergedIndex ? cursor : null}
-                fileIndex={fileIndex}
-                onLineClick={onLineClick}
-                commentTrigger={
-                  commentTrigger && commentTrigger.chunkIndex === mergedIndex
-                    ? commentTrigger
-                    : null
-                }
-                onCommentTriggerHandled={onCommentTriggerHandled}
-                filename={file.path}
-                oldFilename={file.oldPath}
-                foldedLines={folds}
-              />
-            </div>
+              <div id={`chunk-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}-${mergedIndex}`}>
+                <DiffChunk
+                  chunk={mergedChunk}
+                  chunkIndex={mergedIndex}
+                  threads={threads}
+                  showAuthorBadges={showAuthorBadges}
+                  onAddComment={onAddComment}
+                  onResolveThread={onResolveThread}
+                  onReplyToThread={onReplyToThread}
+                  onRemoveMessage={onRemoveMessage}
+                  onUpdateMessage={onUpdateMessage}
+                  onOpenInEditor={onOpenInEditor}
+                  mode={diffMode}
+                  syntaxTheme={syntaxTheme}
+                  cursor={cursor && cursor.chunkIndex === mergedIndex ? cursor : null}
+                  fileIndex={fileIndex}
+                  onLineClick={onLineClick}
+                  commentTrigger={
+                    commentTrigger && commentTrigger.chunkIndex === mergedIndex
+                      ? commentTrigger
+                      : null
+                  }
+                  onCommentTriggerHandled={onCommentTriggerHandled}
+                  filename={file.path}
+                  oldFilename={file.oldPath}
+                  foldedLines={folds}
+                />
+              </div>
 
-            {isLastMerged && renderExpandButton('bottom', mergedChunk)}
-          </React.Fragment>
-        );
-      })}
+              {isLastMerged && renderExpandButton('bottom', mergedChunk)}
+            </React.Fragment>
+          );
+        })}
+      </div>
     </LinePickProvider>
   );
 }

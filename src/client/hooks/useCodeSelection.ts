@@ -18,6 +18,7 @@ export interface SelectedCode extends CodeSelection {
 export function useCodeSelection(
   containerRef: RefObject<HTMLElement | null>,
   layout: CodeSelectionLayout,
+  narrow?: (range: Range, container: Element) => Range | null,
 ) {
   const [selected, setSelected] = useState<SelectedCode | null>(null);
   const holdUntil = useRef(0);
@@ -40,9 +41,10 @@ export function useCodeSelection(
         drop();
         return;
       }
-      const range = selection.getRangeAt(0);
-      const code = selectionInCode(range, container, layout);
-      if (!code) {
+      const selectedRange = selection.getRangeAt(0);
+      const range = narrow ? narrow(selectedRange, container) : selectedRange;
+      const code = range && selectionInCode(range, container, layout);
+      if (!range || !code) {
         drop();
         return;
       }
@@ -78,7 +80,7 @@ export function useCodeSelection(
       document.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [containerRef, layout]);
+  }, [containerRef, layout, narrow]);
 
   // A tap on the bar can collapse the selection before the tap's click arrives.
   const hold = useCallback(() => {

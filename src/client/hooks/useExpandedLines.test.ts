@@ -444,6 +444,40 @@ describe('useExpandedLines lines opened inside a gap', () => {
     });
   });
 
+  it('marks opened lines whose content could not be read', async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: false,
+      statusText: 'Internal Server Error',
+      text: async () => '',
+    } as Response);
+    const file = createMockDiffFile();
+    const { result } = renderHook(() =>
+      useExpandedLines({ baseCommitish: 'base-a', targetCommitish: 'target' }),
+    );
+
+    await act(async () => {
+      await result.current.openLines(file, [{ start: 1, end: 1 }]);
+    });
+
+    expect(result.current.getMergedChunks(file)[0]?.lines[0]).toMatchObject({
+      content: '',
+      contentUnread: true,
+    });
+  });
+
+  it('leaves no mark on opened lines that were read', async () => {
+    const file = createMockDiffFile();
+    const { result } = renderHook(() =>
+      useExpandedLines({ baseCommitish: 'base-a', targetCommitish: 'target' }),
+    );
+
+    await act(async () => {
+      await result.current.openLines(file, [{ start: 1, end: 1 }]);
+    });
+
+    expect(result.current.getMergedChunks(file)[0]?.lines[0]).not.toHaveProperty('contentUnread');
+  });
+
   it('does nothing for lines that are already open', async () => {
     const { result } = await renderOpened([17]);
     const fetches = vi.mocked(global.fetch).mock.calls.length;

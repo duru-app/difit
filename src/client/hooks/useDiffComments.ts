@@ -357,13 +357,17 @@ export function useDiffComments(
                       line: params.line,
                       ...(params.extraRanges?.length ? { extraRanges: params.extraRanges } : {}),
                     },
-              codeSnapshot: {
-                ...(params.codeSnapshot ?? {
-                  content: '',
-                  language: getLanguageFromPath(params.filePath),
-                }),
-                commit,
-              },
+              ...(params.line !== undefined && !params.codeSnapshot
+                ? {}
+                : {
+                    codeSnapshot: {
+                      ...(params.codeSnapshot ?? {
+                        content: '',
+                        language: getLanguageFromPath(params.filePath),
+                      }),
+                      commit,
+                    },
+                  }),
               messages: [rootMessage],
               ...(binding?.view ? { view: binding.view } : {}),
               ...(binding ? { fixupTarget: binding.fixupTarget } : {}),

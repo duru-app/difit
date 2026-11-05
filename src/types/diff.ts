@@ -738,4 +738,6 @@ export interface ExpandedRange {
 
 export interface ExpandedLine extends DiffLine {
   isExpanded?: boolean;
+  // Its file's content could not be read, so `content` is blank.
+  contentUnread?: boolean;
 }
