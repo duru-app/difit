@@ -83,7 +83,7 @@ Keep at most one live difit server per Git root and review target. When you edit
 - While the server stays alive, exchange feedback without restarting it:
   - `<difit-command> comment get --port <port>` — read the user's review comments (`--format json` for structured output).
   - `<difit-command> comment add --port <port> '<json>'` — add new comments to the running server (same JSON shape as `--comment`).
-  - `<difit-command> comment resolve <threadId...> --port <port>` — resolve threads you have addressed.
+  - `<difit-command> comment resolve <threadId...> --port <port>` — resolve threads only you wrote (every message by `Agent`, never reopened by the reviewer). Any other thread, including one the reviewer replied to or reopened, one imported from GitHub or one added with another author, is refused with exit 1 and nothing is recorded; only the reviewer closes it, with ✓ or by approving a fixup. Answer such a thread by fixup or reply and leave it open. A thread the reviewer already closed with ✓ is reported under `resolved` with nothing recorded.
 - If the review target changes (for example, a different commit range), stop the existing server and start a new one rather than leaving two servers for the same repository.
 
 ## Answering Review Comments With Fixup Commits
@@ -151,7 +151,7 @@ The user can pick lines on a fixup drawn under a comment, or in the box a fixup 
    difit comment get --port <port> --format json
    ```
 
-   The JSON also lists threads that are already resolved, so skip a thread whose latest `resolved` or `unresolved` entry in `decisions` is `resolved`. `comment resolve` leaves its thread in this list the same way.
+   The JSON also lists threads that are already resolved, so skip a thread whose latest `resolved` or `unresolved` entry in `decisions` is `resolved`. `comment resolve` leaves its thread in this list the same way. It closes only threads every message of which is by `Agent` and the reviewer never reopened; do not try to close the others.
 
    A comment the user made while viewing one commit or a run of commits has two more fields: `view` (the `baseCommitish` and `targetCommitish` of the diff it was made on) and `fixupTarget` (the SHA of the commit to fix into). A comment made on the whole review has `fixupTarget` only. The text output adds `고쳐 넣을 커밋: <short SHA> <subject>` right under that comment's location line. A comment without `view` was made on the whole review.
 

@@ -1,10 +1,10 @@
 import { Command, Option } from 'commander';
 
+import { AGENT_AUTHOR } from '../types/diff.js';
 import { parseCommentImportValue } from '../utils/commentImports.js';
 import {
   isThreadDeleted,
   isThreadResolved,
-  latestResolutionMarkAt,
   normalizeReviewDecisions,
 } from '../utils/reviewDecisions.js';
 
@@ -218,7 +218,9 @@ export function createCommentCommand(): Command {
   comment
     .command('resolve')
     .alias('remove')
-    .description('Resolve comment threads on a running difit server, keeping them recorded')
+    .description(
+      'Resolve comment threads only the agent wrote on a running difit server, keeping them recorded',
+    )
     .argument('<threadIds...>', 'thread IDs to resolve')
     .requiredOption('--port <port>', 'port of the running difit server', parseInt)
     .action(async (requestedIds: string[], opts: { port: number }) => {
@@ -249,18 +251,37 @@ export function createCommentCommand(): Command {
           decisions?: unknown;
         };
         const decisions = normalizeReviewDecisions(state.decisions);
-        const existing = new Set(
-          (Array.isArray(state.threads) ? (state.threads as Array<{ id?: unknown }>) : [])
-            .map((thread) => thread.id)
-            .filter((id): id is string => typeof id === 'string'),
-        );
+        const writtenByAgentAlone = new Map<string, boolean>();
+        for (const thread of Array.isArray(state.threads)
+          ? (state.threads as Array<{ id?: unknown; messages?: Array<{ author?: unknown }> }>)
+          : []) {
+          if (typeof thread.id === 'string') {
+            const messages = thread.messages ?? [];
+            writtenByAgentAlone.set(
+              thread.id,
+              messages.length > 0 && messages.every(({ author }) => author === AGENT_AUTHOR),
+            );
+          }
+        }
+        const isReopened = (id: string) =>
+          decisions.some(({ threadId, kind }) => threadId === id && kind === 'unresolved');
 
-        const notFound = threadIds.filter((id) => !existing.has(id));
-        const found = threadIds.filter((id) => existing.has(id));
+        const notFound = threadIds.filter((id) => !writtenByAgentAlone.has(id));
+        const existing = threadIds.filter((id) => writtenByAgentAlone.has(id));
+        const found = existing.filter(
+          (id) =>
+            isThreadResolved(id, decisions) || (writtenByAgentAlone.get(id) && !isReopened(id)),
+        );
         const pending = found.filter((id) => !isThreadResolved(id, decisions));
 
         let resolved = found;
-        let errors: Array<{ threadId: string; error: string }> = [];
+        let errors: Array<{ threadId: string; error: string }> = existing
+          .filter((id) => !found.includes(id))
+          .map((threadId) => ({
+            threadId,
+            error:
+              'Refused: someone other than the agent wrote in or reopened this thread, so only the reviewer closes it',
+          }));
         if (pending.length > 0) {
           const now = Date.now();
           const response = await fetch(`${baseUrl}/api/decisions`, {
@@ -271,15 +292,13 @@ export function createCommentCommand(): Command {
                 threadId,
                 kind: 'resolved',
                 fixupSha: '',
-                at: new Date(
-                  Math.max(now, latestResolutionMarkAt(threadId, decisions) + 1),
-                ).toISOString(),
+                at: new Date(now).toISOString(),
               })),
             ),
           });
           if (!response.ok) {
             const error = await failure(response, 'Failed to resolve thread');
-            errors = pending.map((threadId) => ({ threadId, error }));
+            errors = [...errors, ...pending.map((threadId) => ({ threadId, error }))];
             resolved = found.filter((id) => !pending.includes(id));
           }
         }
