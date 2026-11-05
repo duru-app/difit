@@ -326,7 +326,7 @@ describe('viewed-record', () => {
   });
 
   describe('clearViewedRecord', () => {
-    it('removes the record', async () => {
+    it('turns every mark into an unmark and keeps earlier unmarks', async () => {
       await mergeViewedRecord(recordPath, {
         entries: [viewed('a.txt', '2026-01-01T00:00:00.000Z')],
         removed: [removed('b.txt', '2026-01-01T00:00:00.000Z')],
@@ -334,7 +334,30 @@ describe('viewed-record', () => {
 
       await clearViewedRecord(recordPath);
 
-      expect(await readViewedRecord(recordPath)).toMatchObject({ entries: [], removed: [] });
+      const record = await readViewedRecord(recordPath);
+      expect(record.entries).toEqual([]);
+      expect(record.removed.map(({ filePath }) => filePath).sort()).toEqual(['a.txt', 'b.txt']);
+    });
+
+    it('refuses a mark made before the clear and takes one made after it', async () => {
+      await mergeViewedRecord(recordPath, {
+        entries: [viewed('a.txt', '2026-01-01T00:00:00.000Z')],
+        removed: [],
+      });
+      await clearViewedRecord(recordPath);
+
+      const refused = await mergeViewedRecord(recordPath, {
+        entries: [viewed('a.txt', '2026-01-01T00:00:00.000Z')],
+        removed: [],
+      });
+      expect(refused.entries).toEqual([]);
+
+      const later = new Date(Date.now() + 60_000).toISOString();
+      const taken = await mergeViewedRecord(recordPath, {
+        entries: [viewed('a.txt', later)],
+        removed: [],
+      });
+      expect(taken.entries).toEqual([viewed('a.txt', later)]);
     });
 
     it('accepts a missing record', async () => {

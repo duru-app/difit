@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { createServer, type Server } from 'http';
 import { join, dirname, isAbsolute, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -245,6 +245,7 @@ export async function startServer(options: ServerOptions): Promise<{
   const app = express();
   const repositoryPath = resolve(options.repoPath ?? process.cwd());
   const repositoryId = createHash('sha256').update(repositoryPath).digest('hex');
+  const cleanRunId = options.clearComments ? randomUUID() : undefined;
   const initialCommentImports = options.commentImports || [];
   const initialSelection = options.selection ?? createDiffSelection('', '');
   const commentImportId =
@@ -706,7 +707,7 @@ export async function startServer(options: ServerOptions): Promise<{
       requestedBaseCommitish,
       requestedTargetCommitish,
       requestedBaseMode,
-      clearComments: options.clearComments,
+      cleanRunId,
       repositoryId,
       commentImports: shouldIncludeCommentImports ? initialCommentImports : undefined,
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,

@@ -126,7 +126,8 @@ export interface DiffResponse {
   requestedBaseCommitish?: string;
   requestedTargetCommitish?: string;
   requestedBaseMode?: BaseMode;
-  clearComments?: boolean;
+  // New for every server started with --clean; a browser clears once for each value.
+  cleanRunId?: string;
   repositoryId?: string;
   commentImports?: CommentImport[];
   commentImportId?: string;

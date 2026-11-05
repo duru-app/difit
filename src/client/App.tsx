@@ -127,6 +127,7 @@ import { useSymbolPeek } from './hooks/useSymbolPeek';
 import { useViewedFiles } from './hooks/useViewedFiles';
 import { useThreadFixups } from './hooks/useThreadFixups';
 import { useViewport } from './hooks/useViewport';
+import { storageService } from './services/StorageService';
 import { fetchClientSettings, saveClientSettings } from './services/userSettings';
 import { hasMultipleCommentAuthors } from './utils/commentAuthors';
 import { copyTextToClipboard } from './utils/clipboard';
@@ -793,7 +794,7 @@ function App() {
     diffData?.repositoryId, // Repository identifier for storage isolation
     settings.autoViewedPatterns,
     resolvedSelection?.baseMode,
-    diffData?.clearComments,
+    diffData?.cleanRunId,
   );
 
   // Reset initialization flag when diff context changes
@@ -2006,19 +2007,25 @@ function App() {
     ],
   );
 
-  // Clear comments and viewed files on initial load if requested via CLI flag
-  const hasCleanedRef = useRef(false);
+  // Must stay after useViewedFiles: its load effect reads the applied run before this one writes it.
+  const cleanedRunRef = useRef<string | null>(null);
   useEffect(() => {
-    if (diffData?.clearComments && !hasCleanedRef.current) {
-      hasCleanedRef.current = true;
-      pendingBootstrapAfterLocalResetRef.current = true;
-      clearAllComments({ resetAppliedCommentImportIds: true });
-      clearViewedFiles();
-      console.log(
-        '✅ All existing comments and viewed files cleared as requested via --clean flag',
-      );
+    const cleanRunId = diffData?.cleanRunId;
+    const repositoryId = diffData?.repositoryId;
+    if (
+      !cleanRunId ||
+      cleanedRunRef.current === cleanRunId ||
+      storageService.getAppliedCleanRun(repositoryId) === cleanRunId
+    ) {
+      return;
     }
-  }, [diffData?.clearComments, clearAllComments, clearViewedFiles]);
+    cleanedRunRef.current = cleanRunId;
+    storageService.setAppliedCleanRun(repositoryId, cleanRunId);
+    pendingBootstrapAfterLocalResetRef.current = true;
+    clearAllComments({ resetAppliedCommentImportIds: true });
+    clearViewedFiles();
+    console.log('✅ All existing comments and viewed files cleared as requested via --clean flag');
+  }, [diffData?.cleanRunId, diffData?.repositoryId, clearAllComments, clearViewedFiles]);
 
   useEffect(() => {
     if (!commentsContextKey || !hasLoadedComments) {

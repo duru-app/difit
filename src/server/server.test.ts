@@ -12,7 +12,7 @@ import { WebSocket } from 'ws';
 process.env.VITEST_SERVER_TEST = 'true';
 
 import { startServer } from './server.js';
-import type { CommentImport } from '../types/diff.js';
+import type { CommentImport, DiffResponse } from '../types/diff.js';
 import { DiffMode } from '../types/watch.js';
 
 // Add fetch polyfill for Node.js test environment
@@ -775,7 +775,7 @@ describe('Server Integration Tests', () => {
       expect(data.commentImportId).toEqual(expect.any(String));
     });
 
-    it('GET /api/diff returns clearComments together with comment import payload', async () => {
+    it('GET /api/diff returns a clean run id together with comment import payload', async () => {
       const importedComments: CommentImport[] = [
         {
           type: 'thread',
@@ -797,7 +797,7 @@ describe('Server Integration Tests', () => {
       const data = (await response.json()) as any;
 
       expect(response.ok).toBe(true);
-      expect(data.clearComments).toBe(true);
+      expect(data.cleanRunId).toEqual(expect.any(String));
       expect(data.commentImports).toEqual(importedComments);
       expect(data.commentImportId).toEqual(expect.any(String));
     });
@@ -2079,6 +2079,47 @@ describe('Server Integration Tests', () => {
         expect(await record.json()).toMatchObject({ entries: [] });
       });
 
+      it('keeps one clean run id for the life of the server and changes it on the next', async () => {
+        const runIdOf = async (port: number) =>
+          ((await (await fetch(`http://localhost:${port}/api/diff`)).json()) as DiffResponse)
+            .cleanRunId;
+        const first = await start({ clearComments: true });
+        const runId = await runIdOf(first);
+        expect(runId).toEqual(expect.any(String));
+        expect(await runIdOf(first)).toBe(runId);
+
+        const second = await start({ clearComments: true });
+        expect(await runIdOf(second)).toEqual(expect.any(String));
+        expect(await runIdOf(second)).not.toBe(runId);
+      });
+
+      it('sends no clean run id without the flag', async () => {
+        const port = await start();
+        const page = (await (
+          await fetch(`http://localhost:${port}/api/diff`)
+        ).json()) as DiffResponse;
+        expect(page.cleanRunId).toBeUndefined();
+      });
+
+      it('does not take back a mark from another port after the clean', async () => {
+        const { id } = await ownRecordPath(await start());
+        await post(9160, id, { entries: [entry], removed: [] });
+
+        const port = await start({ clearComments: true });
+
+        const record = (await (await post(port, id, { entries: [entry], removed: [] })).json()) as {
+          entries: unknown[];
+          removed: unknown[];
+        };
+        expect(record.entries).toEqual([]);
+        expect(record.removed).toEqual([
+          expect.objectContaining({
+            filePath: entry.filePath,
+            diffContentHash: entry.diffContentHash,
+          }),
+        ]);
+      });
+
       it('does not touch the record when the page loads again', async () => {
         const port = await start({ clearComments: true });
         const { id } = await ownRecordPath(port);
@@ -2606,7 +2647,7 @@ describe('Server Integration Tests', () => {
   });
 
   describe('Clear Comments functionality', () => {
-    it('includes clearComments flag in diff response when provided', async () => {
+    it('includes a clean run id in diff response when the flag is given', async () => {
       const { port, server } = await startServer({
         selection: { targetCommitish: 'HEAD', baseCommitish: 'HEAD^' },
         clearComments: true,
@@ -2617,10 +2658,10 @@ describe('Server Integration Tests', () => {
       const data = (await response.json()) as any;
 
       expect(response.ok).toBe(true);
-      expect(data.clearComments).toBe(true);
+      expect(data.cleanRunId).toEqual(expect.any(String));
     });
 
-    it('does not include clearComments flag when not provided', async () => {
+    it('does not include a clean run id when the flag is not given', async () => {
       const { port, server } = await startServer({
         selection: { targetCommitish: 'HEAD', baseCommitish: 'HEAD^' },
       });
@@ -2630,25 +2671,23 @@ describe('Server Integration Tests', () => {
       const data = (await response.json()) as any;
 
       expect(response.ok).toBe(true);
-      expect(data.clearComments).toBeUndefined();
+      expect(data.cleanRunId).toBeUndefined();
     });
 
-    it('preserves clearComments flag across diff requests', async () => {
+    it('keeps the clean run id across diff requests', async () => {
       const { port, server } = await startServer({
         selection: { targetCommitish: 'HEAD', baseCommitish: 'HEAD^' },
         clearComments: true,
       });
       servers.push(server);
 
-      // First request
       const response1 = await fetch(`http://localhost:${port}/api/diff`);
-      const data1 = (await response1.json()) as any;
-      expect(data1.clearComments).toBe(true);
+      const data1 = (await response1.json()) as DiffResponse;
+      expect(data1.cleanRunId).toEqual(expect.any(String));
 
-      // Second request with different ignoreWhitespace
       const response2 = await fetch(`http://localhost:${port}/api/diff?ignoreWhitespace=true`);
-      const data2 = (await response2.json()) as any;
-      expect(data2.clearComments).toBe(true);
+      const data2 = (await response2.json()) as DiffResponse;
+      expect(data2.cleanRunId).toBe(data1.cleanRunId);
     });
   });
   describe('Fixups API', () => {
