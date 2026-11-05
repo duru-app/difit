@@ -276,6 +276,7 @@ coursier bootstrap --standalone -o scip-java com.sourcegraph:scip-java_2.13:0.12
 - 주석이나 공백만 바뀐 hunk는 처음부터 접혀 있다
 - All Comments 창 대신 코멘트 패널을 쓰고, 노란 단추 메뉴의 `View All Comments`도 패널을 연다. `Shift+L` 하나로 패널과 diff를 오간다. 패널이 닫혀 있으면 열고 `j`/`k`·`Enter`·`d`가 패널 목록을 움직이며, 열려 있는데 diff를 보고 있으면 패널로 돌아가고, 패널에 있으면 닫는다. `Esc`나 diff 클릭은 `j`/`k`를 diff로 돌려보내고 패널은 열어 둔다(폰에서는 `Esc`가 서랍을 닫는다). 머리글 단추로 열면 `j`/`k`는 diff에 남는다. 지금 `j`/`k`가 움직이는 패널에는 파란 테두리가 붙는다
 - `difit`이나 `difit feature main`처럼 이름으로 연 리뷰도 연 순간의 커밋에 머물러, 브랜치에 커밋이 올라와도 diff가 바뀌지 않는다
+- Viewed 표시는 브라우저 저장소와 함께 `~/.difit/viewed/<저장소 ID>.json`(`DIFIT_CONFIG_DIR`을 두면 그 아래 `viewed`)에도 남아, 포트가 달라지거나 다른 브라우저로 열어도 내용이 같은 파일은 Viewed로 보인다. `--clean`으로 띄우면 서버가 시작할 때 그 저장소의 파일을 지우고, 그 서버의 페이지는 이 파일을 읽지 않는다. `--host`로 이 컴퓨터 밖에 연 서버는 이 파일을 쓰지 않는다
 
 ## 🤖 Calling from Agents
 

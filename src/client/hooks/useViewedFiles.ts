@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 
 import {
   type BaseMode,
+  type SharedViewedRecord,
   type ViewedFileRecord,
   type DiffFile,
   type ViewedHashIndexEntry,
 } from '../../types/diff';
 import { getDiffSelectionKey } from '../../utils/diffSelection';
+import { isMarkedAfterUnmark, viewedEntryKey } from '../../utils/viewedRecord';
 import { storageService, VIEWED_HASH_VERSION } from '../services/StorageService';
+import { syncViewedRecord } from '../services/viewedRecord';
 import { matchesAutoViewedPatterns } from '../utils/autoViewedPatterns';
 import { generateDiffHash, getDiffContentForHashing } from '../utils/diffUtils';
 
@@ -37,6 +40,7 @@ export function useViewedFiles(
   repositoryId?: string,
   autoViewedPatterns: string[] = [],
   baseMode?: BaseMode,
+  skipSharedRecordOnLoad = false,
 ): UseViewedFilesReturn {
   const [viewedFileRecords, setViewedFileRecords] = useState<ViewedFileRecord[]>([]);
   const [loadedViewedFilesKey, setLoadedViewedFilesKey] = useState<string | null>(null);
@@ -72,10 +76,27 @@ export function useViewedFiles(
     // are not already marked. Pattern changes are intentionally not reactive here
     // so editing the textarea does not immediately re-mark the current diff.
     const processAutoCollapsedFiles = async () => {
+      let shared: SharedViewedRecord | null = null;
+      if (repositoryId && !skipSharedRecordOnLoad) {
+        const localIndex = storageService.getViewedHashIndex(repositoryId);
+        shared = await syncViewedRecord(repositoryId, localIndex.entries, localIndex.removed);
+      }
+      if (shared) {
+        storageService.recordViewedHashes(repositoryId, shared.entries);
+        storageService.removeViewedHashes(repositoryId, shared.removed);
+      }
+      const removedAtByKey = new Map(
+        shared?.removed.map((removal) => [viewedEntryKey(removal), removal.removedAt]),
+      );
+      const keptFiles = loadedFiles.filter((record) => {
+        const removedAt = removedAtByKey.get(viewedEntryKey(record));
+        return removedAt === undefined || isMarkedAfterUnmark(record.viewedAt, removedAt);
+      });
+
       const additions: ViewedFileRecord[] = [];
 
       if (initialFiles && initialFiles.length > 0) {
-        const knownPaths = new Set(loadedFiles.map((f) => f.filePath));
+        const knownPaths = new Set(keptFiles.map((f) => f.filePath));
 
         // Hash every displayed file once so we can both auto-mark and
         // hydrate-from-index without recomputing.
@@ -119,7 +140,7 @@ export function useViewedFiles(
         const indexedPaths = new Set<string>();
         for (const entry of index.entries) {
           if (entry.hashVersion !== VIEWED_HASH_VERSION) continue;
-          indexedByKey.set(`${entry.filePath} ${entry.diffContentHash}`, entry);
+          indexedByKey.set(viewedEntryKey(entry), entry);
           indexedPaths.add(entry.filePath);
         }
 
@@ -128,7 +149,9 @@ export function useViewedFiles(
           if (knownPaths.has(file.path)) continue;
           const currentHash = hashByPath.get(file.path);
           if (!currentHash) continue;
-          const entry = indexedByKey.get(`${file.path} ${currentHash}`);
+          const entry = indexedByKey.get(
+            viewedEntryKey({ filePath: file.path, diffContentHash: currentHash }),
+          );
           if (!entry) continue;
 
           additions.push({
@@ -147,7 +170,10 @@ export function useViewedFiles(
           if (knownPaths.has(file.path)) continue; // already viewed (loaded or just hydrated)
           const currentHash = hashByPath.get(file.path);
           if (!currentHash) continue;
-          if (indexedByKey.has(`${file.path} ${currentHash}`)) continue;
+          if (
+            indexedByKey.has(viewedEntryKey({ filePath: file.path, diffContentHash: currentHash }))
+          )
+            continue;
           changed.add(file.path);
         }
         if (!cancelled) setChangedSinceViewedFiles(changed);
@@ -155,8 +181,8 @@ export function useViewedFiles(
         if (!cancelled) setChangedSinceViewedFiles(new Set());
       }
 
-      if (additions.length > 0) {
-        const updatedRecords = [...loadedFiles, ...additions];
+      if (additions.length > 0 || keptFiles.length !== loadedFiles.length) {
+        const updatedRecords = [...keptFiles, ...additions];
         storageService.saveViewedFiles(
           baseCommitish,
           targetCommitish,
@@ -174,7 +200,7 @@ export function useViewedFiles(
       }
 
       if (!cancelled) {
-        setViewedFileRecords(loadedFiles);
+        setViewedFileRecords(keptFiles);
         setLoadedViewedFilesKey(viewedFilesKey);
       }
     };
@@ -192,7 +218,32 @@ export function useViewedFiles(
     repositoryId,
     viewedFilesKey,
     baseMode,
-  ]); // initialFiles and autoViewedPatterns intentionally omitted to run only on diff init
+  ]); // initialFiles, autoViewedPatterns and skipSharedRecordOnLoad intentionally omitted to run only on diff init
+
+  const recordViewed = useCallback(
+    (entries: ViewedHashIndexEntry[]) => {
+      storageService.recordViewedHashes(repositoryId, entries);
+      if (repositoryId) void syncViewedRecord(repositoryId, entries);
+    },
+    [repositoryId],
+  );
+
+  const removeViewed = useCallback(
+    (records: ViewedFileRecord[]) => {
+      const entries = records.map(({ filePath, diffContentHash }) => ({
+        filePath,
+        diffContentHash,
+      }));
+      const removedAt = new Date().toISOString();
+      const removals = entries.map((entry) => ({ ...entry, removedAt }));
+      storageService.removeViewedHashes(repositoryId, entries);
+      if (repositoryId) {
+        storageService.recordViewedRemovals(repositoryId, removals);
+        void syncViewedRecord(repositoryId, [], removals);
+      }
+    },
+    [repositoryId],
+  );
 
   // Save viewed files to storage
   const saveViewedFiles = useCallback(
@@ -264,9 +315,7 @@ export function useViewedFiles(
         saveViewedFiles(newRecords);
         // Drop only the matching (path, hash) entry from the cross-comparison
         // index, so the same file viewed in other comparisons keeps its state.
-        storageService.removeViewedHashes(repositoryId, [
-          { filePath, diffContentHash: existingRecord.diffContentHash },
-        ]);
+        removeViewed([existingRecord]);
       } else {
         // File is not viewed, add it
         const hash = await getFileHash(diffFile);
@@ -286,10 +335,17 @@ export function useViewedFiles(
           hashVersion: VIEWED_HASH_VERSION,
           viewedAt,
         };
-        storageService.recordViewedHashes(repositoryId, [indexEntry]);
+        recordViewed([indexEntry]);
       }
     },
-    [viewedFileRecords, getViewedFileRecord, getFileHash, saveViewedFiles, repositoryId],
+    [
+      viewedFileRecords,
+      getViewedFileRecord,
+      getFileHash,
+      saveViewedFiles,
+      recordViewed,
+      removeViewed,
+    ],
   );
 
   // Set viewed state for multiple files at once (e.g. marking an entire folder)
@@ -309,8 +365,7 @@ export function useViewedFiles(
         );
 
         saveViewedFiles([...viewedFileRecords, ...addedRecords]);
-        storageService.recordViewedHashes(
-          repositoryId,
+        recordViewed(
           addedRecords.map((record) => ({
             filePath: record.filePath,
             diffContentHash: record.diffContentHash,
@@ -326,16 +381,17 @@ export function useViewedFiles(
         if (removedRecords.length === 0) return;
 
         saveViewedFiles(viewedFileRecords.filter((record) => !pathsToRemove.has(record.filePath)));
-        storageService.removeViewedHashes(
-          repositoryId,
-          removedRecords.map((record) => ({
-            filePath: record.filePath,
-            diffContentHash: record.diffContentHash,
-          })),
-        );
+        removeViewed(removedRecords);
       }
     },
-    [viewedFileRecords, getViewedFileRecord, getFileHash, saveViewedFiles, repositoryId],
+    [
+      viewedFileRecords,
+      getViewedFileRecord,
+      getFileHash,
+      saveViewedFiles,
+      recordViewed,
+      removeViewed,
+    ],
   );
 
   // Clear all viewed files

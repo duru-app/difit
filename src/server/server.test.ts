@@ -13,11 +13,13 @@ process.env.VITEST_SERVER_TEST = 'true';
 
 import { startServer } from './server.js';
 import type { CommentImport } from '../types/diff.js';
+import { DiffMode } from '../types/watch.js';
 
 // Add fetch polyfill for Node.js test environment
 const { fetch } = await import('undici');
 globalThis.fetch = fetch as any;
 const parserInstances = vi.hoisted(() => [] as any[]);
+const parserStartup = vi.hoisted(() => ({ validCommit: true, emptyDiff: false }));
 const commitDirectEdit = vi.hoisted(() => vi.fn());
 const commitDirectReword = vi.hoisted(() => vi.fn());
 
@@ -59,9 +61,12 @@ vi.mock('./git-diff.js', () => {
   class GitDiffParserMock {
     constructor() {
       parserInstances.push(this);
+      if (parserStartup.emptyDiff) {
+        this.parseDiff.mockResolvedValueOnce({ files: [], isEmpty: true });
+      }
     }
 
-    validateCommit = vi.fn().mockResolvedValue(true);
+    validateCommit = vi.fn(async () => parserStartup.validCommit);
     parseDiff = vi.fn().mockResolvedValue({
       targetCommit: 'abc123',
       baseCommit: 'def456',
@@ -421,16 +426,22 @@ describe('Server Integration Tests', () => {
   let servers: any[] = [];
   let originalProcessExit: any;
 
-  beforeEach(() => {
+  let configDir: string;
+
+  beforeEach(async () => {
     // Mock process.exit to prevent tests from actually exiting
     originalProcessExit = process.exit;
     process.exit = vi.fn() as any;
     parserInstances.length = 0;
+    configDir = await fs.mkdtemp(join(tmpdir(), 'difit-server-config-'));
+    vi.stubEnv('DIFIT_CONFIG_DIR', configDir);
   });
 
   afterEach(async () => {
     // Restore process.exit
     process.exit = originalProcessExit;
+    vi.unstubAllEnvs();
+    await fs.rm(configDir, { recursive: true, force: true });
 
     // Clean up any servers created during tests
     for (const server of servers) {
@@ -1828,6 +1839,276 @@ describe('Server Integration Tests', () => {
       const response = await fetch(`http://localhost:${result.port}/not-a-route`);
 
       expect(response.status).toBe(404);
+    });
+  });
+
+  describe('Viewed record API', () => {
+    const repositoryId = 'a'.repeat(64);
+    const entry = {
+      filePath: 'src/a.ts',
+      diffContentHash: 'h1',
+      hashVersion: 1,
+      viewedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    async function start(
+      options: {
+        clearComments?: boolean;
+        diffMode?: DiffMode;
+        host?: string;
+        keepAlive?: boolean;
+        preferredPort?: number;
+      } = {},
+    ) {
+      const result = await startServer({
+        selection: { targetCommitish: 'HEAD', baseCommitish: 'HEAD^' },
+        preferredPort: 9160,
+        ...options,
+      });
+      servers.push(result.server);
+      return result.port;
+    }
+
+    const post = (port: number, id: string, body: unknown) =>
+      fetch(`http://localhost:${port}/api/viewed-record/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    it('merges writes from two servers into one record', async () => {
+      const first = await start();
+      const second = await start();
+
+      await post(first, repositoryId, { entries: [entry], removed: [] });
+      const response = await post(second, repositoryId, {
+        entries: [{ ...entry, filePath: 'src/b.ts' }],
+        removed: [],
+      });
+
+      expect(response.ok).toBe(true);
+      const record = (await response.json()) as { entries: unknown[] };
+      expect(record.entries).toHaveLength(2);
+      const onDisk = JSON.parse(
+        await fs.readFile(join(configDir, 'viewed', `${repositoryId}.json`), 'utf-8'),
+      ) as { entries: unknown[] };
+      expect(onDisk.entries).toHaveLength(2);
+    });
+
+    it('reads the record of the repository the page names', async () => {
+      const port = await start();
+      const page = (await (await fetch(`http://localhost:${port}/api/diff`)).json()) as {
+        repositoryId: string;
+      };
+
+      const response = await post(port, page.repositoryId, { entries: [], removed: [] });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ entries: [], removed: [] });
+    });
+
+    it.each([
+      ['parent traversal', '..%2F..%2Fescape'],
+      ['padded traversal', `..%2F${'a'.repeat(61)}`],
+      ['too short', 'abc'],
+    ])('refuses %s and writes nothing', async (_name, id) => {
+      const port = await start();
+
+      const response = await post(port, id, { entries: [entry], removed: [] });
+
+      expect(response.status).toBe(400);
+      expect(await fs.readdir(configDir)).toEqual([]);
+    });
+
+    it('refuses a malformed body', async () => {
+      const port = await start();
+
+      const response = await post(port, repositoryId, { entries: 'nope' });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('accepts a full index of the entry cap', async () => {
+      const port = await start();
+      const entries = Array.from({ length: 5000 }, (_, i) => ({
+        ...entry,
+        filePath: `src/some/rather/long/directory/name/file-${i}.ts`,
+        diffContentHash: 'f'.repeat(64),
+      }));
+
+      const response = await post(port, repositoryId, { entries, removed: [] });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('answers 500 when the record cannot be written', async () => {
+      const port = await start();
+      await fs.writeFile(join(configDir, 'viewed'), 'a file where the directory belongs');
+
+      const response = await post(port, repositoryId, { entries: [entry], removed: [] });
+
+      expect(response.status).toBe(500);
+    });
+
+    it('is closed to clients when the server listens beyond localhost', async () => {
+      const port = await start({ host: '0.0.0.0' });
+
+      const response = await post(port, repositoryId, { entries: [entry], removed: [] });
+
+      expect(response.status).toBe(403);
+      expect(await fs.readdir(configDir)).toEqual([]);
+    });
+
+    describe('--clean', () => {
+      async function ownRecordPath(port: number) {
+        const page = (await (await fetch(`http://localhost:${port}/api/diff`)).json()) as {
+          repositoryId: string;
+        };
+        return {
+          id: page.repositoryId,
+          path: join(configDir, 'viewed', `${page.repositoryId}.json`),
+        };
+      }
+
+      it('removes the record of this repository when the server starts', async () => {
+        const { id } = await ownRecordPath(await start());
+        await post(9160, id, { entries: [entry], removed: [] });
+
+        const port = await start({ clearComments: true });
+
+        const record = await post(port, id, { entries: [], removed: [] });
+        expect(await record.json()).toMatchObject({ entries: [] });
+      });
+
+      describe('when the server does not start for this machine', () => {
+        afterEach(() => {
+          parserStartup.validCommit = true;
+        });
+
+        it('keeps the record for an invalid revision', async () => {
+          const { id, path } = await ownRecordPath(await start());
+          await post(9160, id, { entries: [entry], removed: [] });
+          parserStartup.validCommit = false;
+
+          await expect(start({ clearComments: true })).rejects.toThrow('Invalid or non-existent');
+
+          expect(JSON.parse(await fs.readFile(path, 'utf-8'))).toMatchObject({ entries: [entry] });
+        });
+
+        it('keeps the record when the address cannot be bound', async () => {
+          const { id, path } = await ownRecordPath(await start());
+          await post(9160, id, { entries: [entry], removed: [] });
+
+          await expect(start({ clearComments: true, host: '203.0.113.9' })).rejects.toThrow();
+
+          expect(JSON.parse(await fs.readFile(path, 'utf-8'))).toMatchObject({ entries: [entry] });
+        });
+
+        it('keeps the record for a server open beyond localhost', async () => {
+          const { id, path } = await ownRecordPath(await start());
+          await post(9160, id, { entries: [entry], removed: [] });
+
+          await start({ clearComments: true, host: '0.0.0.0' });
+
+          expect(JSON.parse(await fs.readFile(path, 'utf-8'))).toMatchObject({ entries: [entry] });
+        });
+      });
+
+      it('removes the record even when the diff is empty', async () => {
+        const { id } = await ownRecordPath(await start());
+        await post(9160, id, { entries: [entry], removed: [] });
+        parserStartup.emptyDiff = true;
+
+        const port = await start({ clearComments: true });
+        parserStartup.emptyDiff = false;
+
+        const record = await post(port, id, { entries: [], removed: [] });
+        expect(await record.json()).toMatchObject({ entries: [] });
+      });
+
+      it('accepts a live socket while it waits for the record lock', async () => {
+        const { id, path } = await ownRecordPath(await start());
+        await post(9160, id, { entries: [entry], removed: [] });
+        await fs.writeFile(`${path}.lock`, '');
+        const port = 9175;
+
+        const starting = start({
+          clearComments: true,
+          diffMode: DiffMode.SPECIFIC,
+          keepAlive: true,
+          preferredPort: port,
+        });
+        await vi.waitFor(() => fetch(`http://localhost:${port}/api/diff`));
+        const socket = new WebSocket(`ws://localhost:${port}/api/live`);
+        const received: string[] = [];
+        socket.on('message', (message: Buffer) => {
+          received.push((JSON.parse(message.toString()) as { type: string }).type);
+        });
+        const outcome = await new Promise<string>((resolve) => {
+          socket.once('open', () => resolve('open'));
+          socket.once('error', (error: NodeJS.ErrnoException) => resolve(String(error.code)));
+        });
+        await fs.rm(`${path}.lock`);
+        await starting;
+
+        try {
+          expect(outcome).toBe('open');
+          const createdAt = '2026-01-01T00:00:00.000Z';
+          await fetch(`http://localhost:${port}/api/comments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              threads: [
+                {
+                  id: 't1',
+                  filePath: 'src/a.ts',
+                  createdAt,
+                  updatedAt: createdAt,
+                  position: { side: 'new', line: 1 },
+                  messages: [{ id: 'm1', body: 'b', createdAt, updatedAt: createdAt }],
+                },
+              ],
+            }),
+          });
+          await vi.waitFor(() => expect(received).toContain('commentsChanged'));
+        } finally {
+          socket.terminate();
+        }
+
+        const record = await post(port, id, { entries: [], removed: [] });
+        expect(await record.json()).toMatchObject({ entries: [] });
+      });
+
+      it('does not touch the record when the page loads again', async () => {
+        const port = await start({ clearComments: true });
+        const { id } = await ownRecordPath(port);
+        await post(port, id, { entries: [entry], removed: [] });
+
+        await fetch(`http://localhost:${port}/api/diff`);
+        await fetch(`http://localhost:${port}/api/diff`);
+
+        const record = await post(port, id, { entries: [], removed: [] });
+        expect(await record.json()).toMatchObject({ entries: [entry] });
+      });
+
+      it('leaves other repositories alone', async () => {
+        const first = await start();
+        await post(first, repositoryId, { entries: [entry], removed: [] });
+
+        const port = await start({ clearComments: true });
+
+        const record = await post(port, repositoryId, { entries: [], removed: [] });
+        expect(await record.json()).toMatchObject({ entries: [entry] });
+      });
+
+      it('starts even when the record cannot be removed', async () => {
+        await fs.writeFile(join(configDir, 'viewed'), 'a file where the directory belongs');
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(start({ clearComments: true })).resolves.toEqual(expect.any(Number));
+
+        consoleError.mockRestore();
+      });
     });
   });
 

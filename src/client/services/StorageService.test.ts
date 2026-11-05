@@ -588,4 +588,63 @@ describe('StorageService - Viewed Hash Index', () => {
     service.cleanupOldData(30);
     expect(localStorage.getItem(key)).toBeNull();
   });
+
+  it('keeps a mark newer than the unmark being applied', () => {
+    service.recordViewedHashes('repo-1', [
+      { filePath: 'a.ts', diffContentHash: 'h1', hashVersion: 1, viewedAt: '2026-01-03T00:00:00Z' },
+      { filePath: 'b.ts', diffContentHash: 'h1', hashVersion: 1, viewedAt: '2026-01-01T00:00:00Z' },
+    ]);
+
+    service.removeViewedHashes('repo-1', [
+      { filePath: 'a.ts', diffContentHash: 'h1', removedAt: '2026-01-02T00:00:00Z' },
+      { filePath: 'b.ts', diffContentHash: 'h1', removedAt: '2026-01-02T00:00:00Z' },
+    ]);
+
+    expect(service.getViewedHashIndex('repo-1').entries.map((e) => e.filePath)).toEqual(['a.ts']);
+  });
+
+  it('does not take back a mark older than an unmark kept in this browser', () => {
+    service.recordViewedRemovals('repo-1', [
+      { filePath: 'a.ts', diffContentHash: 'h1', removedAt: '2026-01-02T00:00:00Z' },
+    ]);
+
+    service.recordViewedHashes('repo-1', [
+      { filePath: 'a.ts', diffContentHash: 'h1', hashVersion: 1, viewedAt: '2026-01-01T00:00:00Z' },
+    ]);
+    expect(service.getViewedHashIndex('repo-1').entries).toEqual([]);
+
+    service.recordViewedHashes('repo-1', [
+      { filePath: 'a.ts', diffContentHash: 'h1', hashVersion: 1, viewedAt: '2026-01-03T00:00:00Z' },
+    ]);
+    expect(service.getViewedHashIndex('repo-1').entries).toHaveLength(1);
+  });
+
+  it('keeps unmarks through later marks and removals, and clears them with the index', () => {
+    const removal = { filePath: 'a.ts', diffContentHash: 'h1', removedAt: '2026-01-02T00:00:00Z' };
+    service.recordViewedRemovals('repo-1', [removal]);
+    service.recordViewedHashes('repo-1', [
+      { filePath: 'b.ts', diffContentHash: 'h1', hashVersion: 1, viewedAt: '2026-01-03T00:00:00Z' },
+    ]);
+    service.removeViewedHashes('repo-1', [{ filePath: 'b.ts', diffContentHash: 'h1' }]);
+
+    expect(service.getViewedHashIndex('repo-1').removed).toEqual([removal]);
+
+    service.clearViewedHashIndex('repo-1');
+    expect(service.getViewedHashIndex('repo-1').removed).toBeUndefined();
+  });
+
+  it('keeps the newest unmarks once the cap is passed', () => {
+    service.recordViewedRemovals(
+      'repo-1',
+      Array.from({ length: 5002 }, (_, i) => ({
+        filePath: `file-${i}.ts`,
+        diffContentHash: 'h1',
+        removedAt: new Date(2000 + i).toISOString(),
+      })),
+    );
+
+    const removed = service.getViewedHashIndex('repo-1').removed ?? [];
+    expect(removed).toHaveLength(5000);
+    expect(removed.map((r) => r.filePath)).not.toContain('file-0.ts');
+  });
 });

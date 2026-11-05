@@ -793,6 +793,7 @@ function App() {
     diffData?.repositoryId, // Repository identifier for storage isolation
     settings.autoViewedPatterns,
     resolvedSelection?.baseMode,
+    diffData?.clearComments,
   );
 
   // Reset initialization flag when diff context changes
