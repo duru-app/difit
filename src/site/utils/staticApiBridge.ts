@@ -119,7 +119,6 @@ const resolveRequestedSnapshotId = (manifest: StaticDiffManifest): string | null
 
 const buildDiffPayload = (diff: DiffResponse): DiffResponse => ({
   ...diff,
-  clearComments: false,
   openInEditorAvailable: false,
   symbolSearchAvailable: false,
 });

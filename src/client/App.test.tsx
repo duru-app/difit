@@ -538,10 +538,10 @@ describe('App Component - Clear Comments Functionality', () => {
   });
 
   describe('Clean flag on Startup', () => {
-    it('should clear existing comments when clearComments flag is true in response', async () => {
+    it('should clear existing comments for a clean run the browser has not seen', async () => {
       const responseWithClearFlag: DiffResponse = {
         ...mockDiffResponse,
-        clearComments: true,
+        cleanRunId: 'run-1',
       };
 
       mockFetch(responseWithClearFlag);
@@ -555,10 +555,10 @@ describe('App Component - Clear Comments Functionality', () => {
       });
     });
 
-    it('should clear viewed files when clearComments flag is true in response', async () => {
+    it('should clear viewed files for a clean run the browser has not seen', async () => {
       const responseWithClearFlag: DiffResponse = {
         ...mockDiffResponse,
-        clearComments: true,
+        cleanRunId: 'run-1',
       };
 
       mockFetch(responseWithClearFlag);
@@ -570,25 +570,26 @@ describe('App Component - Clear Comments Functionality', () => {
       });
     });
 
-    it('should not clear comments when clearComments flag is false', async () => {
-      const responseWithoutClearFlag: DiffResponse = {
-        ...mockDiffResponse,
-        clearComments: false,
-      };
+    it('should not clear comments for a clean run the browser already applied', async () => {
+      const reloaded: DiffResponse = { ...mockDiffResponse, cleanRunId: 'run-1' };
+      mockFetch(reloaded);
 
-      mockFetch(responseWithoutClearFlag);
+      const first = renderApp();
+      await waitFor(() => expect(mockClearViewedFiles).toHaveBeenCalledTimes(1));
+      first.unmount();
+      vi.mocked(mockClearAllComments).mockClear();
+      vi.mocked(mockClearViewedFiles).mockClear();
 
       renderApp();
 
-      await waitFor(() => {
-        expect(mockClearAllComments).not.toHaveBeenCalled();
-      });
+      await screen.findAllByText('test.ts');
+      expect(mockClearAllComments).not.toHaveBeenCalled();
+      expect(mockClearViewedFiles).not.toHaveBeenCalled();
     });
 
-    it('should not clear comments when clearComments flag is undefined', async () => {
+    it('should not clear comments without a clean run', async () => {
       const responseWithoutFlag: DiffResponse = {
         ...mockDiffResponse,
-        // clearComments is undefined
       };
 
       mockFetch(responseWithoutFlag);
@@ -605,7 +606,7 @@ describe('App Component - Clear Comments Functionality', () => {
 
       const responseWithClearFlag: DiffResponse = {
         ...mockDiffResponse,
-        clearComments: true,
+        cleanRunId: 'run-1',
       };
 
       mockFetch(responseWithClearFlag);
@@ -790,7 +791,7 @@ describe('App Component - Clear Comments Functionality', () => {
       ];
       const responseWithClearFlag: DiffResponse = {
         ...mockDiffResponse,
-        clearComments: true,
+        cleanRunId: 'run-1',
       };
 
       vi.mocked(global.fetch).mockImplementation((input) => {

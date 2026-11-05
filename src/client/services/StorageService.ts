@@ -19,6 +19,7 @@ import {
 
 const STORAGE_KEY_PREFIX = 'difit-storage-v1';
 const VIEWED_INDEX_PREFIX = 'difit-viewed-index-v1';
+const CLEAN_RUN_PREFIX = 'difit-clean-run-v1';
 const DEFAULT_REPO_ID = '__default__';
 export const VIEWED_HASH_VERSION = 1;
 
@@ -587,6 +588,23 @@ export class StorageService {
       localStorage.removeItem(this.getViewedHashIndexKey(repositoryId));
     } catch (error) {
       console.error('Error clearing viewed hash index:', error);
+    }
+  }
+
+  getAppliedCleanRun(repositoryId?: string): string | null {
+    try {
+      return localStorage.getItem(`${CLEAN_RUN_PREFIX}/${repositoryId ?? DEFAULT_REPO_ID}`);
+    } catch (error) {
+      console.error('Error reading applied clean run:', error);
+      return null;
+    }
+  }
+
+  setAppliedCleanRun(repositoryId: string | undefined, cleanRunId: string): void {
+    try {
+      localStorage.setItem(`${CLEAN_RUN_PREFIX}/${repositoryId ?? DEFAULT_REPO_ID}`, cleanRunId);
+    } catch (error) {
+      console.error('Error saving applied clean run:', error);
     }
   }
 

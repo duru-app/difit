@@ -40,7 +40,7 @@ export function useViewedFiles(
   repositoryId?: string,
   autoViewedPatterns: string[] = [],
   baseMode?: BaseMode,
-  skipSharedRecordOnLoad = false,
+  cleanRunId?: string,
 ): UseViewedFilesReturn {
   const [viewedFileRecords, setViewedFileRecords] = useState<ViewedFileRecord[]>([]);
   const [loadedViewedFilesKey, setLoadedViewedFilesKey] = useState<string | null>(null);
@@ -63,22 +63,30 @@ export function useViewedFiles(
 
     let cancelled = false;
 
-    const loadedFiles = storageService.getViewedFiles(
-      baseCommitish,
-      targetCommitish,
-      currentCommitHash,
-      branchToHash,
-      repositoryId,
-      baseMode,
-    );
+    // The caller clears this browser's storage for a new run right after this effect, so
+    // nothing read here may reach the screen or the shared record.
+    const startsClean =
+      cleanRunId !== undefined && storageService.getAppliedCleanRun(repositoryId) !== cleanRunId;
+    const loadedFiles = startsClean
+      ? []
+      : storageService.getViewedFiles(
+          baseCommitish,
+          targetCommitish,
+          currentCommitHash,
+          branchToHash,
+          repositoryId,
+          baseMode,
+        );
 
     // Auto-mark generated, deleted, or pattern-matched files as viewed if they
     // are not already marked. Pattern changes are intentionally not reactive here
     // so editing the textarea does not immediately re-mark the current diff.
     const processAutoCollapsedFiles = async () => {
       let shared: SharedViewedRecord | null = null;
-      if (repositoryId && !skipSharedRecordOnLoad) {
-        const localIndex = storageService.getViewedHashIndex(repositoryId);
+      if (repositoryId) {
+        const localIndex = startsClean
+          ? { entries: [], removed: [] }
+          : storageService.getViewedHashIndex(repositoryId);
         shared = await syncViewedRecord(repositoryId, localIndex.entries, localIndex.removed);
       }
       if (shared) {
@@ -218,7 +226,7 @@ export function useViewedFiles(
     repositoryId,
     viewedFilesKey,
     baseMode,
-  ]); // initialFiles, autoViewedPatterns and skipSharedRecordOnLoad intentionally omitted to run only on diff init
+  ]); // initialFiles, autoViewedPatterns and cleanRunId intentionally omitted to run only on diff init
 
   const recordViewed = useCallback(
     (entries: ViewedHashIndexEntry[]) => {

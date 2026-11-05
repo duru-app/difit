@@ -125,6 +125,26 @@ function applyUpdate(current: ViewedRecordUpdate, update: ViewedRecordUpdate): V
   };
 }
 
+async function writeViewedRecord(
+  path: string,
+  update: ViewedRecordUpdate,
+): Promise<SharedViewedRecord> {
+  const next: SharedViewedRecord = {
+    version: 1,
+    lastModifiedAt: new Date().toISOString(),
+    ...update,
+  };
+  const tmpPath = `${path}.${process.pid}.tmp`;
+  try {
+    await fs.writeFile(tmpPath, JSON.stringify(next), { encoding: 'utf-8', mode: 0o600 });
+    await fs.rename(tmpPath, path);
+  } catch (error) {
+    await fs.rm(tmpPath, { force: true });
+    throw error;
+  }
+  return next;
+}
+
 async function removeLockIfStale(lockPath: string): Promise<void> {
   try {
     const { mtimeMs } = await fs.stat(lockPath);
@@ -170,24 +190,27 @@ export async function mergeViewedRecord(
     ) {
       return current;
     }
-
-    const next: SharedViewedRecord = {
-      version: 1,
-      lastModifiedAt: new Date().toISOString(),
-      ...merged,
-    };
-    const tmpPath = `${path}.${process.pid}.tmp`;
-    try {
-      await fs.writeFile(tmpPath, JSON.stringify(next), { encoding: 'utf-8', mode: 0o600 });
-      await fs.rename(tmpPath, path);
-    } catch (error) {
-      await fs.rm(tmpPath, { force: true });
-      throw error;
-    }
-    return next;
+    return writeViewedRecord(path, merged);
   });
 }
 
+// Unmarks every entry rather than deleting the file, so a browser still holding one of these
+// marks on another port drops it on its next sync instead of writing it back.
 export async function clearViewedRecord(path: string): Promise<void> {
-  await withRecordLock(path, () => fs.rm(path, { force: true }));
+  await withRecordLock(path, async () => {
+    const current = await readViewedRecord(path);
+    if (current.entries.length === 0) return;
+    const removedAt = new Date().toISOString();
+    await writeViewedRecord(
+      path,
+      applyUpdate(current, {
+        entries: [],
+        removed: current.entries.map(({ filePath, diffContentHash }) => ({
+          filePath,
+          diffContentHash,
+          removedAt,
+        })),
+      }),
+    );
+  });
 }

@@ -14,6 +14,7 @@ import { useViewedFiles } from './useViewedFiles';
 
 // Mock StorageService
 const mockGetViewedFiles = vi.fn((): ViewedFileRecord[] => []);
+const mockGetAppliedCleanRun = vi.fn((): string | null => null);
 const mockSaveViewedFiles = vi.fn();
 const mockGetViewedHashIndex = vi.fn(
   (_repositoryId?: string): ViewedHashIndex => ({
@@ -40,6 +41,7 @@ vi.mock('../services/StorageService', () => ({
   VIEWED_HASH_VERSION: 1,
   storageService: {
     getViewedFiles: () => mockGetViewedFiles(),
+    getAppliedCleanRun: () => mockGetAppliedCleanRun(),
     saveViewedFiles: (...args: unknown[]) => mockSaveViewedFiles(...args),
     getViewedHashIndex: (repositoryId?: string) => mockGetViewedHashIndex(repositoryId),
     recordViewedHashes: (repositoryId: string | undefined, entries: ViewedHashIndexEntry[]) =>
@@ -765,7 +767,7 @@ describe('useViewedFiles', () => {
       entries,
     });
 
-    const render = (repositoryId: string | undefined = 'repo-1', skipSharedOnLoad = false) =>
+    const render = (repositoryId: string | undefined = 'repo-1', cleanRunId?: string) =>
       renderHook(() =>
         useViewedFiles(
           'main',
@@ -776,7 +778,7 @@ describe('useViewedFiles', () => {
           repositoryId,
           [],
           undefined,
-          skipSharedOnLoad,
+          cleanRunId,
         ),
       );
 
@@ -943,13 +945,37 @@ describe('useViewedFiles', () => {
       );
     });
 
-    it('neither reads nor sends the record on load when told to skip it', async () => {
-      mockGetViewedHashIndex.mockReturnValue(indexWith([]));
+    describe('with a clean run', () => {
+      const record: ViewedFileRecord = {
+        filePath: 'src/foo.ts',
+        viewedAt: '2026-01-01T00:00:00.000Z',
+        diffContentHash: 'hash',
+      };
 
-      const { result } = render('repo-1', true);
-      await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+      it('shows and sends nothing from this browser when the run is new', async () => {
+        mockGetAppliedCleanRun.mockReturnValue('old-run');
+        mockGetViewedFiles.mockReturnValue([record]);
+        mockGetViewedHashIndex.mockReturnValue(indexWith([entry]));
 
-      expect(mockSyncViewedRecord).not.toHaveBeenCalled();
+        const { result } = render('repo-1', 'new-run');
+        mockGetViewedHashIndex.mockReturnValue(indexWith([]));
+        await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+        expect(result.current.viewedFiles.size).toBe(0);
+        expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [], []);
+      });
+
+      it('keeps the marks of this browser when the run was already applied', async () => {
+        mockGetAppliedCleanRun.mockReturnValue('same-run');
+        mockGetViewedFiles.mockReturnValue([record]);
+        mockGetViewedHashIndex.mockReturnValue(indexWith([entry]));
+
+        const { result } = render('repo-1', 'same-run');
+        await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
+
+        expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true);
+        expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [entry], undefined);
+      });
     });
 
     it('leaves the shared record alone when clearing this browser', async () => {
