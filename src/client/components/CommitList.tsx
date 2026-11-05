@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil, X } from 'lucide-react';
 import {
   Fragment,
   useEffect,
@@ -25,6 +25,7 @@ interface CommitListProps {
   onSelect: (action: ReviewViewAction) => void;
   rangeStart?: string | undefined;
   inDrawer?: boolean;
+  onClose?: (() => void) | undefined;
   openCounts?: ReadonlyMap<string, number> | undefined;
   // Keyed by commit sha: the whole message an amend! will leave on that commit.
   amendedMessages?: ReadonlyMap<string, string> | undefined;
@@ -140,6 +141,7 @@ export function CommitList({
   onSelect,
   rangeStart,
   inDrawer = false,
+  onClose,
   openCounts,
   amendedMessages,
   reword,
@@ -346,6 +348,17 @@ export function CommitList({
   );
 
   const isResizable = !inDrawer && isListShown && onResize !== undefined;
+  const closeButton = inDrawer && onClose && (
+    <button
+      type="button"
+      onClick={onClose}
+      className="ml-auto shrink-0 rounded p-2 text-github-text-secondary transition-colors hover:bg-github-bg-primary hover:text-github-text-primary"
+      aria-label="커밋 서랍 닫기"
+      title="닫기"
+    >
+      <X size={16} />
+    </button>
+  );
 
   return (
     <section
@@ -387,10 +400,12 @@ export function CommitList({
           >
             취소
           </button>
+          {closeButton}
         </div>
       ) : inDrawer ? (
         <div className="shrink-0 flex items-center gap-2 px-4 py-2 text-sm bg-github-bg-tertiary">
           {title}
+          {closeButton}
         </div>
       ) : (
         <button

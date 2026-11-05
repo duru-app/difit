@@ -4124,6 +4124,41 @@ describe('App Component - Commits of the review', () => {
         expect(diffQueries()).toHaveLength(queries);
       });
 
+      it('closes the drawer from its own button without changing what is shown', async () => {
+        renderApp();
+        await screen.findByText('Look here');
+        const queries = diffQueries().length;
+
+        fireEvent.click(drawerButton());
+        fireEvent.click(screen.getByRole('button', { name: '커밋 서랍 닫기' }));
+
+        expect(drawerButton()).toHaveAttribute('aria-expanded', 'false');
+        expect(diffQueries()).toHaveLength(queries);
+      });
+
+      it('closes the drawer on Escape', async () => {
+        renderApp();
+        await screen.findByText('Look here');
+
+        fireEvent.click(drawerButton());
+        await userEvent.keyboard('{Escape}');
+
+        expect(drawerButton()).toHaveAttribute('aria-expanded', 'false');
+      });
+
+      it('cancels a range being picked when the drawer closes from its own button', async () => {
+        renderApp();
+        await screen.findByText('Look here');
+        fireEvent.click(drawerButton());
+        await longPress(/1111111/);
+        expect(screen.getByRole('status')).toHaveTextContent('범위 고르는 중');
+
+        fireEvent.click(screen.getByRole('button', { name: '커밋 서랍 닫기' }));
+
+        expect(drawerButton()).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.queryByText('범위 고르는 중')).toBeNull();
+      });
+
       it('shows the run between a long-pressed commit and the next one tapped', async () => {
         renderApp();
         await screen.findByText('Look here');
