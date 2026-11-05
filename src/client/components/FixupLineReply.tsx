@@ -209,6 +209,8 @@ export function FixupLinesButton({ lines, threadId }: { lines: FixupLines; threa
     fixupsLoaded,
     reachableFixupFiles,
   } = useFixupOverlay();
+  const canHover = useCanHover();
+  const [reasonOpen, setReasonOpen] = useState(false);
   const place = fixupLinesPlace(lines, fixupsByThread);
   const label = fixupLinesLabel({ ...lines, fixupSha: place.fixupSha });
   const threadFixups = fixupsByThread.get(threadId) ?? [];
@@ -226,24 +228,34 @@ export function FixupLinesButton({ lines, threadId }: { lines: FixupLines; threa
     rejected,
     enabled,
   });
+  const hasPlace = noPlace === undefined;
+  useEffect(() => {
+    if (hasPlace) setReasonOpen(false);
+  }, [hasPlace]);
   const where = lines.oldPath ? `${lines.oldPath} → ${lines.filePath}` : lines.filePath;
   return (
-    <button
-      type="button"
-      title={noPlace ? `${where}\n${noPlace}` : where}
-      aria-label={noPlace ? `${label}, ${noPlace}` : undefined}
-      aria-disabled={noPlace ? true : undefined}
-      onClick={(event) => {
-        event.stopPropagation();
-        if (!noPlace) revealFixupLines(lines, threadId);
-      }}
-      className={`mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary ${
-        noPlace
-          ? 'cursor-not-allowed! opacity-50'
-          : 'hover:text-github-text-primary hover:underline'
-      }`}
-    >
-      {label}
-    </button>
+    <>
+      <button
+        type="button"
+        title={noPlace ? `${where}\n${noPlace}` : where}
+        aria-label={noPlace ? `${label}, ${noPlace}` : undefined}
+        aria-disabled={noPlace ? true : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!noPlace) revealFixupLines(lines, threadId);
+          else if (!canHover) setReasonOpen((open) => !open);
+        }}
+        className={`mb-1 max-w-full truncate rounded border border-github-warning/60 bg-github-bg-secondary px-1.5 py-0.5 font-mono text-xs text-github-text-secondary ${
+          noPlace
+            ? 'cursor-not-allowed! opacity-50'
+            : 'hover:text-github-text-primary hover:underline'
+        }`}
+      >
+        {label}
+      </button>
+      {noPlace && reasonOpen && !canHover && (
+        <p className="mb-1 break-keep text-xs text-github-text-secondary">{noPlace}</p>
+      )}
+    </>
   );
 }

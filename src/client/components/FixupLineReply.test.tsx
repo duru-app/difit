@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   CommentThread,
@@ -659,5 +659,122 @@ describe('the place a reply on fixup lines points at', () => {
     click('def5678 · example.ts · 지운 줄 L12 · 남은 줄 L12-L13');
 
     expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
+  });
+
+  describe('reason text by input device', () => {
+    const originalMatchMedia = window.matchMedia;
+    const hiddenReason = '수정을 겹쳐 보기를 켜면 갈 수 있습니다';
+
+    const pointerCanHover = (canHover: boolean) => {
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        writable: true,
+        value: vi.fn().mockImplementation((query: string) => ({
+          matches: query === '(hover: hover)' ? canHover : false,
+          media: query,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        })),
+      });
+    };
+
+    afterEach(() => {
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        writable: true,
+        value: originalMatchMedia,
+      });
+    });
+
+    const dimmedLink = () => screen.getByRole('button', { name: new RegExp(hiddenReason) });
+    const tap = (link: HTMLElement) => act(() => fireEvent.click(link));
+    const renderCard = (overlay: Partial<FixupOverlayState>) => {
+      const revealFixupLines = vi.fn();
+      const onCardClick = vi.fn();
+      const card = (state: Partial<FixupOverlayState>) => (
+        <div onClick={onCardClick}>
+          <FixupOverlayProvider
+            value={{
+              ...EMPTY_FIXUP_OVERLAY,
+              revealFixupLines,
+              enabled: true,
+              fixupsLoaded: true,
+              reachableFixupFiles: reachable,
+              fixupsByThread: byThread,
+              ...state,
+            }}
+          >
+            <CommentThreadCard
+              thread={replied}
+              onResolveThread={noop}
+              onReplyToThread={asyncNoop}
+              onRemoveMessage={noop}
+              onUpdateMessage={noop}
+            />
+          </FixupOverlayProvider>
+        </div>
+      );
+      const { rerender } = render(card(overlay));
+      return {
+        revealFixupLines,
+        onCardClick,
+        update: (next: Partial<FixupOverlayState>) => rerender(card(next)),
+      };
+    };
+
+    it('shows the reason on a touch screen tap and hides it on the next tap', () => {
+      pointerCanHover(false);
+      const { revealFixupLines } = renderCard({ enabled: false });
+      expect(screen.queryByText(hiddenReason)).not.toBeInTheDocument();
+
+      tap(dimmedLink());
+      expect(screen.getByText(hiddenReason)).toBeInTheDocument();
+
+      tap(dimmedLink());
+      expect(screen.queryByText(hiddenReason)).not.toBeInTheDocument();
+      expect(revealFixupLines).not.toHaveBeenCalled();
+    });
+
+    it('shows no reason text on a click with a mouse', () => {
+      pointerCanHover(true);
+      const { revealFixupLines } = renderCard({ enabled: false });
+
+      tap(dimmedLink());
+
+      expect(screen.queryByText(hiddenReason)).not.toBeInTheDocument();
+      expect(dimmedLink()).toHaveAttribute('title', `src/example.ts\n${hiddenReason}`);
+      expect(revealFixupLines).not.toHaveBeenCalled();
+    });
+
+    it('still goes to the lines on a touch screen when the link has a place', () => {
+      pointerCanHover(false);
+      const { revealFixupLines } = renderCard({ enabled: true });
+
+      tap(screen.getByRole('button', { name: /^abc1234 · example\.ts/ }));
+
+      expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
+    });
+
+    it('drops the open reason once the link has a place, and keeps it closed after', () => {
+      pointerCanHover(false);
+      const { update } = renderCard({ enabled: false });
+      tap(dimmedLink());
+      expect(screen.getByText(hiddenReason)).toBeInTheDocument();
+
+      update({ enabled: true });
+      expect(screen.queryByText(hiddenReason)).not.toBeInTheDocument();
+
+      update({ enabled: false });
+      expect(screen.queryByText(hiddenReason)).not.toBeInTheDocument();
+    });
+
+    it('does not let a tap on the dimmed link reach the card', () => {
+      pointerCanHover(false);
+      const { onCardClick } = renderCard({ enabled: false });
+
+      tap(dimmedLink());
+
+      expect(onCardClick).not.toHaveBeenCalled();
+    });
   });
 });
