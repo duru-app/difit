@@ -363,7 +363,7 @@ export function SideBySideDiffChunk({
         ? [
             {
               lines: extraLines,
-              contents: extraLines.map((range) => linePick.contentOf(range.side, range.line)),
+              contents: extraLines.map((range) => linePick.snapshotOf(range.side, range.line)),
             },
           ]
         : []),

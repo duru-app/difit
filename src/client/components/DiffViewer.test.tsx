@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   CommentThread,
@@ -98,6 +98,7 @@ function renderViewer(
         targetCommitish="target"
         mergedChunks={merged(chunks)}
         openLines={openLines}
+        readLines={async () => undefined}
         prefetchFileContent={async () => {}}
         isExpandLoading={false}
         fixupOverlay={fixupOverlay}
@@ -151,6 +152,56 @@ describe('DiffViewer opening the hidden lines a comment sits on', () => {
     });
 
     expect(ranges).toContainEqual({ start: 11, end: 59 });
+  });
+});
+
+describe('DiffViewer saving a comment across hidden lines', () => {
+  const textsOf = (line: number) => {
+    const cell = document.querySelector(`[data-code-side="new"][data-code-line="${line}"]`)!;
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    const texts: Text[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node as Text);
+    return texts;
+  };
+
+  afterEach(() => {
+    document.getSelection()?.removeAllRanges();
+  });
+
+  it('saves the code of the range read from the file, opening nothing', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    const readLines = vi.fn(async () => 'new 10\nhidden\nnew 60');
+    const openLines = renderViewer([changed(10, 10), changed(60, 60)], [], undefined, {
+      onAddComment,
+      readLines,
+    });
+
+    const range = document.createRange();
+    const last = textsOf(60).at(-1)!;
+    range.setStart(textsOf(10)[0]!, 0);
+    range.setEnd(last, last.length);
+    document.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    fireEvent.click(await screen.findByRole('button', { name: '고른 부분에 지적 달기' }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith(
+        'a.ts',
+        [10, 60],
+        expect.stringContaining('Why?'),
+        'new 10\nhidden\nnew 60',
+        'new',
+        undefined,
+      );
+    });
+    expect(readLines).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'a.ts' }),
+      'new',
+      [10, 60],
+    );
+    expect(openLines).not.toHaveBeenCalled();
   });
 });
 

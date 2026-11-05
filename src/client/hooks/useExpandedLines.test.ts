@@ -465,6 +465,32 @@ describe('useExpandedLines lines opened inside a gap', () => {
     });
   });
 
+  it('reads hidden lines without opening them', async () => {
+    const { result } = renderHook(() =>
+      useExpandedLines({ baseCommitish: 'base-a', targetCommitish: 'target' }),
+    );
+    const before = result.current.getMergedChunks(file);
+
+    await act(async () => {
+      await expect(result.current.readLines(file, 'new', [6, 8])).resolves.toBe(
+        'line 6\nline 7\nline 8',
+      );
+      await expect(result.current.readLines(file, 'old', 6)).resolves.toBe('line 6');
+    });
+
+    expect(result.current.getMergedChunks(file)).toEqual(before);
+  });
+
+  it('reads nothing when a line of the range is past the end of the file', async () => {
+    const { result } = renderHook(() =>
+      useExpandedLines({ baseCommitish: 'base-a', targetCommitish: 'target' }),
+    );
+
+    await act(async () => {
+      await expect(result.current.readLines(file, 'new', [2, 90])).resolves.toBeUndefined();
+    });
+  });
+
   it('leaves no mark on opened lines that were read', async () => {
     const file = createMockDiffFile();
     const { result } = renderHook(() =>

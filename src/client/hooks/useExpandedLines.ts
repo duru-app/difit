@@ -5,10 +5,12 @@ import {
   type DiffFile,
   type DiffChunk,
   type DiffLine,
+  type DiffSide,
   type ExpandedLine,
   type ExpandedLinesState,
   type ExpandedRange,
   type FileExpandedState,
+  type LineNumber,
 } from '../../types/diff';
 import { combineChangeKinds } from '../../utils/changeKind';
 
@@ -42,6 +44,8 @@ interface UseExpandedLinesResult {
   lastUpdatedFilePath: string | null;
   lastUpdatedAt: number;
   openLines: (file: DiffFile, ranges: readonly ExpandedRange[]) => Promise<void>;
+  // The code of these lines, hidden or not; undefined unless every one of them could be read.
+  readLines: (file: DiffFile, side: DiffSide, line: LineNumber) => Promise<string | undefined>;
   prefetchFileContent: (file: DiffFile) => Promise<void>;
   getMergedChunks: (file: DiffFile) => MergedChunk[];
 }
@@ -408,6 +412,17 @@ export function useExpandedLines({
     [ensureFileContent, markFileUpdated, isStdinDiff],
   );
 
+  const readLines = useCallback(
+    async (file: DiffFile, side: DiffSide, line: LineNumber) => {
+      const fileState = await ensureFileContent(file);
+      const content = side === 'old' ? fileState?.oldContent : fileState?.newContent;
+      const [start, end] = Array.isArray(line) ? line : [line, line];
+      const within = content?.slice(start - 1, end);
+      return within?.length === end - start + 1 ? within.join('\n') : undefined;
+    },
+    [ensureFileContent],
+  );
+
   // Pre-fetch only line counts (lightweight) to show bottom expand button
   const prefetchFileContent = useCallback(
     async (file: DiffFile) => {
@@ -472,6 +487,7 @@ export function useExpandedLines({
     lastUpdatedFilePath,
     lastUpdatedAt,
     openLines,
+    readLines,
     prefetchFileContent,
     getMergedChunks,
   };

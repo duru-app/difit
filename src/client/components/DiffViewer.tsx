@@ -68,6 +68,7 @@ interface DiffViewerProps {
   foldCommentChanges?: boolean;
   mergedChunks: MergedChunk[];
   openLines: (file: DiffFile, ranges: readonly ExpandedRange[]) => Promise<void>;
+  readLines: (file: DiffFile, side: DiffSide, line: LineNumber) => Promise<string | undefined>;
   prefetchFileContent: (file: DiffFile) => Promise<void>;
   isExpandLoading: boolean;
   onLineClick?: (
@@ -193,6 +194,7 @@ export const DiffViewer = memo(function DiffViewer({
   onCommentTriggerHandled,
   mergedChunks,
   openLines,
+  readLines,
   prefetchFileContent,
   isExpandLoading,
   diffVersion,
@@ -254,12 +256,22 @@ export const DiffViewer = memo(function DiffViewer({
         extra?: ExtraCommentLines,
       ) => {
         try {
-          await onAddComment(file.path, line, body, codeContent, side, extra);
+          const code = codeContent ?? (await readLines(file, side ?? 'new', line));
+          const filled = extra && {
+            lines: extra.lines,
+            contents: await Promise.all(
+              extra.lines.map(
+                async (range, index) =>
+                  extra.contents[index] ?? (await readLines(file, range.side, range.line)),
+              ),
+            ),
+          };
+          await onAddComment(file.path, line, body, code, side, filled);
         } catch (error) {
           console.error('Failed to add comment:', error);
         }
       }),
-    [file.path, onAddComment],
+    [file, onAddComment, readLines],
   );
 
   useEffect(() => {

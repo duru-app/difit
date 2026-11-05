@@ -261,7 +261,7 @@ export interface SidedLine {
 // The ranges a new comment takes besides the one its card sits under, with the code of each.
 export interface ExtraCommentLines {
   lines: SidedLine[];
-  contents: string[];
+  contents: (string | undefined)[];
 }
 
 export interface LegacyDiffComment {
