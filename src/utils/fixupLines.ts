@@ -2,14 +2,21 @@ import type { DiffCommentMessage, FixupLines, ThreadFixup } from '../types/diff.
 
 type FixupIdentity = Pick<ThreadFixup, 'sha' | 'patchId'>;
 
-export function currentFixupSha(
+export function findFixup(
   { fixupSha, patchId }: Pick<FixupLines, 'fixupSha' | 'patchId'>,
   fixups: readonly FixupIdentity[],
-): string {
-  const found =
+): FixupIdentity | undefined {
+  return (
     fixups.find(({ sha }) => sha === fixupSha) ??
-    (patchId ? fixups.find((fixup) => fixup.patchId === patchId) : undefined);
-  return found?.sha ?? fixupSha;
+    (patchId ? fixups.find((fixup) => fixup.patchId === patchId) : undefined)
+  );
+}
+
+export function currentFixupSha(
+  lines: Pick<FixupLines, 'fixupSha' | 'patchId'>,
+  fixups: readonly FixupIdentity[],
+): string {
+  return findFixup(lines, fixups)?.sha ?? lines.fixupSha;
 }
 
 export function withCurrentFixupShas<T extends { messages: DiffCommentMessage[] }>(

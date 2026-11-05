@@ -37,6 +37,7 @@ describe('fixupLinesPlace', () => {
 
     expect(place).toEqual({
       fixupSha: lines.fixupSha,
+      inHistory: true,
       path: 'src/deep/order.ts',
       elementIds: [
         fixupLineElementId(lines.fixupSha, 'src/deep/order.ts', 'new', 42),

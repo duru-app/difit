@@ -28,8 +28,18 @@ const chunk: DiffChunkData = {
   newStart: 10,
   newLines: 3,
   lines: [
-    { type: 'normal', content: 'const first = 1;', oldLineNumber: 10, newLineNumber: 10 },
-    { type: 'normal', content: 'const second = 2;', oldLineNumber: 11, newLineNumber: 11 },
+    {
+      type: 'normal',
+      content: 'const first = 1;',
+      oldLineNumber: 10,
+      newLineNumber: 10,
+    },
+    {
+      type: 'normal',
+      content: 'const second = 2;',
+      oldLineNumber: 11,
+      newLineNumber: 11,
+    },
     { type: 'add', content: 'const third = 3;', newLineNumber: 12 },
   ],
 };
@@ -72,10 +82,20 @@ const fixup: ThreadFixup = {
           newStart: 11,
           newLines: 3,
           lines: [
-            { type: 'normal', content: 'const second = 2;', oldLineNumber: 11, newLineNumber: 11 },
+            {
+              type: 'normal',
+              content: 'const second = 2;',
+              oldLineNumber: 11,
+              newLineNumber: 11,
+            },
             { type: 'delete', content: 'const third = 3;', oldLineNumber: 12 },
             { type: 'add', content: 'const three = 3;', newLineNumber: 12 },
-            { type: 'normal', content: 'const fourth = 4;', oldLineNumber: 13, newLineNumber: 13 },
+            {
+              type: 'normal',
+              content: 'const fourth = 4;',
+              oldLineNumber: 13,
+              newLineNumber: 13,
+            },
           ],
         },
       ],
@@ -138,7 +158,9 @@ describe('replying on lines of a fixup card', () => {
 
     pressNumber(added);
 
-    const form = await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    const form = await within(card).findByRole('form', {
+      name: /fixup 줄에 답글/,
+    });
     const rows = [...card.querySelectorAll('tr')];
     expect(rows.indexOf(form.closest('tr')!)).toBe(rows.indexOf(added.closest('tr')!) + 1);
     expect(form).toHaveTextContent('abc1234 · example.ts · 남은 줄 L12');
@@ -168,7 +190,9 @@ describe('replying on lines of a fixup card', () => {
     fireEvent.mouseEnter(added!.closest('tr')!);
     fireEvent.mouseUp(document);
 
-    const form = await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    const form = await within(card).findByRole('form', {
+      name: /fixup 줄에 답글/,
+    });
     expect(form).toHaveTextContent('지운 줄 L12 · 남은 줄 L12');
     await replyIn(form, '둘 다');
 
@@ -232,7 +256,9 @@ describe('replying on lines of a fixup card', () => {
 
     pressNumber(added!);
     await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
-    fireEvent.change(within(card).getByRole('textbox'), { target: { value: '이 줄에 남길 말' } });
+    fireEvent.change(within(card).getByRole('textbox'), {
+      target: { value: '이 줄에 남길 말' },
+    });
     pressNumber(last!, { shiftKey: true });
 
     await waitFor(() =>
@@ -274,7 +300,9 @@ describe('replying on lines of a fixup card', () => {
     const [first, , , last] = numberCells(card);
 
     pressNumber(first!);
-    const form = await within(card).findByRole('form', { name: /fixup 줄에 답글/ });
+    const form = await within(card).findByRole('form', {
+      name: /fixup 줄에 답글/,
+    });
     fireEvent.click(within(form).getByRole('button', { name: '줄 더하기' }));
     pressNumber(last!);
 
@@ -290,7 +318,14 @@ describe('replying on lines of a fixup card', () => {
       view({
         replyToThread,
         recordDecision,
-        decisions: [{ threadId: 't1', kind: 'resolved', fixupSha: '', at: '2026-01-02T00:00:00Z' }],
+        decisions: [
+          {
+            threadId: 't1',
+            kind: 'resolved',
+            fixupSha: '',
+            at: '2026-01-02T00:00:00Z',
+          },
+        ],
       }),
     );
     const card = screen.getByTestId('fixup-overlay-card');
@@ -311,7 +346,11 @@ describe('replying on lines of a fixup card', () => {
 
 describe('replying on lines of a fixup box in another file', () => {
   const answered = { id: 't1', file: 'src/example.ts', line: 12 };
-  const second = { id: 't2', file: 'src/other.ts', line: [3, 5] as [number, number] };
+  const second = {
+    id: 't2',
+    file: 'src/other.ts',
+    line: [3, 5] as [number, number],
+  };
   const box = (threads: FixupBox['threads']): FixupBox => {
     const file: FixupBox['file'] = {
       path: 'src/caller.ts',
@@ -326,7 +365,11 @@ describe('replying on lines of a fixup box in another file', () => {
           newLines: 1,
           lines: [
             { type: 'delete', content: 'const second = 2;', oldLineNumber: 11 },
-            { type: 'add', content: 'const second = three - 1;', newLineNumber: 11 },
+            {
+              type: 'add',
+              content: 'const second = three - 1;',
+              newLineNumber: 11,
+            },
           ],
         },
       ],
@@ -343,7 +386,10 @@ describe('replying on lines of a fixup box in another file', () => {
   const renderBox = (boxed: FixupBox, overlay: Partial<FixupOverlayState>) =>
     render(
       view(
-        { boxesByFile: new Map([['src/caller.ts', boxesByAnchor([boxed])]]), ...overlay },
+        {
+          boxesByFile: new Map([['src/caller.ts', boxesByAnchor([boxed])]]),
+          ...overlay,
+        },
         { threads: [], filename: 'src/caller.ts' },
       ),
     );
@@ -354,7 +400,9 @@ describe('replying on lines of a fixup box in another file', () => {
     const fileBox = screen.getByTestId('fixup-file-box');
 
     pressNumber(numberCells(fileBox)[0]!);
-    const form = await within(fileBox).findByRole('form', { name: /fixup 줄에 답글/ });
+    const form = await within(fileBox).findByRole('form', {
+      name: /fixup 줄에 답글/,
+    });
     expect(within(form).queryByRole('combobox')).toBeNull();
     await replyIn(form, '이것도?');
 
@@ -377,8 +425,12 @@ describe('replying on lines of a fixup box in another file', () => {
     const fileBox = screen.getByTestId('fixup-file-box');
 
     pressNumber(numberCells(fileBox)[1]!);
-    const form = await within(fileBox).findByRole('form', { name: /fixup 줄에 답글/ });
-    const chooser = within(form).getByRole('combobox', { name: '답글을 달 지적' });
+    const form = await within(fileBox).findByRole('form', {
+      name: /fixup 줄에 답글/,
+    });
+    const chooser = within(form).getByRole('combobox', {
+      name: '답글을 달 지적',
+    });
     expect(
       within(chooser)
         .getAllByRole('option')
@@ -404,8 +456,12 @@ describe('replying on lines of a fixup box in another file', () => {
     const fileBox = screen.getByTestId('fixup-file-box');
 
     pressNumber(numberCells(fileBox)[1]!);
-    const form = await within(fileBox).findByRole('form', { name: /fixup 줄에 답글/ });
-    const chooser = within(form).getByRole('combobox', { name: '답글을 달 지적' });
+    const form = await within(fileBox).findByRole('form', {
+      name: /fixup 줄에 답글/,
+    });
+    const chooser = within(form).getByRole('combobox', {
+      name: '답글을 달 지적',
+    });
 
     expect(
       within(chooser)
@@ -422,7 +478,11 @@ describe('the place a reply on fixup lines points at', () => {
     filePath: 'src/example.ts',
     ranges: [
       { side: 'old', line: 12, code: 'const third = 3;' },
-      { side: 'new', line: [12, 13], code: 'const three = 3;\nconst fourth = 4;' },
+      {
+        side: 'new',
+        line: [12, 13],
+        code: 'const three = 3;\nconst fourth = 4;',
+      },
     ],
   };
   const replied: CommentThread = {
@@ -440,10 +500,20 @@ describe('the place a reply on fixup lines points at', () => {
     ],
   };
 
-  it('shows above the reply and goes to those lines of the card', () => {
+  const reachable = new Set([`${fixup.sha}:src/example.ts`]);
+  const renderReplied = (overlay: Partial<FixupOverlayState>) => {
     const revealFixupLines = vi.fn();
     render(
-      <FixupOverlayProvider value={{ ...EMPTY_FIXUP_OVERLAY, revealFixupLines }}>
+      <FixupOverlayProvider
+        value={{
+          ...EMPTY_FIXUP_OVERLAY,
+          revealFixupLines,
+          enabled: true,
+          fixupsLoaded: true,
+          reachableFixupFiles: reachable,
+          ...overlay,
+        }}
+      >
         <CommentThreadCard
           thread={replied}
           onResolveThread={noop}
@@ -453,11 +523,140 @@ describe('the place a reply on fixup lines points at', () => {
         />
       </FixupOverlayProvider>,
     );
-
-    const place = screen.getByRole('button', {
-      name: 'abc1234 · example.ts · 지운 줄 L12 · 남은 줄 L12-L13',
-    });
+    return revealFixupLines;
+  };
+  const placeName = 'abc1234 · example.ts · 지운 줄 L12 · 남은 줄 L12-L13';
+  const byThread = new Map([['t1', [fixup]]]);
+  const click = (name: string) => {
+    const place = screen.getByRole('button', { name });
     act(() => fireEvent.click(place));
+    return place;
+  };
+
+  it('shows above the reply and goes to those lines of the card', () => {
+    const revealFixupLines = renderReplied({ fixupsByThread: byThread });
+
+    const place = click(placeName);
+
+    expect(place).toHaveAttribute('title', 'src/example.ts');
+    expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
+  });
+
+  it('says why it cannot go when the fixups are not drawn over the diff', () => {
+    const revealFixupLines = renderReplied({
+      enabled: false,
+      fixupsByThread: byThread,
+    });
+
+    const place = click(`${placeName}, 수정을 겹쳐 보기를 켜면 갈 수 있습니다`);
+
+    expect(place).toHaveAttribute('aria-disabled', 'true');
+    expect(place).toHaveAttribute(
+      'title',
+      'src/example.ts\n수정을 겹쳐 보기를 켜면 갈 수 있습니다',
+    );
+    expect(revealFixupLines).not.toHaveBeenCalled();
+  });
+
+  it('says why it cannot go when the fixup is no longer in the history', () => {
+    const revealFixupLines = renderReplied({
+      fixupsByThread: new Map([['t2', [{ ...fixup, sha: 'other', patchId: 'other' }]]]),
+    });
+
+    click(`${placeName}, 지금 이력에 없는 fixup이라 갈 곳이 없습니다`);
+
+    expect(revealFixupLines).not.toHaveBeenCalled();
+  });
+
+  it('says a rejected fixup is not shown, even with the overlay on', () => {
+    const revealFixupLines = renderReplied({
+      fixupsByThread: byThread,
+      reachableFixupFiles: new Set(),
+      decisions: [
+        {
+          threadId: 't1',
+          kind: 'rejected',
+          fixupSha: fixup.sha,
+          at: '2026-01-03T00:00:00Z',
+        },
+      ] as FixupOverlayState['decisions'],
+    });
+
+    click(`${placeName}, 거절한 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다`);
+
+    expect(revealFixupLines).not.toHaveBeenCalled();
+  });
+
+  const rejectedFixup = [
+    { threadId: 't1', kind: 'rejected', fixupSha: fixup.sha, at: '2026-01-03T00:00:00Z' },
+  ] as FixupOverlayState['decisions'];
+  const rejectedName = `${placeName}, 거절한 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다`;
+
+  it('says the fixup was rejected after another fixup replaced it', () => {
+    const replacement = { ...fixup, sha: 'def5678def5678' };
+    renderReplied({
+      fixupsByThread: new Map([['t1', [fixup, replacement]]]),
+      reachableFixupFiles: new Set(),
+      decisions: rejectedFixup,
+    });
+
+    click(rejectedName);
+  });
+
+  it.each([{ enabled: true }, { enabled: false }])(
+    'says a fixup is rejected while a part of the review is shown (overlay $enabled)',
+    ({ enabled }) => {
+      const revealFixupLines = renderReplied({
+        enabled,
+        fixupsByThread: byThread,
+        reachableFixupFiles: null,
+        decisions: rejectedFixup,
+      });
+
+      click(rejectedName);
+
+      expect(revealFixupLines).not.toHaveBeenCalled();
+    },
+  );
+
+  it('says a fixup that is in the history but not drawn is not shown', () => {
+    renderReplied({ fixupsByThread: byThread, reachableFixupFiles: new Set() });
+
+    click(`${placeName}, 이 fixup은 겹쳐 보기에 나오지 않아 갈 수 없습니다`);
+  });
+
+  it('keeps the link live until the fixups are loaded', () => {
+    const revealFixupLines = renderReplied({
+      fixupsLoaded: false,
+      fixupsByThread: new Map(),
+      reachableFixupFiles: new Set(),
+    });
+
+    const place = click(placeName);
+
+    expect(place).not.toHaveAttribute('aria-disabled');
+    expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
+  });
+
+  it('keeps the link live while a part of the review is shown', () => {
+    const revealFixupLines = renderReplied({
+      fixupsByThread: byThread,
+      reachableFixupFiles: null,
+    });
+
+    click(placeName);
+
+    expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
+  });
+
+  it('still finds a fixup that a rebase gave a new sha', () => {
+    const rebased = { ...fixup, sha: 'def5678def5678' };
+    const revealFixupLines = renderReplied({
+      fixupsByThread: new Map([['t1', [rebased]]]),
+      reachableFixupFiles: new Set([`${rebased.sha}:src/example.ts`]),
+    });
+
+    click('def5678 · example.ts · 지운 줄 L12 · 남은 줄 L12-L13');
 
     expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
   });

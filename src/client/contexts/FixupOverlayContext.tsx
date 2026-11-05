@@ -57,6 +57,10 @@ export interface FixupOverlayState {
   boxesByFile: ReadonlyMap<string, ReadonlyMap<number, FixupBox[]>>;
   // Keyed by fixupFileKey; empty unless the whole review is shown.
   fixupPlaces: ReadonlyMap<string, FixupFilePlace>;
+  // Keyed by fixupFileKey; the fixup files a jump can reach, whether or not the overlay is drawn.
+  // Null when a part of the review is shown and the fixup lines are not placed.
+  reachableFixupFiles: ReadonlySet<string> | null;
+  fixupsLoaded: boolean;
   // Keyed by fixupFileKey; the path of the reviewed file each fixup file changes.
   fixupReviewPaths: ReadonlyMap<string, string>;
   // Keyed by the reviewed path; empty unless the whole review is shown.
@@ -87,6 +91,8 @@ export const EMPTY_FIXUP_OVERLAY: FixupOverlayState = {
   directEdit: null,
   boxesByFile: new Map(),
   fixupPlaces: new Map(),
+  reachableFixupFiles: new Set(),
+  fixupsLoaded: false,
   fixupReviewPaths: new Map(),
   fixupTouchedFiles: new Map(),
   fixupRevertedFiles: new Map(),
@@ -135,7 +141,10 @@ export function threadReviewControls(
   if (overlay.targetCommit === null) return undefined;
   const fixups = overlay.fixupsByThread.get(thread.id) ?? [];
   const pending = pendingFixupsFor(thread.id, fixups, overlay.decisions);
-  const toRef = ({ sha, patchId }: ThreadFixup): FixupRef => ({ fixupSha: sha, patchId });
+  const toRef = ({ sha, patchId }: ThreadFixup): FixupRef => ({
+    fixupSha: sha,
+    patchId,
+  });
   return {
     state: deriveThreadReviewState(thread.id, fixups, overlay.decisions, thread),
     pendingFixups: pending.map(toRef),

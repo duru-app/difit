@@ -1,6 +1,6 @@
 import type { DiffSide, FixupLines, LineNumber, SidedLine, ThreadFixup } from '../../types/diff';
 import { endOfLine, startOfLine } from '../../utils/commentPosition';
-import { currentFixupSha } from '../../utils/fixupLines';
+import { findFixup } from '../../utils/fixupLines';
 
 import { fixupFileElementId } from './domUtils';
 import { rangeLabel, SIDE_NAMES } from './linePick';
@@ -19,7 +19,9 @@ export function fixupLinesLabel({
   fixupSha,
   filePath,
   ranges,
-}: Pick<FixupLines, 'fixupSha' | 'filePath'> & { ranges: readonly SidedLine[] }): string {
+}: Pick<FixupLines, 'fixupSha' | 'filePath'> & {
+  ranges: readonly SidedLine[];
+}): string {
   const sides = (['old', 'new'] as const).flatMap((side) => {
     const lines = ranges
       .filter((range) => range.side === side)
@@ -38,15 +40,23 @@ export function fixupLinesPlace(
   { fixupSha, patchId, filePath, ranges }: FixupLines,
   fixupsByThread: ReadonlyMap<string, readonly ThreadFixup[]>,
   cardThreadId?: string,
-): { fixupSha: string; path: string; elementIds: string[]; cardElementIds: string[] } {
-  const fixups = [...fixupsByThread.values()].flat();
-  const sha = currentFixupSha({ fixupSha, patchId }, fixups);
+): {
+  fixupSha: string;
+  // Whether the fixup is still in the history, under this sha or a rebased one.
+  inHistory: boolean;
+  path: string;
+  elementIds: string[];
+  cardElementIds: string[];
+} {
+  const found = findFixup({ fixupSha, patchId }, [...fixupsByThread.values()].flat());
+  const sha = found?.sha ?? fixupSha;
   const idsOf = (threadId?: string) =>
     ranges.flatMap(({ side, line }) =>
       numbersOf(line).map((number) => fixupLineElementId(sha, filePath, side, number, threadId)),
     );
   return {
     fixupSha: sha,
+    inHistory: found !== undefined,
     path: filePath,
     elementIds: idsOf(),
     cardElementIds: cardThreadId ? idsOf(cardThreadId) : [],

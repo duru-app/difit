@@ -406,7 +406,10 @@ function placedNewThread(
 ) {
   const ordered = inStoredOrder(
     side,
-    (extra?.lines ?? []).map((range, index) => ({ ...range, content: extra?.contents[index] })),
+    (extra?.lines ?? []).map((range, index) => ({
+      ...range,
+      content: extra?.contents[index],
+    })),
   );
   const { extraRanges } = positionOfLines(side, line, ordered);
   return {
@@ -477,9 +480,10 @@ function App() {
   const selectedRevisionRef = useRef(selectedRevision);
   selectedRevisionRef.current = selectedRevision;
   const diffRequestIdRef = useRef(0);
-  const pendingPlaceRef = useRef<{ place: ReviewPlace; restoring: boolean } | null>(
-    restoredEntry?.place ? { place: restoredEntry.place, restoring: true } : null,
-  );
+  const pendingPlaceRef = useRef<{
+    place: ReviewPlace;
+    restoring: boolean;
+  } | null>(restoredEntry?.place ? { place: restoredEntry.place, restoring: true } : null);
   const activeDiffAbortControllerRef = useRef<AbortController | null>(null);
   const resolvedSelection = useMemo<DiffSelection | null>(() => {
     if (!diffData?.baseCommitish || !diffData?.targetCommitish) {
@@ -513,14 +517,18 @@ function App() {
       },
     [review, resolvedSelection],
   );
-  const [viewAnchor, setViewAnchor] = useState<{ view: ReviewView; sha: string | null } | null>(
-    null,
-  );
+  const [viewAnchor, setViewAnchor] = useState<{
+    view: ReviewView;
+    sha: string | null;
+  } | null>(null);
   const shownAnchor =
     viewAnchor && JSON.stringify(viewAnchor.view) === JSON.stringify(shownView)
       ? viewAnchor.sha
       : null;
-  const [rangePick, setRangePick] = useState<{ view: ReviewView; sha: string } | null>(null);
+  const [rangePick, setRangePick] = useState<{
+    view: ReviewView;
+    sha: string;
+  } | null>(null);
   const rangeStart =
     rangePick && JSON.stringify(rangePick.view) === JSON.stringify(shownView)
       ? rangePick.sha
@@ -726,7 +734,10 @@ function App() {
     if (decisions.length > 0) {
       mergeDecisions(decisions);
     }
-    return { threads: Array.isArray(payload.threads) ? payload.threads : [], decisions };
+    return {
+      threads: Array.isArray(payload.threads) ? payload.threads : [],
+      decisions,
+    };
   }, [getCommentApiUrl, mergeDecisions]);
 
   const syncThreadsToServer = useCallback(
@@ -1047,38 +1058,47 @@ function App() {
     return outsideThreadsRef.current;
   }, [threads, fileLineIndexByPath]);
   // Fixup line numbers are counted on the review target, so only the whole review shows them.
-  const fixupSpread = useMemo<FixupSpread>(() => {
-    const overlay = { enabled: showFixupOverlay && !showsPartOfReview, fixupsByThread, decisions };
-    const context = { view: resolvedSelection, review, targetCommit };
-    const lineIndexes = new Map<string, FileLineIndex>();
-    return spreadFixups(overlay, fixups, answeredThreads, diffData?.files ?? [], {
-      threads: outsideThreads.map((thread) => ({
-        id: thread.id,
-        file: thread.filePath,
-        snapshotCommit: thread.codeSnapshot?.commit,
-        thread,
-      })),
-      place: ({ thread }, file, fixup) => {
-        const key = fixupFileKey({ fixupSha: fixup.sha, path: file.path });
-        const index = lineIndexes.get(key) ?? buildFileLineIndex(file);
-        lineIndexes.set(key, index);
-        const placement = placeThread(thread, context, index, fixup.sha);
-        return placement.kind === 'hidden' ? null : placedLine(placement);
-      },
-    });
-  }, [
-    showFixupOverlay,
-    showsPartOfReview,
-    fixupsByThread,
-    decisions,
-    fixups,
-    answeredThreads,
-    diffData,
-    outsideThreads,
-    resolvedSelection,
-    review,
-    targetCommit,
-  ]);
+  const buildFixupSpread = useCallback(
+    (enabled: boolean): FixupSpread => {
+      const overlay = { enabled, fixupsByThread, decisions };
+      const context = { view: resolvedSelection, review, targetCommit };
+      const lineIndexes = new Map<string, FileLineIndex>();
+      return spreadFixups(overlay, fixups, answeredThreads, diffData?.files ?? [], {
+        threads: outsideThreads.map((thread) => ({
+          id: thread.id,
+          file: thread.filePath,
+          snapshotCommit: thread.codeSnapshot?.commit,
+          thread,
+        })),
+        place: ({ thread }, file, fixup) => {
+          const key = fixupFileKey({ fixupSha: fixup.sha, path: file.path });
+          const index = lineIndexes.get(key) ?? buildFileLineIndex(file);
+          lineIndexes.set(key, index);
+          const placement = placeThread(thread, context, index, fixup.sha);
+          return placement.kind === 'hidden' ? null : placedLine(placement);
+        },
+      });
+    },
+    [
+      fixupsByThread,
+      decisions,
+      fixups,
+      answeredThreads,
+      diffData,
+      outsideThreads,
+      resolvedSelection,
+      review,
+      targetCommit,
+    ],
+  );
+  const fixupSpread = useMemo(
+    () => buildFixupSpread(showFixupOverlay && !showsPartOfReview),
+    [buildFixupSpread, showFixupOverlay, showsPartOfReview],
+  );
+  const reachableFixupFiles = useMemo<ReadonlySet<string> | null>(() => {
+    if (showsPartOfReview) return null;
+    return new Set((showFixupOverlay ? fixupSpread : buildFixupSpread(true)).places.keys());
+  }, [buildFixupSpread, fixupSpread, showFixupOverlay, showsPartOfReview]);
   const fixupOnlyRef = useRef(fixupSpread.fixupOnly);
   fixupOnlyRef.current = fixupSpread.fixupOnly;
   const fixupReviewPaths = useMemo(() => reviewPathsOf(fixups), [fixups]);
@@ -1714,7 +1734,10 @@ function App() {
   };
   const restoreEntryRef = useRef<(entry: ReviewHistoryEntry) => void>(() => {});
   const recordJump = useReviewTargetHistory({
-    current: () => ({ selection: selectedRevisionRef.current, place: currentPlace() }),
+    current: () => ({
+      selection: selectedRevisionRef.current,
+      place: currentPlace(),
+    }),
     restore: (entry) => restoreEntryRef.current(entry),
   });
   const jumpWithinReview = useCallback(
@@ -1745,7 +1768,11 @@ function App() {
       if (!review) return;
       const chosen = selectReviewView(
         review,
-        { view: shownView, anchor: shownAnchor, ...(rangeStart !== undefined && { rangeStart }) },
+        {
+          view: shownView,
+          anchor: shownAnchor,
+          ...(rangeStart !== undefined && { rangeStart }),
+        },
         action,
       );
       if (!chosen) return;
@@ -1939,6 +1966,8 @@ function App() {
       directEdit,
       boxesByFile: fixupSpread.boxesByFile,
       fixupPlaces: fixupSpread.places,
+      reachableFixupFiles,
+      fixupsLoaded: fixupsLoaded && targetCommit !== null,
       fixupReviewPaths,
       fixupTouchedFiles: fixupSpread.touchedReviewFiles,
       fixupRevertedFiles,
@@ -1962,6 +1991,8 @@ function App() {
       showDiff,
       directEdit,
       fixupSpread,
+      reachableFixupFiles,
+      fixupsLoaded,
       fixupReviewPaths,
       fixupRevertedFiles,
       fixupLaterEdits,
@@ -2417,13 +2448,22 @@ function App() {
     fixupSpread,
   ]);
 
-  const pendingLineLinkRef = useRef<{ target: DiffLineTarget; side: DiffSide } | null>(null);
+  const pendingLineLinkRef = useRef<{
+    target: DiffLineTarget;
+    side: DiffSide;
+  } | null>(null);
   const [lineLinkRequest, setLineLinkRequest] = useState(0);
   const openDiffLineLink = (target: DiffLineTarget) => {
     const file = diffData?.files.find(({ path }) => path === target.file);
     if (!file) return;
     const side: DiffSide = file.status === 'deleted' ? 'old' : 'new';
-    jumpWithinReview({ kind: 'line', file: file.path, line: target.line, side, cursor: true });
+    jumpWithinReview({
+      kind: 'line',
+      file: file.path,
+      line: target.line,
+      side,
+      cursor: true,
+    });
     const pending = { target, side };
     pendingLineLinkRef.current = pending;
     setCollapsedFiles((prev) => {
@@ -2948,7 +2988,9 @@ function App() {
               id="commit-drawer"
               inert={!isCommitDrawerOpen}
               className="fixed inset-y-0 right-0 z-40 w-[min(85vw,360px)] flex flex-col bg-github-bg-secondary border-l border-github-border transition-transform duration-300 ease-out"
-              style={{ transform: isCommitDrawerOpen ? 'translateX(0)' : 'translateX(100%)' }}
+              style={{
+                transform: isCommitDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
+              }}
             >
               <CommitList
                 review={review}
@@ -2980,7 +3022,9 @@ function App() {
               aria-label="코멘트 패널"
               inert={!isCommentsDrawerOpen}
               className="fixed inset-y-0 right-0 z-40 w-[min(85vw,360px)] bg-github-bg-secondary border-l border-github-border transition-transform duration-300 ease-out"
-              style={{ transform: isCommentsDrawerOpen ? 'translateX(0)' : 'translateX(100%)' }}
+              style={{
+                transform: isCommentsDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
+              }}
             >
               {commentsPanelBody}
             </aside>
@@ -3036,7 +3080,9 @@ function App() {
                   pickedCommentFilePath={
                     pickedThread && 'file' in pickedThread ? pickedThread.file : null
                   }
-                  {...(isMobile && { onEscape: () => setIsFileDrawerOpen(false) })}
+                  {...(isMobile && {
+                    onEscape: () => setIsFileDrawerOpen(false),
+                  })}
                   fixupTouchedFiles={fixupSpread.touchedReviewFiles}
                   fixupRevertedFiles={fixupRevertedFiles}
                   fixupOnly={fixupSpread.fixupOnly}
@@ -3102,7 +3148,9 @@ function App() {
                 style={
                   isMobile
                     ? undefined
-                    : { minWidth: `min(${DIFF_MIN_WIDTH}px, calc(100% - ${reservedPanelWidth}px))` }
+                    : {
+                        minWidth: `min(${DIFF_MIN_WIDTH}px, calc(100% - ${reservedPanelWidth}px))`,
+                      }
                 }
               >
                 {review && (
