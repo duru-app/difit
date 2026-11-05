@@ -6,15 +6,10 @@ const CARD_ID_PREFIX = 'comment-thread-';
 const FILE_COMMENT = '[id^="file-comment-"]';
 const FOLDED_ROW = 'tr[data-folded-lines]';
 
-interface FoldedRows {
-  body: HTMLElement;
-  count: number;
-  above: number;
-}
-
 interface ReaderBlock {
   cardId: string;
-  folds: FoldedRows | null;
+  body: HTMLElement | null;
+  foldedBefore: Set<Element>;
   above: Element[];
   fileLevel: { list: HTMLElement | null; fileSection: HTMLElement | null } | null;
 }
@@ -42,16 +37,6 @@ const aboveOf = (holder: HTMLElement) => {
   return found;
 };
 
-const foldedRowsAround = (reader: HTMLElement): FoldedRows | null => {
-  const body = reader.closest<HTMLElement>('tbody');
-  if (!body) return null;
-  const rows = [...body.querySelectorAll(FOLDED_ROW)];
-  const above = rows.filter(
-    (row) => reader.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_PRECEDING,
-  ).length;
-  return { body, count: rows.length, above };
-};
-
 const isCodeRow = (element: Element) => element.querySelector('[data-line-number-cell]') !== null;
 
 const holdsThread = (element: Element) =>
@@ -76,9 +61,11 @@ const blocksUnderReader = () => {
     });
     if (!reader) continue;
     const isFileLevel = reader.matches(FILE_COMMENT);
+    const body = reader.closest<HTMLElement>('tbody');
     found.set(threadId, {
       cardId: card.id,
-      folds: foldedRowsAround(reader),
+      body,
+      foldedBefore: new Set(body?.querySelectorAll(FOLDED_ROW)),
       above: aboveOf(reader),
       fileLevel: isFileLevel
         ? { list: reader.parentElement, fileSection: card.closest('[data-file-path]') }
@@ -88,15 +75,20 @@ const blocksUnderReader = () => {
   return found;
 };
 
-const newlyFoldedRow = (folds: FoldedRows | null) => {
-  if (!folds?.body.isConnected) return null;
-  const rows = folds.body.querySelectorAll<HTMLElement>(FOLDED_ROW);
-  return rows.length > folds.count ? (rows[folds.above] ?? null) : null;
+const newlyFoldedRow = ({ body, foldedBefore, above }: ReaderBlock) => {
+  if (!body?.isConnected) return null;
+  const nearest = above.find((item) => item.isConnected);
+  if (nearest && !nearest.matches('tr')) return null;
+  const next = nearest ? nearest.nextElementSibling : body.firstElementChild;
+  return next instanceof HTMLElement && next.matches(FOLDED_ROW) && !foldedBefore.has(next)
+    ? next
+    : null;
 };
 
-const alignAfterLeaving = ({ cardId, folds, above, fileLevel }: ReaderBlock) => {
+const alignAfterLeaving = (block: ReaderBlock) => {
+  const { cardId, above, fileLevel } = block;
   if (document.getElementById(cardId)) return;
-  const folded = newlyFoldedRow(folds);
+  const folded = newlyFoldedRow(block);
   const foldedVisible = folded && visibleTopOf(folded);
   if (folded && foldedVisible) {
     foldedVisible.diff.scrollTop += folded.getBoundingClientRect().top - foldedVisible.top;
