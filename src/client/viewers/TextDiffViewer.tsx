@@ -1,13 +1,6 @@
 import React, { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 
-import type {
-  CommentThread,
-  DiffLine,
-  DiffSide,
-  DiffViewMode,
-  ExpandedRange,
-  LineNumber,
-} from '../../types/diff';
+import type { CommentThread, DiffLine, DiffViewMode } from '../../types/diff';
 import { LEAVES_CODE_ALONE_LABEL, leavesCodeAlone } from '../../utils/changeKind';
 import { DiffChunk } from '../components/DiffChunk';
 import { DEFAULT_EXPAND_COUNT, ExpandButton } from '../components/ExpandButton';
@@ -18,7 +11,7 @@ import { cursorLineOf, LinePickProvider, useLinePick } from '../contexts/LinePic
 import type { CursorPosition } from '../hooks/keyboardNavigation';
 import { useCanHover } from '../hooks/useCanHover';
 import { useCodeSelection } from '../hooks/useCodeSelection';
-import { type MergedChunk, rangesAroundNewLines } from '../hooks/useExpandedLines';
+import { rangesAroundNewLines } from '../hooks/useExpandedLines';
 import { clipToFile } from '../utils/codeSelection';
 
 import type { DiffViewerBodyProps } from './types';
@@ -68,30 +61,14 @@ function changedLineCount(lines: DiffLine[]) {
   return total + Math.max(adds, deletes);
 }
 
-function hiddenLinesWithin(
-  chunks: readonly MergedChunk[],
-  side: DiffSide,
-  line: LineNumber,
-): ExpandedRange[] {
-  const [first, last] = Array.isArray(line) ? line : [line, line];
-  return chunks.flatMap(({ oldStart, newStart, hiddenLinesBefore: hidden }) => {
-    const below = side === 'old' ? oldStart : newStart;
-    return hidden > 0 && below > first && below - hidden <= last
-      ? [{ start: oldStart - hidden, end: oldStart - 1 }]
-      : [];
-  });
-}
-
 function SelectionAcrossChunksBar({
   fileRef,
   lines,
   layout,
-  openHiddenWithin,
 }: {
   fileRef: RefObject<HTMLDivElement | null>;
   lines: readonly DiffLine[];
   layout: DiffViewMode;
-  openHiddenWithin: (side: DiffSide, line: LineNumber) => Promise<void>;
 }) {
   const linePick = useLinePick(lines, null);
   const canHover = useCanHover();
@@ -105,8 +82,7 @@ function SelectionAcrossChunksBar({
       canHover={canHover}
       onPress={hold}
       onComment={() => {
-        const openForm = () => linePick.start(selected.side, selected.lineNumber, selected.text);
-        openHiddenWithin(selected.side, selected.lineNumber).then(openForm, openForm);
+        linePick.start(selected.side, selected.lineNumber, selected.text);
         clear();
       }}
     />
@@ -278,14 +254,7 @@ export function TextDiffViewer({
   return (
     <LinePickProvider lines={fileLines} cursorLine={cursorLine}>
       {onAddComment && (
-        <SelectionAcrossChunksBar
-          fileRef={fileRef}
-          lines={fileLines}
-          layout={diffMode}
-          openHiddenWithin={(side, line) =>
-            openHiddenLines(file, hiddenLinesWithin(mergedChunks, side, line))
-          }
-        />
+        <SelectionAcrossChunksBar fileRef={fileRef} lines={fileLines} layout={diffMode} />
       )}
       <div ref={fileRef}>
         {mergedChunks.map((mergedChunk, mergedIndex) => {

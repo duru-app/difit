@@ -288,10 +288,11 @@ export const DiffViewer = memo(function DiffViewer({
       const gaps = buildGaps(ranges, file.chunks.length);
 
       gaps.forEach((gap) => {
-        const hasComment = commentRanges.some(
-          (range) => range.start <= gap.end && range.end >= gap.start,
+        const within = (line: number) => line >= gap.start && line <= gap.end;
+        const hasCommentEnd = commentRanges.some(
+          (range) => within(range.start) || within(range.end),
         );
-        if (!hasComment) return;
+        if (!hasCommentEnd) return;
         gap.chunkGapIndices.forEach((index) => gapIndices.add(index));
       });
     });

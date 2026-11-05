@@ -1139,10 +1139,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
       lines: [...first.lines, ...unreadLines, ...second.lines],
     };
     const onAddComment = vi.fn().mockResolvedValue(undefined);
-    const openHiddenLines = vi.fn(async () => {
-      rerender(twoHunks({ diffMode: 'unified', onAddComment, mergedChunks: [whole] }));
-    });
-    const { rerender } = render(twoHunks({ diffMode: 'unified', onAddComment, openHiddenLines }));
+    render(twoHunks({ diffMode: 'unified', onAddComment, mergedChunks: [whole] }));
 
     selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
@@ -1159,7 +1156,28 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     });
   });
 
-  it('saves the code of every line of the range, the hidden ones too', async () => {
+  it('opens no hidden lines when the bar is pressed, saved or cancelled', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    const openHiddenLines = vi.fn(async () => {});
+    render(twoHunks({ diffMode: 'unified', onAddComment, openHiddenLines }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    await screen.findByRole('textbox');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalled();
+    });
+    expect(openHiddenLines).not.toHaveBeenCalled();
+  });
+
+  it('saves the code of every line of a range whose hidden lines were opened first', async () => {
     const hiddenLines = Array.from({ length: 31 }, (_, offset) => ({
       type: 'normal' as const,
       content: `hidden${offset + 6}`,
@@ -1174,21 +1192,17 @@ describe('TextDiffViewer selection across collapsed lines', () => {
       lines: [...first.lines, ...hiddenLines, ...second.lines],
     };
     const onAddComment = vi.fn().mockResolvedValue(undefined);
-    const openHiddenLines = vi.fn(async () => {
-      rerender(twoHunks({ diffMode: 'unified', onAddComment, mergedChunks: [whole] }));
-    });
-    const { rerender } = render(twoHunks({ diffMode: 'unified', onAddComment, openHiddenLines }));
+    render(twoHunks({ diffMode: 'unified', onAddComment, mergedChunks: [whole] }));
 
     selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
-    expect(openHiddenLines).toHaveBeenCalledWith(file, [{ start: 6, end: 36 }]);
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
         [4, 38],
-        '> nowAlpha\n> sameAlpha\n> … 31 lines\n> wasOmega\n> nowOmega\n> sameOmega\n\nWhy?',
+        expect.stringMatching(/^> nowAlpha\n> sameAlpha\n> hidden6\n/),
         [
           'nowAlpha',
           'sameAlpha',

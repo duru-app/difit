@@ -134,6 +134,24 @@ describe('DiffViewer opening the hidden lines a comment sits on', () => {
     expect(ranges).toContainEqual({ start: 11, end: 29 });
     expect(ranges).toContainEqual({ start: 31, end: 59 });
   });
+
+  it('leaves hidden the lines a comment range only passes over', () => {
+    const ranges = openedFor([changed(10, 10), changed(60, 60)], {
+      ...threadAt(10, 'new'),
+      line: [10, 60],
+    });
+
+    expect(ranges).toEqual([]);
+  });
+
+  it('opens the hidden lines that hold an end of a comment range', () => {
+    const ranges = openedFor([changed(10, 10), changed(60, 60)], {
+      ...threadAt(10, 'new'),
+      line: [20, 60],
+    });
+
+    expect(ranges).toContainEqual({ start: 11, end: 59 });
+  });
 });
 
 describe('DiffViewer header of a file a fixup changed', () => {
