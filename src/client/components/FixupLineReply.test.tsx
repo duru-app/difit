@@ -163,7 +163,7 @@ describe('replying on lines of a fixup card', () => {
     });
     const rows = [...card.querySelectorAll('tr')];
     expect(rows.indexOf(form.closest('tr')!)).toBe(rows.indexOf(added.closest('tr')!) + 1);
-    expect(form).toHaveTextContent('abc1234 · example.ts · 남은 줄 L12');
+    expect(form).toHaveTextContent('abc1234 · example.ts · 수정 후 L12');
 
     await replyIn(form, '이 이름은 왜?');
 
@@ -193,7 +193,7 @@ describe('replying on lines of a fixup card', () => {
     const form = await within(card).findByRole('form', {
       name: /fixup 줄에 답글/,
     });
-    expect(form).toHaveTextContent('지운 줄 L12 · 남은 줄 L12');
+    expect(form).toHaveTextContent('지운 줄 L12 · 수정 후 L12');
     await replyIn(form, '둘 다');
 
     await waitFor(() =>
@@ -228,7 +228,7 @@ describe('replying on lines of a fixup card', () => {
     fireEvent.mouseUp(document);
 
     await waitFor(() =>
-      expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L11-L13'),
+      expect(within(card).getByRole('form')).toHaveTextContent('수정 후 L11-L13'),
     );
     expect(first!.closest('tr')).toHaveClass('comment-selected');
     expect(within(card).getByRole('textbox')).toHaveValue('이어서');
@@ -262,12 +262,12 @@ describe('replying on lines of a fixup card', () => {
     pressNumber(last!, { shiftKey: true });
 
     await waitFor(() =>
-      expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L12-L13'),
+      expect(within(card).getByRole('form')).toHaveTextContent('수정 후 L12-L13'),
     );
     expect(within(card).getByRole('textbox')).toHaveValue('이 줄에 남길 말');
 
     pressNumber(first!);
-    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L11'));
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('수정 후 L11'));
     expect(within(card).getByRole('textbox')).toHaveValue('이 줄에 남길 말');
     pressNumber(first!);
     await waitFor(() => expect(within(card).queryByRole('form')).toBeNull());
@@ -307,7 +307,7 @@ describe('replying on lines of a fixup card', () => {
     pressNumber(last!);
 
     await waitFor(() =>
-      expect(within(card).getByRole('form')).toHaveTextContent('남은 줄 L11, L13'),
+      expect(within(card).getByRole('form')).toHaveTextContent('수정 후 L11, L13'),
     );
   });
 
@@ -525,7 +525,7 @@ describe('the place a reply on fixup lines points at', () => {
     );
     return revealFixupLines;
   };
-  const placeName = 'abc1234 · example.ts · 지운 줄 L12 · 남은 줄 L12-L13';
+  const placeName = 'abc1234 · example.ts · 지운 줄 L12 · 수정 후 L12-L13';
   const byThread = new Map([['t1', [fixup]]]);
   const click = (name: string) => {
     const place = screen.getByRole('button', { name });
@@ -656,7 +656,7 @@ describe('the place a reply on fixup lines points at', () => {
       reachableFixupFiles: new Set([`${rebased.sha}:src/example.ts`]),
     });
 
-    click('def5678 · example.ts · 지운 줄 L12 · 남은 줄 L12-L13');
+    click('def5678 · example.ts · 지운 줄 L12 · 수정 후 L12-L13');
 
     expect(revealFixupLines).toHaveBeenCalledWith(fixupLines, 't1');
   });

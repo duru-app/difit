@@ -1630,7 +1630,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
         rowWith('tail();').compareDocumentPosition(card[0]!) & Node.DOCUMENT_POSITION_PRECEDING,
       ).toBeTruthy();
       expect(directlyBelow(markerRow)).toHaveTextContent(
-        mode === 'unified' ? '남은 줄 L10 지적으로 가기' : '지운 줄 L11 지적으로 가기',
+        mode === 'unified' ? '수정 후 L10 지적으로 가기' : '지운 줄 L11 지적으로 가기',
       );
     },
   );
@@ -1667,7 +1667,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     ).toBeTruthy();
     if (mode === 'unified') {
       expect(rowWith('alsoGone();').nextElementSibling).toHaveTextContent(
-        '남은 줄 L10-L11 지적으로 가기',
+        '수정 후 L10-L11 지적으로 가기',
       );
     } else {
       expect(screen.queryByText(/지적으로 가기/)).toBeNull();
