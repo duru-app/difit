@@ -4618,7 +4618,7 @@ describe('App Component - Commits of the review', () => {
         }),
       );
 
-      fireEvent.click(screen.getByRole('button', { name: 'fffffff · test.ts · 남은 줄 L1' }));
+      fireEvent.click(screen.getByRole('button', { name: 'fffffff · test.ts · 수정 후 L1' }));
 
       await waitFor(() => expect(cell.closest('tr')).toHaveAttribute('data-line-link-flash'));
     } finally {
@@ -4688,12 +4688,12 @@ describe('App Component - Commits of the review', () => {
       }
 
       fireEvent.mouseDown(cells[2]!, { button: 0, ...modifier });
-      expect(within(card).getByText('fffffff · test.ts · 남은 줄 L1')).toBeInTheDocument();
+      expect(within(card).getByText('fffffff · test.ts · 수정 후 L1')).toBeInTheDocument();
       fireEvent.mouseUp(cells[2]!, modifier);
       fireEvent.click(cells[2]!, modifier);
 
       expect(
-        await within(card).findByText(`fffffff · test.ts · 남은 줄 ${picked}`),
+        await within(card).findByText(`fffffff · test.ts · 수정 후 ${picked}`),
       ).toBeInTheDocument();
     },
   );

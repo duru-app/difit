@@ -291,7 +291,7 @@ export const endsOnRow = (
     ({ side, line }) => spanOf(line)[1] === (side === 'old' ? oldLineNumber : newLineNumber),
   );
 
-export const SIDE_NAMES: Record<DiffSide, string> = { old: '지운 줄', new: '남은 줄' };
+export const SIDE_NAMES: Record<DiffSide, string> = { old: '지운 줄', new: '수정 후' };
 
 export const rangeLabel = (line: LineNumber) => {
   if (!Array.isArray(line)) return `L${line}`;

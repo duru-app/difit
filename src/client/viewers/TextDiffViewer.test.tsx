@@ -674,7 +674,7 @@ describe.each(['unified', 'split'] as const)(
 
       expect(picked()).toEqual(['f10();', mode === 'unified' ? '// old 40' : '// new 40']);
       expect(screen.queryByRole('status')).toBeNull();
-      expect(screen.getByTestId('picked-ranges')).toHaveTextContent('지운 줄 L40 · 남은 줄 L11');
+      expect(screen.getByTestId('picked-ranges')).toHaveTextContent('지운 줄 L40 · 수정 후 L11');
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Same mistake' } });
       fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
       await vi.waitFor(() =>
@@ -695,7 +695,7 @@ describe.each(['unified', 'split'] as const)(
         mode === 'unified' ? ['// old 10', '// new 10', 'f10();'] : ['// new 10', 'f10();'],
       );
       expect(screen.getByTestId('picked-ranges')).toHaveTextContent(
-        '지운 줄 L10 · 남은 줄 L10-L11',
+        '지운 줄 L10 · 수정 후 L10-L11',
       );
     });
 
@@ -786,7 +786,7 @@ describe.each(['unified', 'split'] as const)(
         renderViewer({ ...open, threads: [thread] });
 
         expect(screen.getAllByText('Same mistake')).toHaveLength(1);
-        const marker = screen.getByRole('button', { name: '남은 줄 L40-L41 지적으로 가기' });
+        const marker = screen.getByRole('button', { name: '수정 후 L40-L41 지적으로 가기' });
         expect(
           rowOf('// old 10').compareDocumentPosition(marker) & Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();

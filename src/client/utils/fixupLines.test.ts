@@ -27,7 +27,7 @@ const fixupWith = (sha: string, patchId: string): ThreadFixup => ({
 
 describe('fixupLinesLabel', () => {
   it('names the fixup, the file and the lines of each side, deleted ones first', () => {
-    expect(fixupLinesLabel(lines)).toBe('aaaaaaa · order.ts · 지운 줄 L41 · 남은 줄 L42-L43, L50');
+    expect(fixupLinesLabel(lines)).toBe('aaaaaaa · order.ts · 지운 줄 L41 · 수정 후 L42-L43, L50');
   });
 });
 
