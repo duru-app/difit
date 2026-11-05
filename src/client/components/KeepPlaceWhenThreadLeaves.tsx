@@ -4,9 +4,12 @@ import { runsOffTheTopOf, visibleTopOf } from '../utils/domUtils';
 
 const CARD_ID_PREFIX = 'comment-thread-';
 const FILE_COMMENT = '[id^="file-comment-"]';
+const FOLDED_ROW = 'tr[data-folded-lines]';
 
 interface ReaderBlock {
   cardId: string;
+  body: HTMLElement | null;
+  foldedBefore: Set<Element>;
   above: Element[];
   fileLevel: { list: HTMLElement | null; fileSection: HTMLElement | null } | null;
 }
@@ -58,8 +61,11 @@ const blocksUnderReader = () => {
     });
     if (!reader) continue;
     const isFileLevel = reader.matches(FILE_COMMENT);
+    const body = reader.closest<HTMLElement>('tbody');
     found.set(threadId, {
       cardId: card.id,
+      body,
+      foldedBefore: new Set(body?.querySelectorAll(FOLDED_ROW)),
       above: aboveOf(reader),
       fileLevel: isFileLevel
         ? { list: reader.parentElement, fileSection: card.closest('[data-file-path]') }
@@ -69,8 +75,25 @@ const blocksUnderReader = () => {
   return found;
 };
 
-const alignAfterLeaving = ({ cardId, above, fileLevel }: ReaderBlock) => {
+const newlyFoldedRow = ({ body, foldedBefore, above }: ReaderBlock) => {
+  if (!body?.isConnected) return null;
+  const nearest = above.find((item) => item.isConnected);
+  if (nearest && !nearest.matches('tr')) return null;
+  const next = nearest ? nearest.nextElementSibling : body.firstElementChild;
+  return next instanceof HTMLElement && next.matches(FOLDED_ROW) && !foldedBefore.has(next)
+    ? next
+    : null;
+};
+
+const alignAfterLeaving = (block: ReaderBlock) => {
+  const { cardId, above, fileLevel } = block;
   if (document.getElementById(cardId)) return;
+  const folded = newlyFoldedRow(block);
+  const foldedVisible = folded && visibleTopOf(folded);
+  if (folded && foldedVisible) {
+    foldedVisible.diff.scrollTop += folded.getBoundingClientRect().top - foldedVisible.top;
+    return;
+  }
   for (const candidate of above) {
     if (!(candidate instanceof HTMLElement) || !candidate.isConnected) continue;
     const alignsTop = isCodeRow(candidate);

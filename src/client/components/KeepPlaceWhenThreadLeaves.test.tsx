@@ -65,6 +65,17 @@ describe('KeepPlaceWhenThreadLeaves', () => {
     </main>
   );
 
+  const fold = (id: string) => (
+    <tr key={id} id={id} data-folded-lines>
+      <td />
+    </tr>
+  );
+  const line = (id: string) => (
+    <tr key={id} id={id}>
+      <td data-line-number-cell>1</td>
+    </tr>
+  );
+
   const leave = async (before: React.ReactNode, after: React.ReactNode, positions: Tops) => {
     tops = positions;
     const { container, rerender } = render(page(before));
@@ -102,6 +113,61 @@ describe('KeepPlaceWhenThreadLeaves', () => {
       },
     );
     expect(scrollTop).toBe(START_SCROLL - 920 - HEADER_COVER);
+  });
+
+  it('puts the folded row under the file header when the thread leaves with its lines folded', async () => {
+    const scrollTop = await leave(
+      <>
+        {line('code-row')}
+        {cardRow('a')}
+      </>,
+      fold('fold-row'),
+      { 'comment-thread-a': [-1500, 300], 'fold-row': [-1520, -1490] },
+    );
+    expect(scrollTop).toBe(START_SCROLL - 1520 - HEADER_COVER);
+  });
+
+  it('stays on the code line of the thread when another thread folds lines above it', async () => {
+    const scrollTop = await leave(
+      <>
+        {line('other-line')}
+        {line('code-row')}
+        {cardRow('a')}
+      </>,
+      <>
+        {fold('other-fold')}
+        {line('code-row')}
+      </>,
+      {
+        'comment-thread-a': [-1500, 300],
+        'code-row': [-700, -680],
+        'other-fold': [-1520, -1490],
+      },
+    );
+    expect(scrollTop).toBe(START_SCROLL - 700 - HEADER_COVER);
+  });
+
+  it('picks the fold of the thread when another thread folds lines above it too', async () => {
+    const scrollTop = await leave(
+      <>
+        {line('other-line')}
+        {line('middle-line')}
+        {line('code-row')}
+        {cardRow('a')}
+      </>,
+      <>
+        {fold('other-fold')}
+        {line('middle-line')}
+        {fold('fold-row')}
+      </>,
+      {
+        'comment-thread-a': [-1500, 300],
+        'other-fold': [-2520, -2490],
+        'middle-line': [-1000, -980],
+        'fold-row': [-700, -670],
+      },
+    );
+    expect(scrollTop).toBe(START_SCROLL - 700 - HEADER_COVER);
   });
 
   it('puts the end of the thread above it under the file header, not the code line past it', async () => {
