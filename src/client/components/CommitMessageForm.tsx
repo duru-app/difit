@@ -1,13 +1,31 @@
 import React, { useEffect, useState } from 'react';
 
-import type { RewordRequest, RewriteWarning } from '../../types/diff';
+import type { RewordRequest, RewriteConflict, RewriteWarning } from '../../types/diff';
 import { withoutThreadTrailers } from '../../utils/commitMessage';
 import type { DirectEditFailure } from '../contexts/FixupOverlayContext';
-import { rewordFailureMessage } from '../utils/directEdit';
+import { rewordFailureMessage, rewordHandoffBody } from '../utils/directEdit';
 
 export interface RewordFailure extends DirectEditFailure {
   // Saving again with these acknowledged goes ahead.
   warnings?: RewriteWarning[];
+  conflict?: RewriteConflict;
+}
+
+export const CONFLICT_ACTION_CLASS =
+  'rounded border border-github-danger bg-github-danger/20 px-3 py-1 text-xs font-medium text-github-text-primary transition-all hover:opacity-80';
+
+export function ConflictDetails({ conflict }: { conflict: RewriteConflict }) {
+  return (
+    <>
+      {conflict.commit && (
+        <p className="mt-1">
+          충돌한 커밋: <span className="font-mono">{conflict.commit.sha.slice(0, 7)}</span>{' '}
+          {conflict.commit.subject}
+        </p>
+      )}
+      {!conflict.agentAttached && <p className="mt-1">연결된 에이전트가 없어 맡길 수 없습니다.</p>}
+    </>
+  );
 }
 
 export interface RewordControls {
@@ -20,9 +38,10 @@ interface CommitMessageFormProps {
   sha: string;
   controls: RewordControls;
   onClose: () => void;
+  onHandOff?: ((sha: string, body: string) => Promise<void>) | undefined;
 }
 
-export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormProps) {
+export function CommitMessageForm({ sha, controls, onClose, onHandOff }: CommitMessageFormProps) {
   const [original, setOriginal] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [text, setText] = useState('');
@@ -32,6 +51,7 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
   const unchanged = original === null || cleaned === withoutThreadTrailers(original);
   const blank = cleaned === '';
   const blankHint = !unchanged && blank ? rewordFailureMessage('empty-message', '') : '';
+  const conflict = failure?.conflict;
 
   const { load } = controls;
   useEffect(() => {
@@ -67,6 +87,11 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
       setFailure(result);
       return;
     }
+    onClose();
+  };
+
+  const handOff = async (stopped: RewriteConflict) => {
+    await onHandOff?.(sha, rewordHandoffBody(cleaned, stopped));
     onClose();
   };
 
@@ -127,13 +152,23 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
               {failure.output}
             </pre>
           )}
+          {conflict && <ConflictDetails conflict={conflict} />}
           {failure.warnings && (
             <button
               type="button"
               onClick={() => void save(failure.warnings)}
-              className="mt-1 rounded border border-github-danger bg-github-danger/20 px-3 py-1 text-xs font-medium text-github-text-primary transition-all hover:opacity-80"
+              className={`mt-1 ${CONFLICT_ACTION_CLASS}`}
             >
               그래도 저장
+            </button>
+          )}
+          {conflict?.agentAttached && onHandOff && (
+            <button
+              type="button"
+              onClick={() => void handOff(conflict)}
+              className={`mt-1 ${CONFLICT_ACTION_CLASS}`}
+            >
+              에이전트에게 맡기기
             </button>
           )}
         </div>

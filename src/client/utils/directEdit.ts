@@ -3,7 +3,9 @@ import type {
   DirectEditRejection,
   ExpandedLine,
   LineNumber,
+  ReviewCommit,
   RewordRejection,
+  RewriteConflict,
   RewriteWarning,
 } from '../../types/diff';
 
@@ -195,4 +197,35 @@ export function rewordFailureMessage(
     return warnings.map((warning) => REWRITE_WARNING_MESSAGES[warning]).join(' ');
   }
   return reason ? REWORD_FAILURE_MESSAGES[reason] : error;
+}
+
+type HandoffCommit = Pick<ReviewCommit, 'sha' | 'shortSha' | 'subject'>;
+
+function conflictLine(conflict: RewriteConflict): string {
+  return conflict.commit
+    ? `\n\n충돌한 커밋: ${conflict.commit.sha.slice(0, 7)} ${conflict.commit.subject}`
+    : '';
+}
+
+export function reorderHandoffBody(
+  commits: readonly HandoffCommit[],
+  order: readonly string[],
+  conflict: RewriteConflict,
+): string {
+  const wanted = order.flatMap((sha, at) => {
+    const commit = commits.find((candidate) => candidate.sha === sha);
+    return commit ? [`${at + 1}. ${commit.shortSha} ${commit.subject}`] : [];
+  });
+  return `순서를 바꾸다 충돌해 이력을 되돌렸습니다. 아래 순서대로 rebase하고 충돌을 풀어 주세요.
+
+원하는 순서 (오래된 커밋부터):
+${wanted.join('\n')}${conflictLine(conflict)}`;
+}
+
+export function rewordHandoffBody(message: string, conflict: RewriteConflict): string {
+  return `메시지를 고치다 충돌해 이력을 되돌렸습니다. 이 커밋의 메시지를 아래처럼 고치고 충돌을 풀어 주세요.
+
+\`\`\`text
+${message}
+\`\`\`${conflictLine(conflict)}`;
 }

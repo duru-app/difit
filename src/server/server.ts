@@ -52,10 +52,14 @@ import {
 } from '../utils/reviewDecisions.js';
 
 import { validateCommitish } from '../cli/utils.js';
-import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
+import {
+  claudeSessionListening,
+  sendToClaudeSession,
+  sessionMessageFor,
+} from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
 import { commitDirectEdit, type EditedView } from './direct-edit.js';
-import { readRewriteState, rewriteHistory } from './history-rewrite.js';
+import { type HistoryRewriteResult, readRewriteState, rewriteHistory } from './history-rewrite.js';
 import { checkRewrite } from './rewrite-check.js';
 import { chooseFixupTarget } from './fixup-target.js';
 import { FileWatcherService } from './file-watcher.js';
@@ -2109,6 +2113,16 @@ export async function startServer(options: ServerOptions): Promise<{
     },
   });
 
+  async function refuseFailedRewrite(
+    failure: Extract<HistoryRewriteResult, { ok: false }>,
+  ): Promise<{ status: number; body: RewordResponse }> {
+    const refused = refuseRewrite(failure.reason, failure.output);
+    if (failure.reason !== 'conflict') return refused;
+    const agentAttached = commentWaits.size > 0 || (await claudeSessionListening());
+    const conflict = { ...(failure.commit ? { commit: failure.commit } : {}), agentAttached };
+    return { ...refused, body: { ...refused.body, conflict } };
+  }
+
   // Everything held under the old SHAs moves in one step, with no await between a session and its
   // new key; only the commit lists of the moved reviews are read first.
   async function followRewrite(move: HistoryMove) {
@@ -2222,7 +2236,7 @@ export async function startServer(options: ServerOptions): Promise<{
       base: selection.baseCommitish,
       messages: new Map([[commit.sha, message]]),
     });
-    if (!result.ok) return refuseRewrite(result.reason, result.output);
+    if (!result.ok) return refuseFailedRewrite(result);
     const move = { rewritten: result.rewritten };
     await followRewrite(move);
     return rewrittenBody(selectionAfterMoves(selection, [move]), result.rewritten);
@@ -2256,9 +2270,17 @@ export async function startServer(options: ServerOptions): Promise<{
       messages: new Map(),
       order,
     });
-    if (!result.ok) return refuseRewrite(result.reason, result.output);
+    if (!result.ok) return refuseFailedRewrite(result);
+    return followOrder(selection, commits, order, result.rewritten);
+  }
 
-    const { rewritten } = result;
+  // `order` holds the old SHAs of the review's commits in the order they now stand.
+  async function followOrder(
+    selection: DiffSelection,
+    commits: ReviewCommit[],
+    order: readonly string[],
+    rewritten: RewrittenShas,
+  ): Promise<{ status: number; body: RewordResponse }> {
     const newTop = order.at(-1) ?? '';
     const target = isSameCommit(selection.targetCommitish, commits.at(-1)?.sha ?? '')
       ? (rewritten[newTop] ?? newTop)
@@ -2270,6 +2292,45 @@ export async function startServer(options: ServerOptions): Promise<{
     const move = { rewritten, reorder: { before: commits.map(place), after: after.map(place) } };
     await followRewrite(move);
     return rewrittenBody(selectionAfterMoves(selection, [move]), rewritten);
+  }
+
+  function parseHistoryRewrittenRequest(body: unknown): RewrittenShas | null {
+    const rewritten = (body as { rewritten?: unknown } | null)?.rewritten;
+    if (typeof rewritten !== 'object' || rewritten === null) return null;
+    const pairs = Object.entries(rewritten);
+    const isFullSha = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+    return pairs.length > 0 && pairs.every((pair) => pair.every(isFullSha))
+      ? Object.fromEntries(pairs as Array<[string, string]>)
+      : null;
+  }
+
+  // An agent rewrote the history itself: it says what became of each commit, and the review follows.
+  async function applyAgentRewrite(
+    selection: DiffSelection,
+    { commits }: ReviewScope,
+    rewritten: RewrittenShas,
+  ): Promise<{ status: number; body: RewordResponse }> {
+    const newShas = Object.values(rewritten);
+    const reachable = await Promise.all(
+      newShas.map((sha) => runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD'])),
+    );
+    if (reachable.some(({ code }) => code !== 0)) {
+      return refuseRewrite('stale-view', 'A new SHA is not in the history of HEAD.');
+    }
+    const lineRun = await runGit(repositoryPath, [
+      'rev-list',
+      '--first-parent',
+      '--reverse',
+      `${movedCommitish(selection.baseCommitish, rewritten)}..HEAD`,
+    ]);
+    const line = lineRun.stdout.toString('utf8').trim().split('\n');
+    const placeOf = ({ sha }: ReviewCommit) => line.indexOf(rewritten[sha] ?? sha);
+    const lost = commits.find((commit) => placeOf(commit) === -1);
+    if (lost) {
+      return refuseRewrite('stale-view', `Nothing on the line of HEAD stands for ${lost.sha}.`);
+    }
+    const order = [...commits].sort((a, b) => placeOf(a) - placeOf(b)).map(({ sha }) => sha);
+    return followOrder(selection, commits, order, rewritten);
   }
 
   function historyRoute(
@@ -2324,6 +2385,13 @@ export async function startServer(options: ServerOptions): Promise<{
     const review = findReviewOf(selection);
     if (!request || !review) return null;
     return directEditQueue.then(() => applyReorder(selection, review, request));
+  });
+
+  historyRoute('/api/history-rewritten', 'Following a rewrite', (selection, req) => {
+    const rewritten = parseHistoryRewrittenRequest(req.body);
+    const review = findReviewOf(selection);
+    if (!rewritten || !review) return null;
+    return directEditQueue.then(() => applyAgentRewrite(selection, review, rewritten));
   });
 
   async function fixupsByThreadOrNone(
