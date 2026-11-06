@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { existsSync } from 'fs';
 import { createRequire } from 'module';
 import { basename, extname } from 'path';
@@ -31,6 +32,7 @@ export const GRAMMAR_FILES = [...new Set(Object.values(GRAMMAR_BY_EXTENSION))];
 // Larger files are left unclassified; each changed run costs one parse of the whole file.
 const MAX_CLASSIFIED_FILE_LENGTH = 512 * 1024;
 export const MAX_CLASSIFIED_RUNS_PER_FILE = 50;
+const MAX_REMEMBERED_FILES = 2_000;
 
 // Comments that tools read. Changing one changes what the build or the checks do, so it counts as code.
 const DIRECTIVE_COMMENT =
@@ -116,7 +118,10 @@ function signaturesOf(tree: Tree, source: string): Signatures {
   }
 }
 
-function parseSignatures(parser: Parser, source: string): Signatures | null {
+const letRequestsThrough = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function parseSignatures(parser: Parser, source: string): Promise<Signatures | null> {
+  await letRequestsThrough();
   const tree = parser.parse(source);
   if (!tree) return null;
   try {
@@ -170,45 +175,66 @@ function changedRunsOf(chunks: DiffChunk[], oldLines: string[], newLines: string
   return runs;
 }
 
-// Per chunk, whether its changed lines alter only comments, only whitespace, or the code. Null when
-// the file is not in a supported language. Anything the parser cannot settle is 'unknown'.
-export async function classifyChunks(
-  path: string,
+const remembered = new Map<string, ChunkChangeKind[]>();
+
+function contentKey(spec: string, oldText: string, newText: string, chunks: DiffChunk[]): string {
+  const shape = chunks.map(({ oldStart, oldLines, newStart, newLines, lines }) => [
+    oldStart,
+    oldLines,
+    newStart,
+    newLines,
+    lines.map(({ type, content }) => [type, content]),
+  ]);
+  return createHash('sha256')
+    .update(spec)
+    .update('\u0000')
+    .update(oldText)
+    .update('\u0000')
+    .update(newText)
+    .update('\u0000')
+    .update(JSON.stringify(shape))
+    .digest('hex');
+}
+
+function remember(key: string, kinds: ChunkChangeKind[]) {
+  remembered.delete(key);
+  remembered.set(key, kinds);
+  if (remembered.size > MAX_REMEMBERED_FILES) {
+    const oldest = remembered.keys().next().value;
+    if (oldest !== undefined) remembered.delete(oldest);
+  }
+}
+
+async function judgeChunks(
+  parser: Parser,
+  language: Language,
   oldText: string,
   newText: string,
   chunks: DiffChunk[],
-): Promise<ChunkChangeKind[] | null> {
-  const spec = GRAMMAR_BY_EXTENSION[extname(path).toLowerCase()];
-  if (!spec) return null;
+): Promise<ChunkChangeKind[]> {
   const unknown = (): ChunkChangeKind[] => chunks.map(() => 'unknown');
-  if (oldText.length > MAX_CLASSIFIED_FILE_LENGTH || newText.length > MAX_CLASSIFIED_FILE_LENGTH) {
-    return unknown();
-  }
-
-  const [parser, language] = await Promise.all([getParser(), loadLanguage(spec)]);
-  if (!language) return unknown();
-
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
   const runs = changedRunsOf(chunks, oldLines, newLines);
   if (!runs || runs.length > MAX_CLASSIFIED_RUNS_PER_FILE) return unknown();
 
   parser.setLanguage(language);
-  const before = parseSignatures(parser, oldText);
-  const after = parseSignatures(parser, newText);
+  const before = await parseSignatures(parser, oldText);
+  const after = await parseSignatures(parser, newText);
   if (!before || !after) return unknown();
 
-  const runKinds = runs.map((run): ChunkChangeKind => {
+  const runKinds: ChunkChangeKind[] = [];
+  for (const run of runs) {
     const applied = [
       ...oldLines.slice(0, run.oldStart),
       ...newLines.slice(run.newStart, run.newStart + run.newCount),
       ...oldLines.slice(run.oldStart + run.oldCount),
     ].join('\n');
-    const signatures = parseSignatures(parser, applied);
-    if (!signatures) return 'unknown';
-    if (signatures.withComments === before.withComments) return 'whitespace';
-    return signatures.code === before.code ? 'comment' : 'code';
-  });
+    const signatures = await parseSignatures(parser, applied);
+    if (!signatures) runKinds.push('unknown');
+    else if (signatures.withComments === before.withComments) runKinds.push('whitespace');
+    else runKinds.push(signatures.code === before.code ? 'comment' : 'code');
+  }
 
   // Each run was judged alone against the old file. Taking all of them back out of the new file must
   // leave its code unchanged too, or one of them changes code together with another run.
@@ -222,7 +248,7 @@ export async function classifyChunks(
         ...oldLines.slice(run.oldStart, run.oldStart + run.oldCount),
       );
     }
-    const signatures = parseSignatures(parser, reverted.join('\n'));
+    const signatures = await parseSignatures(parser, reverted.join('\n'));
     if (!signatures || signatures.code !== after.code) {
       for (const [index, kind] of runKinds.entries()) {
         if (leavesCodeAlone(kind)) runKinds[index] = 'unknown';
@@ -235,4 +261,55 @@ export async function classifyChunks(
       combineChangeKinds(runKinds.filter((_, index) => runs[index]?.chunkIndex === chunkIndex)) ??
       'unknown',
   );
+}
+
+// Per chunk, whether its changed lines alter only comments, only whitespace, or the code. Null when
+// the file is not in a supported language. Anything the parser cannot settle is 'unknown'.
+async function classifyInTurn(
+  path: string,
+  oldText: string,
+  newText: string,
+  chunks: DiffChunk[],
+): Promise<ChunkChangeKind[] | null> {
+  const spec = GRAMMAR_BY_EXTENSION[extname(path).toLowerCase()];
+  if (!spec) return null;
+  const unknown = (): ChunkChangeKind[] => chunks.map(() => 'unknown');
+  if (oldText.length > MAX_CLASSIFIED_FILE_LENGTH || newText.length > MAX_CLASSIFIED_FILE_LENGTH) {
+    return unknown();
+  }
+
+  const key = contentKey(spec, oldText, newText, chunks);
+  const known = remembered.get(key);
+  if (known) {
+    remember(key, known);
+    return known;
+  }
+
+  const [parser, language] = await Promise.all([getParser(), loadLanguage(spec)]);
+  if (!language) return unknown();
+
+  const kinds = await judgeChunks(parser, language, oldText, newText, chunks);
+  remember(key, kinds);
+  return kinds;
+}
+
+let lastTurn: Promise<unknown> = Promise.resolve();
+
+// The parser is shared and classifying lets other requests through between parses, so each caller
+// has it alone: files are classified one after another.
+export function withClassifier<T>(
+  job: (classify: typeof classifyInTurn) => Promise<T>,
+): Promise<T> {
+  const turn = lastTurn.then(() => job(classifyInTurn));
+  lastTurn = turn.catch(() => undefined);
+  return turn;
+}
+
+export function classifyChunks(
+  path: string,
+  oldText: string,
+  newText: string,
+  chunks: DiffChunk[],
+): Promise<ChunkChangeKind[] | null> {
+  return withClassifier((classify) => classify(path, oldText, newText, chunks));
 }

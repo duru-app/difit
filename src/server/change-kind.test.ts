@@ -1,5 +1,6 @@
 import { structuredPatch } from 'diff';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { Parser } from 'web-tree-sitter';
 
 import type { DiffChunk } from '../types/diff.js';
 
@@ -33,6 +34,66 @@ async function kindOf(path: string, oldText: string, newText: string) {
 }
 
 describe('classifyChunks', () => {
+  describe('while other requests wait', () => {
+    it('lets the server answer between the parses of one file', async () => {
+      let turns = 0;
+      let waiting = true;
+      const countTurns = () => {
+        turns += 1;
+        if (waiting) setImmediate(countTurns);
+      };
+      setImmediate(countTurns);
+      const turnsAtEachParse: number[] = [];
+      const parse = Parser.prototype.parse;
+      const spy = vi.spyOn(Parser.prototype, 'parse').mockImplementation(function (
+        this: Parser,
+        ...args: Parameters<Parser['parse']>
+      ) {
+        turnsAtEachParse.push(turns);
+        return parse.apply(this, args);
+      });
+
+      await kindsOf(
+        'turns.ts',
+        'a(); // old\nb(); // old\nc();\n',
+        'a(); // new\nb(); // old\nd();\n',
+        0,
+      );
+      waiting = false;
+      spy.mockRestore();
+
+      expect(turnsAtEachParse.length).toBeGreaterThan(3);
+      for (const [index, atParse] of turnsAtEachParse.entries()) {
+        if (index > 0) expect(atParse).toBeGreaterThan(turnsAtEachParse[index - 1]!);
+      }
+    });
+
+    it('keeps files in different languages apart when they arrive together', async () => {
+      const results = await Promise.all([
+        kindOf('apart.ts', 'f(); // old\n', 'f(); // new\n'),
+        kindOf('apart.py', 'f()  # old\n', 'f()  # new\n'),
+        kindOf('apart.go', 'package a // old\n', 'package b // old\n'),
+        kindOf('apart.js', 'g(); // old\n', 'h(); // old\n'),
+      ]);
+
+      expect(results).toEqual(['comment', 'comment', 'code', 'code']);
+    });
+
+    it('does not parse content it has already judged', async () => {
+      const oldText = 'first(); // old\n';
+      const newText = 'first(); // new\n';
+      expect(await kindOf('remembered.ts', oldText, newText)).toBe('comment');
+      const parse = vi.spyOn(Parser.prototype, 'parse');
+
+      expect(await kindOf('remembered-again.ts', oldText, newText)).toBe('comment');
+      expect(parse).not.toHaveBeenCalled();
+
+      expect(await kindOf('remembered.ts', oldText, 'second(); // new\n')).toBe('code');
+      expect(parse).toHaveBeenCalled();
+      parse.mockRestore();
+    });
+  });
+
   describe('TypeScript', () => {
     it('sees a changed line comment as a comment change', async () => {
       expect(await kindOf('a.ts', 'const a = 1; // old\n', 'const a = 1; // new\n')).toBe(

@@ -29,7 +29,7 @@ import {
   normalizeBaseMode,
 } from '../utils/diffSelection.js';
 
-import { classifyChunks, isClassifiablePath } from './change-kind.js';
+import { isClassifiablePath, withClassifier } from './change-kind.js';
 import { autosquashGroups, type TodoCommit } from './autosquash.js';
 import { runGit } from './run-git.js';
 import { isGeneratedFile } from './generated-file-check.js';
@@ -1267,33 +1267,35 @@ export class GitDiffParser {
       return groups.map(({ files }) => ({ files, settled: false }));
     }
 
-    const deadline = Date.now() + GitDiffParser.CHANGE_KIND_BUDGET_MS;
-    let judged = 0;
-    for (const [index, { group, file }] of candidates.entries()) {
-      const oldText = texts[index * 2];
-      const newText = texts[index * 2 + 1];
-      if (oldText == null || newText == null) continue;
-      if (judged > 0 && Date.now() > deadline) {
-        if (!started[group]) settled[group] = false;
-        continue;
-      }
-      started[group] = true;
-      judged += 1;
-      try {
-        const kinds = await classifyChunks(file.path, oldText, newText, file.chunks);
-        if (kinds) {
-          classified.set(file, {
-            ...file,
-            chunks: file.chunks.map((chunk, chunkIndex) => ({
-              ...chunk,
-              changeKind: kinds[chunkIndex],
-            })),
-          });
+    await withClassifier(async (classify) => {
+      const deadline = Date.now() + GitDiffParser.CHANGE_KIND_BUDGET_MS;
+      let judged = 0;
+      for (const [index, { group, file }] of candidates.entries()) {
+        const oldText = texts[index * 2];
+        const newText = texts[index * 2 + 1];
+        if (oldText == null || newText == null) continue;
+        if (judged > 0 && Date.now() > deadline) {
+          if (!started[group]) settled[group] = false;
+          continue;
         }
-      } catch (error) {
-        console.warn(`Could not classify changes in ${file.path}:`, error);
+        started[group] = true;
+        judged += 1;
+        try {
+          const kinds = await classify(file.path, oldText, newText, file.chunks);
+          if (kinds) {
+            classified.set(file, {
+              ...file,
+              chunks: file.chunks.map((chunk, chunkIndex) => ({
+                ...chunk,
+                changeKind: kinds[chunkIndex],
+              })),
+            });
+          }
+        } catch (error) {
+          console.warn(`Could not classify changes in ${file.path}:`, error);
+        }
       }
-    }
+    });
     return results();
   }
 
