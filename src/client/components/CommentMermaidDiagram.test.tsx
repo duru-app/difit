@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { HotkeysProvider } from 'react-hotkeys-hook';
+import { HotkeysProvider, useHotkeysContext } from 'react-hotkeys-hook';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import '@testing-library/jest-dom';
@@ -46,12 +46,58 @@ describe('CommentMermaidDiagram', () => {
     });
   });
 
-  it('draws inline without an enlarge button on desktop', async () => {
+  it('opens a large view on desktop that fits the window instead of the drawn size', async () => {
     setPhone(false);
-    const { container } = renderDiagram();
+    renderDiagram();
 
-    await waitFor(() => expect(container.querySelector('.mermaid-diagram svg')).not.toBeNull());
-    expect(screen.queryByRole('button', { name: '도식 크게 보기' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '도식 크게 보기' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '도식' });
+    await waitFor(() => expect(dialog.querySelector('.mermaid-diagram svg')).not.toBeNull());
+
+    const large = dialog.querySelector<SVGSVGElement>('.mermaid-diagram svg')!;
+    expect(large).toHaveAttribute('width', '100%');
+    expect(large.parentElement?.parentElement).toHaveClass('w-full');
+  });
+
+  it('keeps a click in the large view away from the card around the diagram', async () => {
+    setPhone(false);
+    const onCardClick = vi.fn();
+    render(
+      <HotkeysProvider>
+        <div onClick={onCardClick}>
+          <CommentMermaidDiagram chart={'flowchart TD\n  A --> B'} />
+        </div>
+      </HotkeysProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '도식 크게 보기' }));
+    const dialog = await screen.findByRole('dialog', { name: '도식' });
+    fireEvent.click(dialog);
+
+    expect(onCardClick).not.toHaveBeenCalled();
+  });
+
+  it('turns the navigation keys off while the large view is open', async () => {
+    setPhone(false);
+    let scopes: string[] = [];
+    const Scopes = () => {
+      scopes = useHotkeysContext().activeScopes;
+      return null;
+    };
+    render(
+      <HotkeysProvider initiallyActiveScopes={['navigation']}>
+        <Scopes />
+        <CommentMermaidDiagram chart={'flowchart TD\n  A --> B'} />
+      </HotkeysProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '도식 크게 보기' }));
+    await screen.findByRole('dialog', { name: '도식' });
+    await waitFor(() => expect(scopes).not.toContain('navigation'));
+
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+    await waitFor(() => expect(scopes).toContain('navigation'));
   });
 
   it('opens a large view on a phone and closes it with the X', async () => {
