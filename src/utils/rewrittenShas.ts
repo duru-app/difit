@@ -2,11 +2,12 @@ import type {
   DiffCommentMessage,
   DiffCommentThread,
   DiffSelection,
+  HistoryMove,
   ReviewDecision,
   RewrittenShas,
 } from '../types/diff.js';
 
-import { createDiffSelection } from './diffSelection.js';
+import { commitsBetween, createDiffSelection, isSameCommit } from './diffSelection.js';
 
 const NAMED_COMMIT = /^([0-9a-f]{7,40})(\^?)$/i;
 
@@ -34,17 +35,57 @@ export function movedSelection(selection: DiffSelection, rewritten: RewrittenSha
   );
 }
 
+// After a reorder a view shows the same commits, plus any that now stand between them.
+function selectionAfterMove(selection: DiffSelection, move: HistoryMove): DiffSelection {
+  const moved = movedSelection(selection, move.rewritten);
+  if (!move.reorder) return moved;
+  const { before, after } = move.reorder;
+  const places = commitsBetween(selection, before).map(({ sha }) =>
+    after.findIndex((commit) => commit.sha === (move.rewritten[sha] ?? sha)),
+  );
+  const first = after[Math.min(...places)];
+  const last = after[Math.max(...places)];
+  const { baseCommitish, targetCommitish, baseMode } = selection;
+  if (first && last && !places.includes(-1)) {
+    return createDiffSelection(
+      first.parentSha.slice(0, baseCommitish.length),
+      last.sha.slice(0, targetCommitish.length),
+      baseMode,
+    );
+  }
+  const oldTop = before.at(-1);
+  const newTop = after.at(-1);
+  return oldTop && newTop && isSameCommit(targetCommitish, oldTop.sha)
+    ? createDiffSelection(
+        moved.baseCommitish,
+        newTop.sha.slice(0, targetCommitish.length),
+        baseMode,
+      )
+    : moved;
+}
+
+export function selectionAfterMoves(
+  selection: DiffSelection,
+  moves: readonly HistoryMove[],
+): DiffSelection {
+  return moves.reduce(selectionAfterMove, selection);
+}
+
 interface PlacedOnCommits {
   view?: DiffSelection;
   fixupTarget?: string;
   codeSnapshot?: { commit?: string };
 }
 
-export function movedPlace<T extends PlacedOnCommits>(item: T, rewritten: RewrittenShas): T {
+export function movedPlace<T extends PlacedOnCommits>(
+  item: T,
+  rewritten: RewrittenShas,
+  moves: readonly HistoryMove[] = [{ rewritten }],
+): T {
   const { view, fixupTarget, codeSnapshot } = item;
   return {
     ...item,
-    ...(view ? { view: movedSelection(view, rewritten) } : {}),
+    ...(view ? { view: selectionAfterMoves(view, moves) } : {}),
     ...(fixupTarget === undefined ? {} : { fixupTarget: movedCommitish(fixupTarget, rewritten) }),
     ...(codeSnapshot?.commit === undefined
       ? {}
@@ -74,9 +115,10 @@ function movedMessage(message: DiffCommentMessage, rewritten: RewrittenShas): Di
 export function movedThread(
   thread: DiffCommentThread,
   rewritten: RewrittenShas,
+  moves?: readonly HistoryMove[],
 ): DiffCommentThread {
   return {
-    ...movedPlace(thread, rewritten),
+    ...movedPlace(thread, rewritten, moves),
     messages: thread.messages.map((message) => movedMessage(message, rewritten)),
   };
 }

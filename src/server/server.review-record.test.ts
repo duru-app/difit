@@ -519,3 +519,24 @@ it('brings the threads back on the new SHAs after a reword rewrote the history',
     createDiffSelection(short(base), short(newHead)),
   ]);
 });
+
+it('brings the threads back on the new SHAs after a reorder rewrote the history', async () => {
+  const { repo, base, head } = createRepo();
+  const top = commit(repo, 'more', { 'c.txt': lines('gamma') });
+  const first = await open(repo, createDiffSelection(base, top));
+  await first.post('/api/comments', {
+    threads: [thread('t1', 'a.txt', 2, 'TWO', short(head))],
+    decisions: [resolved('t1')],
+  });
+  const { rewritten } = (await first.post(`/api/reorder?base=${base}&target=${top}`, {
+    order: [top, head],
+    acknowledged: ['default-branch'],
+  })) as { rewritten: Record<string, string> };
+  const newHead = rewritten[head]!;
+  await first.stop();
+
+  const second = await open(repo, createDiffSelection(base, newHead));
+
+  const [t1] = await second.threads();
+  expect(t1).toMatchObject({ id: 't1', codeSnapshot: { commit: short(newHead) } });
+});
