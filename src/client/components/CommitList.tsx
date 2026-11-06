@@ -63,6 +63,8 @@ const CURRENT_COMMIT_CLASS = `${CURRENT_CLASS} shadow-[inset_2px_0_0_var(--color
 const PREVIEW_CLASS = 'outline-1 outline-dashed -outline-offset-1 outline-github-text-secondary';
 const ROW_ACTIONS_HIDDEN_CLASS =
   'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:pointer-events-auto';
+const ROW_ACTIONS_WITHOUT_HOVER_CLASS =
+  '[@media(hover:none)]:static [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:bg-transparent';
 const MERGED_CLASS = 'flex items-center gap-2 px-4 text-sm text-github-text-muted';
 const CURRENT_MERGED_CLASS =
   'bg-github-bg-tertiary text-github-text-secondary shadow-[inset_2px_0_0_var(--color-github-accent)]';
@@ -487,7 +489,7 @@ export function CommitList({
                 {openCount > 0 && openCount}
               </button>
             );
-            const hoverClass = `bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS}`;
+            const hoverClass = `bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS} ${ROW_ACTIONS_WITHOUT_HOVER_CLASS}`;
             // With an open count the comment button stays in line, so the subject stops before
             // it and the other buttons open over the subject to its left.
             const rowActions = inDrawer ? (
@@ -525,7 +527,7 @@ export function CommitList({
                         {openCountOf(entry.commit.sha)}
                         {copyButtonOf(
                           entry.commit.sha,
-                          `ml-auto -mr-4 ${graphBleed} focus:opacity-100 ${inDrawer || copied?.sha === entry.commit.sha ? '' : 'opacity-0 group-hover:opacity-100'}`,
+                          `ml-auto -mr-4 ${graphBleed} focus:opacity-100 ${inDrawer || copied?.sha === entry.commit.sha ? '' : 'opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'}`,
                         )}
                       </>
                     ) : (
