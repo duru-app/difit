@@ -134,6 +134,7 @@ export interface DiffResponse {
   // The review this diff is a view of; comments and decisions belong to it.
   review?: ReviewScope;
   rewritten?: RewrittenShas;
+  historyMoves?: HistoryMove[];
 }
 
 export interface ChangeKindsResponse {
@@ -625,7 +626,9 @@ export type RewriteWarning =
 // A local branch holding a replaced commit that the rewrite leaves on the old commits.
 export interface LeftBranch {
   name: string;
-  why: 'default' | 'worktree' | 'operation';
+  // 'order-changed': it has no commits of its own, and after the new order no commit holds the
+  // files of the one it points at.
+  why: 'default' | 'worktree' | 'operation' | 'order-changed';
 }
 
 export type RewordRejection =
@@ -657,6 +660,22 @@ export interface RewriteBlockingThread {
 
 // Keyed by the old full SHA; only commits the rewrite actually replaced.
 export type RewrittenShas = Readonly<Record<string, string>>;
+
+type ListedCommit = Pick<ReviewCommit, 'sha' | 'parentSha'>;
+
+// A selection made on the history before this rewrite becomes one on the history after it. Applied in
+// the order they happened, each to what the last one left.
+export interface HistoryMove {
+  rewritten: RewrittenShas;
+  // The review's commits around a change of their order, where a commit's parent is a new one.
+  reorder?: { before: ListedCommit[]; after: ListedCommit[] };
+}
+
+export interface ReorderRequest {
+  // Every commit the review lists, oldest first, in the order they should stand.
+  order: string[];
+  acknowledged?: RewriteWarning[];
+}
 
 export type RewordResponse =
   | {
