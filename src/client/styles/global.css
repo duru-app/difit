@@ -73,6 +73,11 @@ button {
   max-width: 100%;
 }
 
+.mermaidTooltip {
+  top: 0;
+  left: 0;
+}
+
 /* Sparkle animation */
 @keyframes sparkle-rise {
   0% {
