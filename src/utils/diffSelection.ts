@@ -100,7 +100,10 @@ export function isSameView(a: DiffSelection, b: DiffSelection): boolean {
   );
 }
 
-function commitsBetween(view: DiffSelection, commits: readonly ReviewCommit[]): ReviewCommit[] {
+export function commitsBetween<T extends Pick<ReviewCommit, 'sha' | 'parentSha'>>(
+  view: DiffSelection,
+  commits: readonly T[],
+): T[] {
   if (normalizeBaseMode(view.baseMode) === 'merge-base') return [];
   const end = commits.findIndex((commit) => isSameCommit(commit.sha, view.targetCommitish));
   const start = commits

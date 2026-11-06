@@ -15,6 +15,8 @@ export interface HistoryRewrite {
   base: string;
   // Whole new messages by full SHA, cleaned up as they should stand.
   messages: ReadonlyMap<string, string>;
+  // The commits the review lists, oldest first, in the order they should stand.
+  order?: readonly string[];
 }
 
 export type HistoryRewriteResult =
@@ -53,20 +55,101 @@ export async function readRewriteState(
 
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
+// The whole first-parent line in its new order, or null when `order` names a commit off that line.
+// A commit the review does not list goes with the listed commit before it, behind its squash target
+// if that moved past it. What stands above the last listed commit stays above the review.
+function lineInOrder(
+  line: readonly string[],
+  order: readonly string[],
+  listed: TodoCommit[],
+): string[] | null {
+  if (order.some((commit) => !line.includes(commit))) return null;
+  const isListed = new Set(order);
+  const places = line.flatMap((commit, at) => (isListed.has(commit) ? [at] : []));
+  const firstListed = places[0] ?? 0;
+  const lastListed = places.at(-1) ?? -1;
+  const following = new Map<string, string[]>();
+  let current: string[] = [];
+  for (const commit of line.slice(firstListed, lastListed + 1)) {
+    if (isListed.has(commit)) following.set(commit, (current = []));
+    else current.push(commit);
+  }
+  const placed = order.flatMap((commit) => [commit, ...(following.get(commit) ?? [])]);
+
+  const targetOf = new Map(
+    listed.flatMap((commit, index) => {
+      const target = squashTarget(listed, index);
+      return target ? [[commit.sha, target.sha] as const] : [];
+    }),
+  );
+  const before = (commit: string, other: string) => placed.indexOf(commit) < placed.indexOf(other);
+  const late = placed.filter((commit) => {
+    const target = targetOf.get(commit);
+    return target !== undefined && placed.includes(target) && before(commit, target);
+  });
+  const settled = placed.filter((commit) => !late.includes(commit));
+  for (const commit of [...late].reverse()) {
+    settled.splice(settled.indexOf(targetOf.get(commit) ?? '') + 1, 0, commit);
+  }
+  return [...line.slice(0, firstListed), ...settled, ...line.slice(lastListed + 1)];
+}
+
+// A commit a side branch grows from carries the label git put after it, and the lines of that branch
+// stay behind the label; such commits keep their order among themselves, or this returns null.
+function todoInOrder(
+  lines: readonly string[],
+  shaOfLine: ReadonlyMap<string, string>,
+  order: readonly string[],
+): string[] | null {
+  const moving = new Set(order);
+  const slots = lines.flatMap((line, at) => (moving.has(shaOfLine.get(line) ?? '') ? [at] : []));
+  const slotOf = new Map(slots.map((at) => [shaOfLine.get(lines[at] ?? ''), at]));
+  const anchors = slots.filter((at) => lines[at + 1]?.startsWith('label '));
+
+  const placedAt = new Map<number, string[]>();
+  let group: string[] = [];
+  let anchorsSeen = 0;
+  for (const commit of order) {
+    const at = slotOf.get(commit);
+    if (at === undefined) return null;
+    group.push(lines[at] ?? '');
+    if (anchors.includes(at)) {
+      if (anchors[anchorsSeen] !== at) return null;
+      placedAt.set(at, group);
+      group = [];
+      anchorsSeen += 1;
+    }
+  }
+  if (group.length > 0) {
+    const rest = slots.find((at) => at > (anchors.at(-1) ?? -1));
+    if (rest === undefined) return null;
+    placedAt.set(rest, group);
+  }
+  return lines.flatMap((line, at) => (slots.includes(at) ? (placedAt.get(at) ?? []) : [line]));
+}
+
+const TODO_COMMIT = /^(?:pick|merge -C) ([0-9a-f]+)/;
+
 // git's todo with a stop after each commit, and the commits in the order the stops come.
 async function plannedTodo(
   dir: string,
   generated: string,
-): Promise<{ todo: string; commits: string[] }> {
-  const lines = generated.split('\n');
-  const abbreviated = lines.flatMap((line) => {
-    const [, sha] = /^(?:pick|merge -C) ([0-9a-f]+)/.exec(line) ?? [];
-    return sha === undefined ? [] : [sha];
+  order: readonly string[] | undefined,
+): Promise<{ todo: string; commits: string[] } | null> {
+  const generatedLines = generated.split('\n');
+  const named = generatedLines.flatMap((line) => {
+    const [, sha] = TODO_COMMIT.exec(line) ?? [];
+    return sha === undefined ? [] : [{ line, sha }];
   });
-  const commits = (await gitText(dir, ['rev-parse', ...abbreviated])).split('\n');
-  const todo = lines.flatMap((line) =>
-    /^(?:pick|merge -C) /.test(line) ? [line, 'break'] : [line],
-  );
+  const full = (await gitText(dir, ['rev-parse', ...named.map(({ sha }) => sha)])).split('\n');
+  const shaOfLine = new Map(named.map(({ line }, index) => [line, full[index] ?? '']));
+  const lines = order ? todoInOrder(generatedLines, shaOfLine, order) : generatedLines;
+  if (lines === null) return null;
+  const todo = lines.flatMap((line) => (TODO_COMMIT.test(line) ? [line, 'break'] : [line]));
+  const commits = lines.flatMap((line) => {
+    const commit = shaOfLine.get(line);
+    return commit === undefined ? [] : [commit];
+  });
   return { todo: todo.join('\n'), commits };
 }
 
@@ -145,10 +228,6 @@ export async function rewriteHistory(
 ): Promise<HistoryRewriteResult> {
   const head = await gitText(repoPath, ['rev-parse', '--verify', 'HEAD^{commit}']);
   const range = `${request.base}..${head}`;
-  const oldest = (await gitText(repoPath, ['rev-list', '--topo-order', '--reverse', range]))
-    .split('\n')
-    .find((commit) => request.messages.has(commit));
-  if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
   const listed = (
     await gitText(repoPath, [
       'log',
@@ -166,6 +245,18 @@ export async function rewriteHistory(
       const [sha = '', subject = ''] = line.split('\0');
       return { sha, subject };
     });
+  const line = (await gitText(repoPath, ['rev-list', '--first-parent', '--reverse', range])).split(
+    '\n',
+  );
+  const lineWanted = request.order ? lineInOrder(line, request.order, listed) : null;
+  if (request.order && lineWanted === null) {
+    return { ok: false, reason: 'commit-failed', output: 'A commit left the line of the review.' };
+  }
+  const firstMoved = lineWanted?.findIndex((commit, index) => commit !== line[index]) ?? -1;
+  const oldest = (await gitText(repoPath, ['rev-list', '--topo-order', '--reverse', range]))
+    .split('\n')
+    .find((commit) => request.messages.has(commit) || commit === line[firstMoved]);
+  if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
   const plan = messagePlanner(listed, request.messages);
 
   const dir = await fs.mkdtemp(join(tmpdir(), 'difit-history-rewrite-'));
@@ -188,6 +279,7 @@ export async function rewriteHistory(
       head,
       upstream: `${oldest}^`,
       plan,
+      ...(lineWanted ? { order: lineWanted.slice(firstMoved) } : {}),
     });
   } finally {
     const removed = await runGit(repoPath, ['worktree', 'remove', '--force', worktree]);
@@ -200,6 +292,7 @@ interface Replay {
   head: string;
   upstream: string;
   plan: ReturnType<typeof messagePlanner>;
+  order?: readonly string[];
 }
 
 // The rebase runs in a worktree of its own, so the reviewer's files, index and branch stay put until
@@ -209,7 +302,7 @@ async function rewriteInWorktree(
   worktree: string,
   dir: string,
   config: string[],
-  { head, upstream, plan }: Replay,
+  { head, upstream, plan, order }: Replay,
 ): Promise<HistoryRewriteResult> {
   const generatedPath = join(dir, 'generated-todo');
   const todoPath = join(dir, 'todo');
@@ -226,7 +319,15 @@ async function rewriteInWorktree(
   );
   const generated = await fs.readFile(generatedPath, 'utf8').catch(() => null);
   if (generated === null) return { ok: false, reason: 'commit-failed', output: listing.output };
-  const { todo, commits } = await plannedTodo(worktree, generated);
+  const planned = await plannedTodo(worktree, generated, order);
+  if (planned === null) {
+    return {
+      ok: false,
+      reason: 'conflict',
+      output: 'A commit that a side branch grows from would move past another such commit.',
+    };
+  }
+  const { todo, commits } = planned;
   await fs.writeFile(todoPath, todo);
   const current = await readMessages(repoPath, commits);
 
@@ -244,8 +345,8 @@ async function rewriteInWorktree(
   const rewritten: Record<string, string> = {};
   for (const commit of commits) {
     const message = current.get(commit) ?? '';
-    const planned = plan(commit, message, rewritten);
-    if (planned !== message) {
+    const wanted = plan(commit, message, rewritten);
+    if (wanted !== message) {
       const amended = await runGit(
         worktree,
         [
@@ -259,7 +360,7 @@ async function rewriteInWorktree(
           '--cleanup=verbatim',
           '--file=-',
         ],
-        { input: Buffer.from(`${planned}\n`, 'utf8') },
+        { input: Buffer.from(`${wanted}\n`, 'utf8') },
       );
       if (amended.code !== 0) return { ok: false, reason: 'commit-failed', output: amended.output };
     }

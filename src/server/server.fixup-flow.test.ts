@@ -1136,3 +1136,317 @@ it('approves nothing when a fixup on the card is rejected while the edit is bein
     decisions: [{ kind: 'rejected', fixupSha: rejected }],
   });
 });
+
+async function startReview(repo: string, base: string, target: string, preferredPort: number) {
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, target),
+    repoPath: repo,
+    preferredPort,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const post = (path: string, body: unknown) =>
+    fetch(api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  return { api, post };
+}
+
+it('reorders the commits and moves the review, its comments, fixups and decisions along', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const first = commit(repo, 'first', { 'first.js': 'first\n' });
+  const second = commit(repo, 'second', { 'second.js': 'second\n' });
+  const third = commit(repo, 'third', { 'third.js': 'third\n' });
+  writeFileSync(join(repo, 'first.js'), 'better first\n');
+  git(repo, ['commit', '-q', '-a', '-m', `fixup! ${first}\n\nReview-Thread: on-first`]);
+  const fixup = git(repo, ['rev-parse', 'HEAD']);
+  writeFileSync(join(repo, 'a.js'), 'work in progress\n');
+
+  const { api, post } = await startReview(repo, base, third, 9281);
+  const query = `?base=${base}&target=${third}`;
+  const at = '2026-11-07T00:00:00Z';
+  const threadOn = (id: string, view: object, fixupTarget: string, filePath: string) => ({
+    id,
+    filePath,
+    position: { side: 'new', line: 1 },
+    createdAt: at,
+    updatedAt: at,
+    view,
+    fixupTarget,
+    codeSnapshot: { content: filePath.replace('.js', ''), commit: fixupTarget },
+    messages: [
+      { id: `${id}-m`, body: 'x', author: 'User', createdAt: at, updatedAt: at },
+      { id: `${id}-a`, body: 'done', author: 'Agent', createdAt: at, updatedAt: at },
+    ],
+  });
+  await post(`/api/comments${query}`, {
+    threads: [
+      threadOn('on-first', { baseCommitish: base, targetCommitish: first }, first, 'first.js'),
+      threadOn('on-third', { baseCommitish: second, targetCommitish: third }, third, 'third.js'),
+      threadOn('on-run', { baseCommitish: first, targetCommitish: third }, third, 'third.js'),
+    ],
+  });
+  const before = (await (await fetch(api(`/api/fixups${query}`))).json()) as {
+    fixups: Array<{ sha: string; patchId: string; threadIds: string[] }>;
+  };
+  await post(
+    `/api/decisions${query}`,
+    before.fixups.map(({ sha, patchId, threadIds }) => ({
+      threadId: threadIds[0],
+      kind: 'approved',
+      fixupSha: sha,
+      patchId,
+      at,
+    })),
+  );
+
+  const response = await post(`/api/reorder${query}`, { order: [third, first, second] });
+  const { rewritten } = (await response.json()) as { rewritten: Record<string, string> };
+
+  expect(response.status).toBe(200);
+  const [newThird, newFirst, newSecond, newFixup] = [third, first, second, fixup].map(
+    (sha) => rewritten[sha]!,
+  );
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'third',
+    'first',
+    'second',
+    `fixup! ${newFirst}`,
+  ]);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newFixup);
+  expect(git(repo, ['status', '--porcelain'])).toBe('M a.js');
+
+  const moved = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(moved.review!.requested).toEqual({ baseCommitish: base, targetCommitish: newSecond });
+  expect(moved.review!.commits.map(({ sha }) => sha)).toEqual([newThird, newFirst, newSecond]);
+
+  const movedQuery = `?base=${base}&target=${newSecond}`;
+  const { fixups } = (await (await fetch(api(`/api/fixups${movedQuery}`))).json()) as {
+    fixups: Array<{ sha: string; foldTargetSha?: string }>;
+  };
+  expect(fixups.map(({ sha, foldTargetSha }) => [sha, foldTargetSha])).toEqual([
+    [newFixup, newFirst],
+  ]);
+
+  const stored = (await (await fetch(api('/api/comments-json'))).json()) as {
+    threads: Array<{
+      id: string;
+      view?: unknown;
+      fixupTarget?: string;
+      codeSnapshot?: { commit?: string };
+    }>;
+    decisions: Array<{ threadId: string; fixupSha: string; kind: string }>;
+  };
+  const thread = (id: string) => stored.threads.find((each) => each.id === id);
+  expect(thread('on-first')).toMatchObject({
+    view: { baseCommitish: newThird, targetCommitish: newFirst },
+    fixupTarget: newFirst,
+    codeSnapshot: { commit: newFirst },
+  });
+  expect(thread('on-third')).toMatchObject({
+    view: { baseCommitish: base, targetCommitish: newThird },
+    fixupTarget: newThird,
+  });
+  // The run held second and third, which now have first between them.
+  expect(thread('on-run')?.view).toEqual({ baseCommitish: base, targetCommitish: newSecond });
+  expect(stored.decisions).toContainEqual(
+    expect.objectContaining({ threadId: 'on-first', fixupSha: newFixup, kind: 'approved' }),
+  );
+
+  const short = git(repo, ['rev-parse', '--short', newFirst]);
+  expect(await (await fetch(api('/api/comments-output'))).text()).toContain(
+    `first.js:L1 [승인됨]\n고쳐 넣을 커밋: ${short} first\n`,
+  );
+
+  // A tab still holding the old SHAs lands on the same commit.
+  const staleView = (await (
+    await fetch(api(`/api/diff?base=${second}&target=${third}`))
+  ).json()) as DiffResponse;
+  expect(staleView.files.map(({ path }) => path)).toEqual(['third.js']);
+  expect(staleView.review!.requested.targetCommitish).toBe(newSecond);
+  const oldReview = (await (
+    await fetch(api(`/api/diff?base=${base}&target=${third}`))
+  ).json()) as DiffResponse;
+  expect(oldReview.files.map(({ path }) => path).sort()).toEqual([
+    'first.js',
+    'second.js',
+    'third.js',
+  ]);
+
+  await post(`/api/comment-imports${movedQuery}`, [
+    {
+      type: 'thread',
+      id: 'after',
+      author: 'User',
+      filePath: 'third.js',
+      position: { side: 'new', line: 1 },
+      view: { baseCommitish: second, targetCommitish: third },
+      fixupTarget: third,
+      body: 'Said with the old SHAs.',
+    },
+  ]);
+  const added = (await (await fetch(api('/api/comments-json'))).json()) as typeof stored;
+  expect(added.threads.find(({ id }) => id === 'after')).toMatchObject({
+    view: { baseCommitish: base, targetCommitish: newThird },
+    fixupTarget: newThird,
+  });
+
+  git(repo, ['checkout', '-q', '--', 'a.js']);
+  git(repo, ['-c', 'sequence.editor=true', 'rebase', '-q', '-i', '--autosquash', base]);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'third',
+    'first',
+    'second',
+  ]);
+  expect(git(repo, ['show', 'HEAD~1:first.js'])).toBe('better first');
+});
+
+it('lets the agent hold the old review through a reorder and still see its turn', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const first = commit(repo, 'first', { 'first.js': '1\n' });
+  const second = commit(repo, 'second', { 'second.js': '1\n' });
+
+  const { api, post } = await startReview(repo, base, second, 9282);
+  const wait = new AbortController();
+  const waiting = fetch(api(`/api/comments-wait?base=${base}&target=${second}`), {
+    signal: wait.signal,
+  });
+  cleanups.push(() => wait.abort());
+  const response = await post(`/api/reorder?base=${base}&target=${second}`, {
+    order: [second, first],
+  });
+  expect(response.status).toBe(200);
+  const { rewritten } = (await response.json()) as { rewritten: Record<string, string> };
+  const newFirst = rewritten[first]!;
+
+  await post(`/api/comment-imports`, [
+    {
+      type: 'thread',
+      id: 'turn',
+      author: 'User',
+      filePath: 'first.js',
+      position: { side: 'new', line: 1 },
+      fixupTarget: newFirst,
+      body: 'For the agent.',
+    },
+  ]);
+
+  const answer = await waiting;
+  expect(await answer.text()).toContain(newFirst);
+});
+
+it('refuses a reorder the review cannot take and leaves the history', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const adds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const edits = commit(repo, 'edits', { 'b.js': '2\n' });
+
+  const { post } = await startReview(repo, base, edits, 9283);
+  const reorder = (order: string[]) => post(`/api/reorder?base=${base}&target=${edits}`, { order });
+  const refusal = async (order: string[]) => {
+    const response = await reorder(order);
+    return [response.status, ((await response.json()) as { reason?: string }).reason];
+  };
+
+  expect(await refusal([adds])).toEqual([409, 'stale-view']);
+  expect(await refusal([adds, 'f'.repeat(40)])).toEqual([409, 'stale-view']);
+  expect(await refusal([adds, edits])).toEqual([409, 'no-change']);
+  expect(await refusal([edits, adds])).toEqual([409, 'conflict']);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(edits);
+  expect(git(repo, ['status', '--porcelain'])).toBe('');
+});
+
+it('runs the same checks before a reorder as before a reword', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const remote = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-remote-'));
+  cleanups.push(() => rmSync(remote, { recursive: true, force: true }));
+  git(remote, ['init', '-q', '--bare']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const first = commit(repo, 'first', { 'b.js': '1\n' });
+  git(repo, ['remote', 'add', 'origin', remote]);
+  git(repo, ['push', '-q', '-u', 'origin', 'main']);
+  const second = commit(repo, 'second', { 'c.js': '1\n' });
+
+  const { post } = await startReview(repo, base, second, 9284);
+  const query = `?base=${base}&target=${second}`;
+  const reorder = (extra: object) =>
+    post(`/api/reorder${query}`, { order: [second, first], ...extra });
+
+  const warned = await reorder({});
+  expect(warned.status).toBe(409);
+  expect(await warned.json()).toMatchObject({
+    reason: 'needs-confirmation',
+    warnings: ['default-branch', 'pushed-commit'],
+  });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(second);
+
+  const at = '2026-11-07T00:00:00Z';
+  await post(`/api/comments${query}`, {
+    threads: [
+      {
+        id: 'turn',
+        filePath: 'b.js',
+        position: { side: 'new', line: 1 },
+        createdAt: at,
+        updatedAt: at,
+        messages: [{ id: 'm', body: 'x', author: 'User', createdAt: at, updatedAt: at }],
+      },
+    ],
+  });
+  const blocked = await reorder({ acknowledged: ['default-branch', 'pushed-commit'] });
+  expect(blocked.status).toBe(409);
+  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(second);
+  await post(`/api/comments${query}`, { threads: [] });
+
+  const confirmed = await reorder({ acknowledged: ['default-branch', 'pushed-commit'] });
+  expect(confirmed.status).toBe(200);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'second',
+    'first',
+  ]);
+  expect(git(remote, ['rev-parse', 'main'])).toBe(first);
+});
+
+it('keeps a merge in the range when a commit moves past it', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  git(repo, ['checkout', '-q', '-b', 'side']);
+  commit(repo, 'on the side', { 'side.js': '1\n' });
+  git(repo, ['checkout', '-q', 'feature']);
+  const before = commit(repo, 'before', { 'before.js': '1\n' });
+  git(repo, ['merge', '-q', '--no-ff', '-m', 'merge side', 'side']);
+  const merge = git(repo, ['rev-parse', 'HEAD']);
+  const after = commit(repo, 'after', { 'after.js': '1\n' });
+
+  const { api, post } = await startReview(repo, base, after, 9285);
+  const response = await post(`/api/reorder?base=${base}&target=${after}`, {
+    order: [before, after, merge],
+  });
+
+  expect(response.status).toBe(200);
+  expect(git(repo, ['log', '--merges', '--format=%s', `${base}..HEAD`])).toBe('merge side');
+  const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(review!.commits.map(({ subject }) => subject)).toEqual(['before', 'after', 'merge side']);
+  expect(review!.commits.at(-1)?.merged?.map(({ subject }) => subject)).toEqual(['on the side']);
+});
