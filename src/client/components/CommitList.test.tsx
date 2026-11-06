@@ -646,7 +646,81 @@ describe('CommitList', () => {
     it('keeps it on screen in the phone drawer', () => {
       renderCommentable({ kind: 'all' }, { inDrawer: true });
 
-      expect(commentButtonOf('2222222').className).not.toContain('opacity-0');
+      expect(commentButtonOf('2222222').parentElement!.className).not.toContain('opacity-0');
+    });
+  });
+
+  describe('row buttons', () => {
+    const actionsOf = (name: RegExp) =>
+      within(row(name).closest('li')!).getByRole('button', { name: COPY_NAME }).parentElement!;
+    const isHidden = (element: HTMLElement) => element.className.split(' ').includes('opacity-0');
+
+    function renderWithButtons({ inDrawer = false } = {}) {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          inDrawer={inDrawer}
+          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          onAddCommitComment={vi.fn(async () => {})}
+        />,
+      );
+    }
+
+    it('lays them over the end of the subject, hidden until the row is hovered or focused', () => {
+      renderWithButtons();
+
+      const actions = actionsOf(/2222222/);
+      expect(actions.className).toContain('absolute');
+      expect(isHidden(actions)).toBe(true);
+      expect(actions.className).toContain('group-hover:opacity-100');
+      expect(actions.className).toContain('group-has-[:focus-visible]:opacity-100');
+      expect(within(actions).getAllByRole('button')).toHaveLength(3);
+    });
+
+    it('keeps them in line and on screen in the phone drawer', () => {
+      renderWithButtons({ inDrawer: true });
+
+      expect(actionsOf(/2222222/).className).toBe('contents');
+    });
+
+    it('keeps them on screen while the message editor or the comment form of that row is open', async () => {
+      renderWithButtons();
+
+      fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: '메시지 고치기' }));
+      await screen.findByRole('textbox');
+      expect(isHidden(actionsOf(/2222222/))).toBe(false);
+      expect(isHidden(actionsOf(/3333333/))).toBe(true);
+
+      fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: '메시지 고치기' }));
+      expect(isHidden(actionsOf(/2222222/))).toBe(true);
+
+      fireEvent.click(
+        within(actionsOf(/3333333/)).getByRole('button', { name: '커밋에 지적 달기' }),
+      );
+      expect(isHidden(actionsOf(/3333333/))).toBe(false);
+    });
+
+    it('keeps them on screen while the hash reads as copied', async () => {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn().mockResolvedValue(undefined) },
+        configurable: true,
+      });
+      vi.useFakeTimers();
+      try {
+        renderWithButtons();
+
+        await act(async () => {
+          fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: COPY_NAME }));
+        });
+        expect(isHidden(actionsOf(/2222222/))).toBe(false);
+
+        act(() => vi.advanceTimersByTime(2000));
+        expect(isHidden(actionsOf(/2222222/))).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
