@@ -1817,6 +1817,25 @@ describe(
       expect(window.history.length).toBe(lengthBefore + 2);
     });
 
+    it('brings the cursor to the screen when its file is drawn only after the key press', async () => {
+      const user = userEvent.setup();
+      renderApp();
+      await screen.findAllByTitle('c.ts');
+      await waitFor(() => expect(document.querySelector('[data-file-path="c.ts"] tr')).toBeNull());
+      vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(
+        function (this: HTMLElement) {
+          return this.getBoundingClientRect().top + scrolled;
+        },
+      );
+
+      await user.keyboard('j]');
+      await waitFor(() => expect(cursorFile()).toBe('b.ts'));
+      await user.keyboard(']');
+
+      await waitFor(() => expect(cursorFile()).toBe('c.ts'));
+      await waitFor(() => expect(fileShown()).toBe('c.ts'), { timeout: 3000 });
+    });
+
     it('goes back from a comment picked in the panel, and forward to it again', async () => {
       mockComments = [createMockThread({ id: 'n1', filePath: 'c.ts', line: 20, body: 'Far note' })];
       renderApp();
@@ -3548,6 +3567,20 @@ describe('App Component - Commits of the review', () => {
     expect(screen.getByRole('main')).toHaveClass('opacity-50');
     expect(shownFile).toBeInTheDocument();
     expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
+  });
+
+  it('clears the file filter when another commit is shown', async () => {
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+    fireEvent.change(screen.getByPlaceholderText('Filter files...'), {
+      target: { value: 'test' },
+    });
+
+    fireEvent.click(commitButton(/1111111/));
+
+    await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByPlaceholderText('Filter files...')).toHaveValue('');
   });
 
   it('shows the whole review on a second click of the shown commit and that commit again on Back', async () => {
