@@ -309,7 +309,11 @@ describe('rewriteHistory', () => {
         messages: new Map([[first, 'add feature']]),
       });
 
-      expect(result).toMatchObject({ ok: false, reason: 'conflict' });
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'conflict',
+        commit: { sha: head, subject: 'merge side' },
+      });
       expect(!result.ok && result.output).toContain('CONFLICT');
       expect(git(repo, 'rev-parse', 'HEAD')).toBe(head);
       expect(git(repo, 'status', '--porcelain')).toBe(status);
@@ -1031,12 +1035,40 @@ describe('rewriteHistory with a new order', () => {
     const adds = commit(repo, 'adds a line', { 'a.ts': 'a\nb\n' });
     const edits = commit(repo, 'edits that line', { 'a.ts': 'a\nB\n' });
 
+    writeFileSync(join(repo, 'work.ts'), 'work in progress\n');
+    const status = git(repo, 'status', '--porcelain');
+
     const result = await reorder(repo, base, [edits, adds]);
 
-    expect(result).toMatchObject({ ok: false, reason: 'conflict' });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'conflict',
+      commit: { sha: edits, subject: 'edits that line' },
+    });
     expect(git(repo, 'rev-parse', 'HEAD')).toBe(edits);
-    expect(git(repo, 'status', '--porcelain')).toBe('');
+    expect(git(repo, 'status', '--porcelain')).toBe(status);
+    expect(existsSync(join(repo, '.git', 'rebase-merge'))).toBe(false);
     expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+  });
+
+  it('names the commit the rebase stopped at, past the ones that went through', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+    repos.push(repo);
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+    const adds = commit(repo, 'adds a line', { 'a.ts': 'a\nb\n' });
+    const other = commit(repo, 'other file', { 'o.ts': 'o\n' });
+    const edits = commit(repo, 'edits that line', { 'a.ts': 'a\nB\n' });
+
+    const result = await reorder(repo, base, [other, edits, adds]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'conflict',
+      commit: { sha: edits, subject: 'edits that line' },
+    });
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(edits);
   });
 
   it('refuses when HEAD moved while the rebase ran', async () => {

@@ -297,10 +297,12 @@ describe('CommitList', () => {
       load = vi.fn(async () => MESSAGE),
       save = vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
       inDrawer = false,
+      onAddCommitComment,
     }: {
       load?: (sha: string) => Promise<string | null>;
       save?: RewordControls['save'];
       inDrawer?: boolean;
+      onAddCommitComment?: (sha: string, body: string) => Promise<void>;
     } = {}) {
       const onSelect = vi.fn();
       const showBlockingThread = vi.fn();
@@ -311,6 +313,7 @@ describe('CommitList', () => {
           onSelect={onSelect}
           inDrawer={inDrawer}
           reword={{ load, save, showBlockingThread }}
+          onAddCommitComment={onAddCommitComment}
         />,
       );
       return { onSelect, load, save, showBlockingThread };
@@ -600,6 +603,55 @@ describe('CommitList', () => {
         expect.objectContaining({ message: 'better', acknowledged: ['default-branch'] }),
       );
       expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).not.toBeInTheDocument();
+    });
+
+    describe('a conflict', () => {
+      const conflictOf = (agentAttached: boolean) => ({
+        message: '다시 쌓다가 충돌해 저장 전 이력으로 되돌렸습니다.',
+        conflict: { commit: { sha: '4'.repeat(40), subject: 'merge side' }, agentAttached },
+      });
+      const saveBetter = async () => {
+        fireEvent.click(editButtonOf(/2222222/));
+        fireEvent.change(await screen.findByRole('textbox', { name: '커밋 메시지' }), {
+          target: { value: 'better' },
+        });
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: '저장' }));
+        });
+      };
+
+      it('hands the wanted message over as a comment on that commit', async () => {
+        const onAddCommitComment = vi.fn(async () => undefined);
+        renderRewordable({ save: vi.fn(async () => conflictOf(true)), onAddCommitComment });
+        await saveBetter();
+
+        expect(screen.getByRole('alert')).toHaveTextContent('충돌한 커밋: 4444444 merge side');
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: '에이전트에게 맡기기' }));
+        });
+
+        expect(onAddCommitComment).toHaveBeenCalledOnce();
+        const [sha, body] = onAddCommitComment.mock.calls[0] as unknown as [string, string];
+        expect(sha).toBe('2'.repeat(40));
+        expect(body).toContain('```text\nbetter\n```');
+        expect(body).toContain('충돌한 커밋: 4444444 merge side');
+        expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).not.toBeInTheDocument();
+      });
+
+      it('offers no handing over without an agent, and says why', async () => {
+        renderRewordable({
+          save: vi.fn(async () => conflictOf(false)),
+          onAddCommitComment: vi.fn(async () => undefined),
+        });
+        await saveBetter();
+
+        const alert = screen.getByRole('alert');
+        expect(alert).toHaveTextContent('저장 전 이력으로 되돌렸습니다');
+        expect(alert).toHaveTextContent('연결된 에이전트가 없어 맡길 수 없습니다.');
+        expect(
+          screen.queryByRole('button', { name: '에이전트에게 맡기기' }),
+        ).not.toBeInTheDocument();
+      });
     });
 
     it('offers no way past a plain refusal', async () => {
@@ -1830,6 +1882,94 @@ describe('CommitList reorder handle', () => {
     expect(screen.queryByRole('button', { name: '그래도 옮기기' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '닫기' }));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  describe('a conflict', () => {
+    const conflictOf = (agentAttached: boolean) => ({
+      message: '순서를 바꾸면 충돌이 나서 옮기기 전 이력으로 되돌렸습니다.',
+      output: 'CONFLICT (content): Merge conflict in a.ts',
+      conflict: { commit: { sha: SHA('3'), subject: 'tidy up' }, agentAttached },
+    });
+    const dropFirstBelowThird = async () => {
+      grab(0);
+      moveOver(rowElement(/3333333/), 8);
+      await act(async () => {
+        drop(8);
+      });
+    };
+    const handOff = () => screen.queryByRole('button', { name: '에이전트에게 맡기기' });
+
+    it('hands the wanted order over as a comment on the commit that conflicted', async () => {
+      const onReorder = vi.fn(async () => conflictOf(true));
+      const onAddCommitComment = vi.fn(async () => undefined);
+      renderReorderable({ onReorder, onAddCommitComment });
+
+      await dropFirstBelowThird();
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('옮기기 전 이력으로 되돌렸습니다');
+      expect(alert).toHaveTextContent('충돌한 커밋: 3333333 tidy up');
+      expect(alert).not.toHaveTextContent('연결된 에이전트가 없어');
+
+      await act(async () => {
+        fireEvent.click(handOff()!);
+      });
+
+      expect(onAddCommitComment).toHaveBeenCalledOnce();
+      const [sha, body] = onAddCommitComment.mock.calls[0] as unknown as [string, string];
+      expect(sha).toBe(SHA('3'));
+      expect(body.split('\n').filter((line) => /^\d\. /.test(line))).toEqual([
+        '1. 2222222 change the behavior',
+        '2. 3333333 tidy up',
+        '3. 1111111 pin the old behavior',
+        '4. 4444444 document it',
+      ]);
+      expect(body).toContain('충돌한 커밋: 3333333 tidy up');
+      expect(onReorder).toHaveBeenCalledOnce();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('puts the comment on a commit that moved when the one that conflicted is not listed', async () => {
+      const onReorder = vi.fn(async () => ({
+        message: '충돌',
+        conflict: { commit: { sha: SHA('9'), subject: 'fixup! tidy up' }, agentAttached: true },
+      }));
+      const onAddCommitComment = vi.fn(async () => undefined);
+      renderReorderable({ onReorder, onAddCommitComment });
+
+      await dropFirstBelowThird();
+      await act(async () => {
+        fireEvent.click(handOff()!);
+      });
+
+      expect(onAddCommitComment.mock.calls[0]).toEqual([SHA('2'), expect.any(String)]);
+    });
+
+    it('offers no handing over without an agent, and says why', async () => {
+      const onAddCommitComment = vi.fn(async () => undefined);
+      renderReorderable({ onReorder: vi.fn(async () => conflictOf(false)), onAddCommitComment });
+
+      await dropFirstBelowThird();
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('옮기기 전 이력으로 되돌렸습니다');
+      expect(alert).toHaveTextContent('충돌한 커밋: 3333333 tidy up');
+      expect(alert).toHaveTextContent('연결된 에이전트가 없어 맡길 수 없습니다.');
+      expect(handOff()).not.toBeInTheDocument();
+    });
+
+    it('offers no handing over for a refusal that is not a conflict', async () => {
+      const onAddCommitComment = vi.fn(async () => undefined);
+      renderReorderable({
+        onReorder: vi.fn(async () => ({ message: '에이전트가 작업 중입니다.' })),
+        onAddCommitComment,
+      });
+
+      await dropFirstBelowThird();
+
+      expect(screen.getByRole('alert')).toHaveTextContent('에이전트가 작업 중입니다.');
+      expect(handOff()).not.toBeInTheDocument();
+    });
   });
 
   it('turns the handles off while saving, and shows that it is saving', async () => {

@@ -11,11 +11,21 @@ import {
 import type {
   DiffSelection,
   ReorderRequest,
+  ReviewCommit,
   RewriteBlockingThread,
+  RewriteConflict,
   RewriteWarning,
 } from '../../types/diff';
 
-import { BlockingThreads, type RewordFailure, type RewordSaved } from './CommitMessageForm';
+import { reorderHandoffBody } from '../utils/directEdit';
+
+import {
+  BlockingThreads,
+  CONFLICT_ACTION_CLASS,
+  ConflictDetails,
+  type RewordFailure,
+  type RewordSaved,
+} from './CommitMessageForm';
 
 export type SaveOrder = (request: ReorderRequest) => Promise<RewordFailure | RewordSaved>;
 
@@ -28,6 +38,20 @@ interface Moving {
 interface Refused {
   order: string[];
   failure: RewordFailure;
+}
+
+// The comment goes on the commit that conflicted, or when the review does not list that one, on the
+// first commit whose place changed.
+export function reorderHandoff(
+  commits: readonly ReviewCommit[],
+  order: readonly string[],
+  conflict: RewriteConflict,
+): { sha: string; body: string } | null {
+  const stopped = conflict.commit?.sha;
+  const sha = commits.some((commit) => commit.sha === stopped)
+    ? stopped
+    : order.find((each, at) => each !== commits[at]?.sha);
+  return sha === undefined ? null : { sha, body: reorderHandoffBody(commits, order, conflict) };
 }
 
 const SCROLL_EDGE_PX = 28;
@@ -196,6 +220,7 @@ export function ReorderNotice({
   onShowThread,
   onRetry,
   onDismiss,
+  onHandOff,
 }: {
   isSaving: boolean;
   refused: Refused | null;
@@ -203,6 +228,7 @@ export function ReorderNotice({
   onShowThread: ((thread: RewriteBlockingThread) => void) | undefined;
   onRetry: (acknowledged: RewriteWarning[]) => void;
   onDismiss: () => void;
+  onHandOff?: ((refused: Refused, conflict: RewriteConflict) => void) | undefined;
 }) {
   if (isSaving) {
     return (
@@ -212,7 +238,7 @@ export function ReorderNotice({
     );
   }
   if (!refused) return null;
-  const { message, output, warnings, blockingThreads } = refused.failure;
+  const { message, output, warnings, blockingThreads, conflict } = refused.failure;
   return (
     <div
       role="alert"
@@ -231,17 +257,23 @@ export function ReorderNotice({
           {output}
         </pre>
       )}
+      {conflict && <ConflictDetails conflict={conflict} />}
       <div className="mt-1 flex justify-end gap-2">
         <button type="button" onClick={onDismiss} className={NOTICE_BUTTON_CLASS}>
           {warnings ? '취소' : '닫기'}
         </button>
         {warnings && (
+          <button type="button" onClick={() => onRetry(warnings)} className={CONFLICT_ACTION_CLASS}>
+            그래도 옮기기
+          </button>
+        )}
+        {conflict?.agentAttached && onHandOff && (
           <button
             type="button"
-            onClick={() => onRetry(warnings)}
-            className="rounded border border-github-danger bg-github-danger/20 px-3 py-1 text-xs font-medium text-github-text-primary transition-all hover:opacity-80"
+            onClick={() => onHandOff(refused, conflict)}
+            className={CONFLICT_ACTION_CLASS}
           >
-            그래도 옮기기
+            에이전트에게 맡기기
           </button>
         )}
       </div>

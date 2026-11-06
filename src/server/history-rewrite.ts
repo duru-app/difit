@@ -33,6 +33,8 @@ export type HistoryRewriteResult =
       ok: false;
       reason: 'conflict' | 'head-moved' | 'branch-moved' | 'commit-failed';
       output?: string;
+      // Absent when no one commit stopped the rebase.
+      commit?: { sha: string; subject: string };
     };
 
 type Failure = Extract<HistoryRewriteResult, { ok: false }>;
@@ -684,20 +686,27 @@ class Replay {
     await fs.writeFile(todoPath, todo);
     const current = await readMessages(this.repoPath, commits, signal);
 
-    const stuck = async (output: string): Promise<Failure> => {
+    // Every commit in the todo is followed by a break, so a failed run stopped at the next commit.
+    const stuck = async (output: string, next: number): Promise<Failure> => {
       const state = await gitText(worktree, ['rev-parse', '--git-path', 'rebase-merge'], {
         signal,
       });
+      if (!existsSync(resolve(worktree, state))) {
+        return { ok: false, reason: 'commit-failed', output };
+      }
+      const sha = commits[next];
+      const subject = current.get(sha ?? '')?.split('\n')[0] ?? '';
       return {
         ok: false,
-        reason: existsSync(resolve(worktree, state)) ? 'conflict' : 'commit-failed',
+        reason: 'conflict',
         output,
+        ...(sha ? { commit: { sha, subject } } : {}),
       };
     };
 
     let run = await rebase(start, `cp ${shellQuoted(todoPath)}`);
-    if (run.code !== 0) return stuck(run.output);
-    for (const commit of commits) {
+    if (run.code !== 0) return stuck(run.output, 0);
+    for (const [at, commit] of commits.entries()) {
       const message = current.get(commit) ?? '';
       const wanted = plan(commit, message, this.rewritten);
       if (wanted !== message) {
@@ -724,7 +733,7 @@ class Replay {
       this.landedAt.set(commit, landed);
       if (landed !== commit) this.rewritten[commit] = landed;
       run = await rebase(['--continue'], 'true');
-      if (run.code !== 0) return stuck(run.output);
+      if (run.code !== 0) return stuck(run.output, at + 1);
     }
     return { ok: true };
   }
