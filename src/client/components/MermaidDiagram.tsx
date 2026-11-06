@@ -73,6 +73,7 @@ export function MermaidDiagram({ chart, naturalSize = false }: MermaidDiagramPro
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
+          suppressErrorRendering: true,
           theme: mermaidTheme,
         });
 
