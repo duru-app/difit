@@ -133,7 +133,6 @@ export interface DiffResponse {
   commentImportId?: string;
   // The review this diff is a view of; comments and decisions belong to it.
   review?: ReviewScope;
-  // Every rewrite since the server started.
   rewritten?: RewrittenShas;
 }
 
