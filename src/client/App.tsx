@@ -3116,6 +3116,7 @@ function App() {
                   onAddCommitComment={handleAddCommitComment}
                   height={commitListHeight}
                   onResize={handleCommitListResize}
+                  loadMessage={loadCommitMessage}
                 />
               )}
               {!isMobile && (
@@ -3179,6 +3180,8 @@ function App() {
                     onReplyToThread={handleReplyToThread}
                     onRemoveMessage={removeMessage}
                     onUpdateMessage={updateMessage}
+                    loadMessage={isMobile ? loadCommitMessage : undefined}
+                    amendedMessages={amendedMessages}
                   />
                 )}
                 {diffData.files.map((file, fileIndex) => {

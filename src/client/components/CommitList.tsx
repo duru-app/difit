@@ -2,6 +2,7 @@ import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil, X } 
 import {
   Fragment,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -17,6 +18,12 @@ import { copyTextToClipboard } from '../utils/clipboard';
 import { CommentCount } from './CommentCount';
 import { CommentForm } from './CommentForm';
 import { CommitGraph } from './CommitGraph';
+import {
+  CommitHoverCard,
+  type LoadCommitMessage,
+  useCachedMessageLoader,
+  useCommitHoverCard,
+} from './CommitMessageBody';
 import { CommitMessageForm, type RewordControls } from './CommitMessageForm';
 
 interface CommitListProps {
@@ -33,6 +40,7 @@ interface CommitListProps {
   onAddCommitComment?: ((sha: string, body: string) => Promise<void>) | undefined;
   height?: number | null | undefined;
   onResize?: ((height: number) => void) | undefined;
+  loadMessage?: LoadCommitMessage | undefined;
 }
 
 interface Drag {
@@ -150,8 +158,12 @@ export function CommitList({
   onAddCommitComment,
   height,
   onResize,
+  loadMessage,
 }: CommitListProps) {
   const { commits } = review;
+  const cardId = useId();
+  const loadCardMessage = useCachedMessageLoader(inDrawer ? undefined : loadMessage);
+  const hoverCard = useCommitHoverCard();
   const [isOpen, setIsOpen] = useState(true);
   const [rewording, setRewording] = useState<string | null>(null);
   const [commenting, setCommenting] = useState<string | null>(null);
@@ -424,6 +436,16 @@ export function CommitList({
           {title}
         </button>
       )}
+      {loadCardMessage && hoverCard.place && (
+        <CommitHoverCard
+          id={cardId}
+          place={hoverCard.place}
+          load={loadCardMessage}
+          amendedMessage={amendedMessages?.get(hoverCard.place.sha)}
+          onKeep={hoverCard.keep}
+          onLeave={hoverCard.leave}
+        />
+      )}
       {isListShown && (
         <ul
           ref={listRef}
@@ -543,9 +565,11 @@ export function CommitList({
                           setDrag({ fromSha: commit.sha, overSha: null });
                         }
                       }}
-                      onMouseEnter={() =>
-                        setDrag((current) => current && { ...current, overSha: commit.sha })
-                      }
+                      onMouseEnter={(event) => {
+                        setDrag((current) => current && { ...current, overSha: commit.sha });
+                        if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
+                      }}
+                      onMouseLeave={loadCardMessage && hoverCard.leave}
                       onMouseUp={() => {
                         if (drag && drag.fromSha !== commit.sha) {
                           onSelect({
@@ -568,9 +592,16 @@ export function CommitList({
                       aria-current={isCurrent ? true : undefined}
                       data-drag-preview={isPreviewed ? '' : undefined}
                       title={
-                        amendedMessage === undefined
-                          ? commit.subject
-                          : `${commit.subject}\n\n바뀔 메시지:\n${amendedMessage}`
+                        loadCardMessage
+                          ? undefined
+                          : amendedMessage === undefined
+                            ? commit.subject
+                            : `${commit.subject}\n\n바뀔 메시지:\n${amendedMessage}`
+                      }
+                      aria-describedby={
+                        hoverCard.place && isSameCommit(hoverCard.place.sha, commit.sha)
+                          ? cardId
+                          : undefined
                       }
                       className={`${itemClass} min-w-0 flex-1 group-hover:bg-github-bg-tertiary ${isCurrent ? CURRENT_COMMIT_CLASS : 'text-github-text-secondary'} ${isPreviewed ? PREVIEW_CLASS : ''} ${isActionPinned && !inDrawer ? 'bg-github-bg-tertiary' : ''}`}
                     >
