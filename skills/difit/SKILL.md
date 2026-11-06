@@ -120,7 +120,7 @@ Once a thread reaches you either way, its card shows `응답 중` until you repl
 
 The user can also edit code in the viewer. difit then commits a `fixup! <target SHA>` commit with a `Review-Thread` trailer on top of HEAD and records it as approved. Its author is `reviewer-edit`.
 
-The user can also reword a commit from the commit list. difit then commits an `amend! <target SHA>` commit that changes no file, whose message below the first paragraph is the new message with a `Review-Thread` trailer, and records it as approved under a new thread whose `filePath` is `/COMMIT_MSG` (line 1), with `fixupTarget` the reworded commit and author `reviewer-edit`. It needs nothing from you until folding.
+The user can also reword a commit from the commit list. difit then rewrites the history on the spot: no `amend!` commit appears, and that commit and the ones after it get new SHAs. Unfolded `fixup!` and `amend!` commits stay as commits with subjects naming the new SHAs, and difit moves each thread's `fixupTarget` and `view` and the decision records too. It needs nothing from you, but take SHAs from `comment get` and `wait` rather than ones you noted earlier. An `amend!` that was waiting on the reworded commit gets the saved message as its body, so folding it leaves that message.
 
 ### Naming the thread a reply answers
 
@@ -224,7 +224,7 @@ Folding `amend!` commits needs git 2.32 or later. An older git does not recogniz
 `<review base>` is the compare-with side of the diff, or `<SHA>^` for a single-commit review. Start from the review base, not the target commit: a fixup for a comment made on one commit, or one the user made in the viewer, can point at an earlier commit in the range. Folding only regroups changes, so afterwards `git diff --exit-code <pre-fold SHA> HEAD` must print nothing. Note the SHA itself rather than a shell variable: a variable does not survive into the next command when each command runs on its own.
 
 - If a fixup deletes everything its target added, the rebase stops at `Could not apply ... fixup!`. Keep an empty commit with `git commit --amend --allow-empty --no-edit`, or drop it with `git reset --soft HEAD^`, then `git rebase --continue`.
-- Fixups from the viewer name their target by SHA. Rebasing onto a newer base or rewording the target before folding gives it a new SHA and leaves the fixup unfolded, so do those after folding. The rebase still reports success; confirm nothing is left:
+- Fixups from the viewer name their target by SHA. Rebasing onto a newer base or rewording the target yourself before folding gives it a new SHA and leaves the fixup unfolded, so do those after folding. A reword the user saves from the commit list moves the fixup subjects along with it. The rebase still reports success; confirm nothing is left:
 
   ```bash
   git log --format='%h %s' <review base>..HEAD | grep -E '^[0-9a-f]+ (fixup|squash|amend)! '
