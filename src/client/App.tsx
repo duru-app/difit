@@ -525,8 +525,8 @@ function App() {
     view: ReviewView;
     sha: string | null;
   } | null>(null);
-  const shownAnchor =
-    viewAnchor && JSON.stringify(viewAnchor.view) === JSON.stringify(shownView)
+  const listedAnchor =
+    viewAnchor && JSON.stringify(viewAnchor.view) === JSON.stringify(listedView)
       ? viewAnchor.sha
       : null;
   const [rangePick, setRangePick] = useState<{
@@ -534,7 +534,7 @@ function App() {
     sha: string;
   } | null>(null);
   const rangeStart =
-    rangePick && JSON.stringify(rangePick.view) === JSON.stringify(shownView)
+    rangePick && JSON.stringify(rangePick.view) === JSON.stringify(listedView)
       ? rangePick.sha
       : undefined;
   const takesComments = !showsPartOfReview || shownView.kind !== 'all';
@@ -1782,8 +1782,8 @@ function App() {
       const chosen = selectReviewView(
         review,
         {
-          view: shownView,
-          anchor: shownAnchor,
+          view: listedView,
+          anchor: listedAnchor,
           ...(rangeStart !== undefined && { rangeStart }),
         },
         action,
@@ -1797,7 +1797,7 @@ function App() {
       setIsCommitDrawerOpen(false);
       showDiff(chosen.selection, place);
     },
-    [review, shownView, shownAnchor, rangeStart, showDiff],
+    [review, listedView, listedAnchor, rangeStart, showDiff],
   );
   const closeCommitDrawer = useCallback(() => {
     selectView({ kind: 'cancel' });

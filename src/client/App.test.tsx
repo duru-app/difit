@@ -3569,6 +3569,51 @@ describe('App Component - Commits of the review', () => {
     expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
   });
 
+  const holdDiffAnswers = () => {
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation((input, init) =>
+      String(input).startsWith('/api/diff') ? new Promise<Response>(() => {}) : answer(input, init),
+    );
+  };
+
+  it('picks a run from the commit the list marks while that commit still loads', async () => {
+    review = THREE_COMMITS;
+    requested = THREE_COMMITS.requested;
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+    holdDiffAnswers();
+
+    fireEvent.click(commitButton(/1111111/));
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true'));
+    fireEvent.click(commitButton(/abc1234/), { shiftKey: true });
+
+    await waitFor(() =>
+      expect(diffQueries().at(-1)).toEqual([COMMITS[0]!.parentSha, COMMITS[1]!.sha]),
+    );
+    expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true');
+    expect(commitButton(/abc1234/)).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('goes back to the shown commit when it is clicked while another commit loads', async () => {
+    review = THREE_COMMITS;
+    requested = THREE_COMMITS.requested;
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+    fireEvent.click(commitButton(/1111111/));
+    await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'false'));
+    holdDiffAnswers();
+
+    fireEvent.click(commitButton(/abc1234/));
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true'));
+    fireEvent.click(commitButton(/1111111/));
+
+    await waitFor(() =>
+      expect(diffQueries().at(-1)).toEqual([COMMITS[0]!.parentSha, COMMITS[0]!.sha]),
+    );
+    expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true');
+  });
+
   it('clears the file filter when another commit is shown', async () => {
     renderApp();
     await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
