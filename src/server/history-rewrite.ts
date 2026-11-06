@@ -33,7 +33,6 @@ export type HistoryRewriteResult =
       ok: false;
       reason: 'conflict' | 'head-moved' | 'branch-moved' | 'commit-failed';
       output?: string;
-      // Absent when no one commit stopped the rebase.
       commit?: { sha: string; subject: string };
     };
 
