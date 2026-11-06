@@ -447,6 +447,67 @@ export function CommitList({
             const amendedMessage = amendedMessages?.get(commit.sha);
             const isActionPinned =
               rewording === commit.sha || commenting === commit.sha || copied?.sha === commit.sha;
+            const openCount = openCounts?.get(commit.sha) ?? 0;
+            const hoverButtons = (
+              <>
+                {copyButtonOf(commit.sha)}
+                {guardedReword && !commit.isMerge && (
+                  <button
+                    type="button"
+                    aria-label="메시지 고치기"
+                    title="메시지 고치기"
+                    aria-expanded={rewording === commit.sha}
+                    disabled={isSavingMessage}
+                    onClick={() =>
+                      setRewording((current) => (current === commit.sha ? null : commit.sha))
+                    }
+                    className="shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-primary disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <Pencil size={12} />
+                  </button>
+                )}
+              </>
+            );
+            const commentButton = onAddCommitComment && (
+              <button
+                type="button"
+                aria-label="커밋에 지적 달기"
+                title={
+                  openCount > 0
+                    ? `열린 지적 ${openCount}개 · 이 커밋 전체에 지적 달기`
+                    : '이 커밋 전체에 지적 달기'
+                }
+                aria-expanded={commenting === commit.sha}
+                onClick={() =>
+                  setCommenting((current) => (current === commit.sha ? null : commit.sha))
+                }
+                className={`shrink-0 flex items-center gap-1 px-2 hover:bg-github-bg-primary ${openCount > 0 ? 'text-sm font-medium text-github-warning fixup-review:text-github-text-secondary' : 'text-github-text-muted hover:text-github-text-primary'}`}
+              >
+                <MessageSquarePlus size={openCount > 0 ? 14 : 12} />
+                {openCount > 0 && openCount}
+              </button>
+            );
+            const hoverClass = `bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS}`;
+            // With an open count the comment button stays in line, so the subject stops before
+            // it and the other buttons open over the subject to its left.
+            const rowActions = inDrawer ? (
+              <div className="contents">
+                {hoverButtons}
+                {commentButton}
+              </div>
+            ) : openCount > 0 && commentButton ? (
+              <div className="relative flex shrink-0 items-stretch">
+                <div className={`absolute inset-y-0 right-full flex items-stretch ${hoverClass}`}>
+                  {hoverButtons}
+                </div>
+                {commentButton}
+              </div>
+            ) : (
+              <div className={`absolute inset-y-0 right-0 flex items-stretch ${hoverClass}`}>
+                {hoverButtons}
+                {commentButton}
+              </div>
+            );
             return (
               <Fragment key={commit.sha}>
                 {merged.map((entry) => (
@@ -520,46 +581,9 @@ export function CommitList({
                       ) : (
                         <AmendedSubject subject={commit.subject} message={amendedMessage} />
                       )}
-                      {openCountOf(commit.sha)}
+                      {!onAddCommitComment && openCountOf(commit.sha)}
                     </button>
-                    <div
-                      className={
-                        inDrawer
-                          ? 'contents'
-                          : `absolute inset-y-0 right-0 flex items-stretch bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS}`
-                      }
-                    >
-                      {copyButtonOf(commit.sha)}
-                      {guardedReword && !commit.isMerge && (
-                        <button
-                          type="button"
-                          aria-label="메시지 고치기"
-                          title="메시지 고치기"
-                          aria-expanded={rewording === commit.sha}
-                          disabled={isSavingMessage}
-                          onClick={() =>
-                            setRewording((current) => (current === commit.sha ? null : commit.sha))
-                          }
-                          className="shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-primary disabled:pointer-events-none disabled:opacity-50"
-                        >
-                          <Pencil size={12} />
-                        </button>
-                      )}
-                      {onAddCommitComment && (
-                        <button
-                          type="button"
-                          aria-label="커밋에 지적 달기"
-                          title="이 커밋 전체에 지적 달기"
-                          aria-expanded={commenting === commit.sha}
-                          onClick={() =>
-                            setCommenting((current) => (current === commit.sha ? null : commit.sha))
-                          }
-                          className="shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-primary"
-                        >
-                          <MessageSquarePlus size={12} />
-                        </button>
-                      )}
-                    </div>
+                    {rowActions}
                   </div>
                   {onAddCommitComment && commenting === commit.sha && (
                     <div

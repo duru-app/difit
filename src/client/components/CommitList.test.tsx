@@ -679,6 +679,35 @@ describe('CommitList', () => {
       expect(within(actions).getAllByRole('button')).toHaveLength(3);
     });
 
+    it('turns the open count into the comment button, beside the other buttons rather than under them', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      expect(comment).toHaveTextContent('2');
+      expect(comment).toHaveAttribute('title', '열린 지적 2개 · 이 커밋 전체에 지적 달기');
+      expect(within(row(/2222222/)).queryByText('2')).toBeNull();
+      const actions = actionsOf(/2222222/);
+      expect(actions.contains(comment)).toBe(false);
+      expect(isHidden(actions)).toBe(true);
+      expect(isHidden(comment.parentElement!)).toBe(false);
+      expect(actions.className).toContain('right-full');
+      expect(within(actions).getAllByRole('button')).toHaveLength(2);
+
+      fireEvent.click(comment);
+      expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
+    });
+
     it('keeps them in line and on screen in the phone drawer', () => {
       renderWithButtons({ inDrawer: true });
 
