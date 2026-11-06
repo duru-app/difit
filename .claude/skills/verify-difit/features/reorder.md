@@ -7,6 +7,7 @@ The reviewer drags a commit in the commit list by the handle at the left of its 
 - `POST /api/reorder`, which takes every commit the review lists, oldest first, and returns the old-to-new map
 - The warnings on the default branch and on a commit the upstream holds, passed with `acknowledged`
 - Refusals: a git operation in progress, a thread the agent is working on, HEAD moved, a conflict, a list that has gone stale
+- `POST /api/history-rewritten`, where an agent that rebased by hand reports what became of each commit
 - `/api/diff` with `historyMoves`, `/api/fixups`, `/api/comments-json` and `difit comment get` on the new SHAs
 - A selection with old SHAs, which lands on the same commits in the new order
 
@@ -62,7 +63,9 @@ A pushed commit: before `start`, make a bare repository with `git init -q --bare
 
 The agent at work: a thread added with `"author":"User"` and no answer makes the POST answer 409 `{"reason":"agent-working"}`.
 
-A conflict: commit a line and then edit that line, and ask for the edit first. The POST answers 409 `{"reason":"conflict"}` with the git output, and `HEAD` and the working tree stay as they were.
+A conflict: commit a line and then edit that line, and ask for the edit first. The POST answers 409 `{"reason":"conflict","conflict":{"commit":{"sha":…,"subject":…},"agentAttached":false}}` with the git output, and `HEAD` and the working tree stay as they were.
+
+Handing it over: keep `difit comment wait --port "$PORT"` running in the background and repeat the POST; `agentAttached` is `true`. The button is a browser action, so it goes to what the browser writes: `POST /api/comments` with a thread whose `position` is `{"scope":"commit"}` and `fixupTarget` the commit, or real Chromium on the page. `wait` ends with the thread, `comment get` shows it as `[답변 대기]`, and another POST answers `agent-working`. Then, as the agent: rebase by hand, and `POST /api/history-rewritten` with `{"rewritten":{"<old>":"<new>"}}`. `/api/diff` shows `review.commits` on the new SHAs in the new order, `comment get` shows the thread on the new short SHA, and a reply makes it `[답변 완료]`.
 
 A merge kept in the range: before `start`, make a side branch and merge it with `--no-ff`, with a commit after the merge. Ask for that commit before the merge. After the POST, `git log --merges` still lists the merge, `git log --first-parent` has the new order, and `git rev-parse HEAD^{tree}` is unchanged. Moving the commit the side branch grows from past that merge answers 409 `{"reason":"conflict"}`.
 

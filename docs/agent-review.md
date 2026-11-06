@@ -70,7 +70,7 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
    - 줄 번호는 `view` 트리의 줄이다. 새 쪽(`"side": "new"`) 줄은 `git show <view.targetCommitish>:<파일>`, 옛 쪽 줄은 `git show <view.baseCommitish>:<파일>`로 읽는다. `view`가 없으면 리뷰 대상 커밋의 줄이다. fixup에서만 수정한 파일에 단 지적은 `codeSnapshot.commit`이 그 fixup 커밋이다. 새 쪽 줄은 `git show <codeSnapshot.commit>:<파일>`, 옛 쪽 줄은 그 fixup의 부모 커밋인 `git show <codeSnapshot.commit>^:<파일>`로 읽는다.
    - 고치는 곳은 HEAD의 파일이다. 뒤 커밋이 그 줄을 옮기거나 바꿨을 수 있으니 줄 번호 대신 `codeSnapshot.content`(지적한 줄의 내용)로 자리를 찾는다. 뒤 커밋이 그 줄을 바꿨어도 fixup은 하나만 만든다([docs/adr/0002](adr/0002-one-fixup-per-target-commit.md)). 접을 때 생기는 충돌은 아래 「범위 중간 커밋에 접다가 충돌하면」대로 푼다.
    - 파일 전체에 단 지적은 위치가 `"position": { "side": "new", "scope": "file" }`이고 `line`이 없다. diff가 지운 파일이면 `"side": "old"`이다. 텍스트 출력의 위치 줄에는 `:L<줄>` 없이 파일 경로만 나오고, 지운 파일이면 뒤에 `(old)`가 붙는다. 특정 줄이 아니라 파일 전체에 대한 지적이므로 파일을 통째로 읽고 지적이 가리키는 곳을 고치되, fixup은 역시 하나만 만든다. 이 지적의 `fixupTarget`은 그 화면의 커밋 가운데 그 파일을 마지막으로 바꾼 커밋이고, 그런 커밋이 없으면 그 화면의 마지막 커밋이다. 커밋 목록에 없는 커밋이 바꾼 것은 세지 않는다. 답글은 같은 `position`으로 단다([docs/adr/0010](adr/0010-file-level-comments.md)).
-   - 커밋 하나 전체에 단 지적은 `filePath`가 없고 위치가 `"position": { "scope": "commit" }`이며, `fixupTarget`이 그 커밋이다. 커밋 메시지, 커밋이 다루는 범위, 커밋을 나누거나 합치자는 이야기처럼 특정 파일이 아니라 그 커밋에 대한 지적이다. 텍스트 출력의 위치 줄은 `커밋 <짧은 SHA> <제목>`이고, `고쳐 넣을 커밋:` 줄은 따로 붙지 않는다. 코드나 메시지를 고쳐 답할 수 있으면 다른 지적처럼 그 커밋을 향한 `fixup!`이나 `amend!` 하나에 `Review-Thread` 트레일러를 붙인다. 커밋을 나누거나 순서를 바꾸자는 것처럼 fixup 하나로 답할 수 없는 요청이면 고치지 말고 답글로 어떻게 할지 묻는다. 답글은 `{"type": "reply", "position": {"scope": "commit"}, "fixupTarget": "<SHA>", "body": "..."}`처럼 `filePath` 없이 같은 `fixupTarget`으로 단다([docs/adr/0011](adr/0011-commit-level-comments.md)).
+   - 커밋 하나 전체에 단 지적은 `filePath`가 없고 위치가 `"position": { "scope": "commit" }`이며, `fixupTarget`이 그 커밋이다. 커밋 메시지, 커밋이 다루는 범위, 커밋을 나누거나 합치자는 이야기처럼 특정 파일이 아니라 그 커밋에 대한 지적이다. 텍스트 출력의 위치 줄은 `커밋 <짧은 SHA> <제목>`이고, `고쳐 넣을 커밋:` 줄은 따로 붙지 않는다. 코드나 메시지를 고쳐 답할 수 있으면 다른 지적처럼 그 커밋을 향한 `fixup!`이나 `amend!` 하나에 `Review-Thread` 트레일러를 붙인다. 커밋을 나누자는 것처럼 fixup 하나로 답할 수 없는 요청이면 고치지 말고 답글로 어떻게 할지 묻는다. 순서를 바꾸자는 요청은 아래 「순서 바꾸기와 메시지 고치기를 맡으면」대로 옮기고 답한다. 답글은 `{"type": "reply", "position": {"scope": "commit"}, "fixupTarget": "<SHA>", "body": "..."}`처럼 `filePath` 없이 같은 `fixupTarget`으로 단다([docs/adr/0011](adr/0011-commit-level-comments.md)).
 
 2. 코드를 고친 뒤 fixup 커밋을 만들고 스레드 id를 트레일러로 붙인다. 대상은 지적의 `fixupTarget`이고, 없으면 리뷰 대상 SHA다.
 
@@ -108,6 +108,26 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
    리뷰어는 지적 아래 fixup 카드 안에서도 줄을 고친다. 그러면 같은 `Review-Thread` 트레일러와 같은 대상 커밋으로 리뷰어의 fixup이 에이전트의 fixup 위에 하나 더 생기고, 두 fixup이 함께 승인되어 지적이 닫힌다. 에이전트가 할 일은 없다. 리뷰어가 이 수정을 `되돌리기`로 거절하면 지적은 `[승인 대기]`로 돌아가 리뷰어가 에이전트의 fixup을 다시 판정하고, wait는 이 지적을 알리지 않는다. 되돌린 fixup은 `decisions`의 `rejected`로만 남으니 마무리 때 다른 거절된 fixup과 함께 버린다.
 
 5. 리뷰어가 커밋 목록에서 커밋 메시지를 고치면, difit은 그 자리에서 이력을 다시 쓴다. `amend!` 커밋은 생기지 않고, 그 커밋과 뒤 커밋의 SHA가 바뀐다. 아직 접지 않은 `fixup!`과 `amend!`는 커밋으로 남고 제목이 새 SHA를 가리키며, 지적의 `fixupTarget`과 `view`, 결정 기록도 difit이 새 SHA로 옮긴다. 할 일은 없다. 다만 `comment get`과 `wait`가 알려 주는 SHA를 쓰고, 그 전에 적어 둔 SHA를 다시 쓰지 않는다. 이렇게 고친 커밋을 향해 기다리던 `amend!`는 본문이 저장한 메시지로 바뀌어, 접으면 그 메시지가 남는다. 에이전트 차례인 지적이나 `[수정 중]`인 지적이 있으면 이 저장은 막힌다. `difit comment wait`로 기다리기만 하는 동안은 막지 않는다. 고치겠다고 답하고 그만두는 일이 생기면 말로 답해 풀어 준다.
+
+## 순서 바꾸기와 메시지 고치기를 맡으면
+
+리뷰어가 커밋 목록에서 순서를 바꾸거나 메시지를 고치다 충돌하면 difit은 이력을 저장 전으로 되돌린다. 이때 `difit comment wait`가 열려 있거나 서버를 띄운 Claude Code 세션의 소켓이 열려 있으면 화면에 `에이전트에게 맡기기`가 뜨고, 리뷰어가 누르면 커밋 지적이 생겨 다른 지적처럼 `wait`와 `comment get`으로 온다. 본문에는 원하는 순서(오래된 커밋부터)나 고칠 메시지, 충돌한 커밋이 적혀 있다. 리뷰어가 순서를 바꾸자고 직접 단 지적도 같은 방법으로 한다. 답하기 전까지 이 지적은 에이전트 차례이므로 화면의 순서 바꾸기와 메시지 고치기는 막혀 있다.
+
+1. `git rebase -i --rebase-merges --autostash <리뷰 범위의 시작 커밋>`에서 맡겨진 순서대로 줄을 옮기거나, 메시지를 고칠 커밋을 `reword`로 바꾼다. 범위 위쪽 커밋의 SHA가 바뀌므로 시작하기 전 HEAD의 SHA를 적어 둔다.
+2. 아직 접지 않은 `fixup! <SHA>`와 `amend! <SHA>`는 대상 커밋 바로 뒤에 두고, 제목의 SHA를 대상의 새 SHA로 고친다.
+3. 충돌로 멈추면 그 커밋이 하던 변경을 남기도록 풀고 `git add <파일>` 뒤 `GIT_EDITOR=true git rebase --continue`로 잇는다. 머지 때 손으로 풀었던 충돌은 다시 풀어야 한다.
+4. 끝나면 `git diff --exit-code <시작 전 SHA> HEAD`를 돌린다. 무언가 찍히면 푼 결과가 전과 다르다는 뜻이다. `git reset --hard <시작 전 SHA>`로 되돌리고 답글로 어떻게 할지 묻는다.
+5. 바뀐 커밋마다 옛 SHA와 새 SHA의 짝을 서버에 올린다. difit이 리뷰, 지적, 결정 기록을 새 SHA로 옮기고 열린 탭에 알리므로 지적을 손으로 옮기지 않는다.
+
+   ```sh
+   curl -X POST "http://localhost:<port>/api/history-rewritten" \
+     -H 'Content-Type: application/json' \
+     -d '{"rewritten":{"<옛 SHA>":"<새 SHA>"}}'
+   ```
+
+   전체 SHA만 받는다. 새 SHA가 HEAD의 이력에 없거나, 리뷰가 나열하는 커밋 가운데 짝이 없는 커밋이 HEAD의 이력에도 없으면 409 `stale-view`로 답하고 아무것도 옮기지 않는다.
+
+6. 그 지적에 답글로 무엇을 했는지 답한다.
 
 ## 어느 지적에 답하는지 지정하기
 
@@ -171,7 +191,7 @@ git rebase <리뷰 범위의 시작 커밋> --exec 'git log -1 --format=%B | gre
 
 fixup이 대상 커밋이 넣은 내용을 전부 지우면 그 커밋이 비게 되어 rebase가 `Could not apply ... fixup!`에서 멈춘다. 빈 커밋으로 남기려면 `git commit --amend --allow-empty --no-edit`, 커밋째 없애려면 `git reset --soft HEAD^`를 한 뒤 `git rebase --continue`로 잇는다.
 
-리뷰어가 직접 고친 fixup은 SHA로 대상을 가리킨다(`fixup! <SHA>`). 접기 전에 대상 커밋이 rebase로 새 SHA를 받으면 짝을 찾지 못해 접히지 않고 남으므로, 에이전트가 하는 기준 브랜치를 따라잡는 rebase나 대상 커밋의 메시지 수정은 접은 뒤에 한다. 리뷰어가 커밋 목록에서 고친 메시지는 difit이 fixup 제목까지 함께 옮긴다. rebase는 짝을 못 찾아도 성공으로 끝나므로, 접은 뒤에 아래 명령이 아무것도 출력하지 않는지 확인한다.
+리뷰어가 직접 고친 fixup은 SHA로 대상을 가리킨다(`fixup! <SHA>`). 접기 전에 대상 커밋이 rebase로 새 SHA를 받으면 짝을 찾지 못해 접히지 않고 남으므로, 에이전트가 하는 기준 브랜치를 따라잡는 rebase나 대상 커밋의 메시지 수정은 접은 뒤에 한다. 리뷰어가 커밋 목록에서 고친 메시지는 difit이 fixup 제목까지 함께 옮긴다. 맡겨진 순서 바꾸기는 「순서 바꾸기와 메시지 고치기를 맡으면」대로 제목을 고친다. rebase는 짝을 못 찾아도 성공으로 끝나므로, 접은 뒤에 아래 명령이 아무것도 출력하지 않는지 확인한다.
 
 ```sh
 git log --format='%h %s' <리뷰 범위의 시작 커밋>..HEAD | grep -E '^[0-9a-f]+ (fixup|squash|amend)! '
@@ -207,7 +227,7 @@ fixup이 범위 중간의 커밋을 향하고 그 뒤 커밋이 같은 줄을 �
 
 ## 접은 뒤의 커밋으로 지적 옮기기
 
-접으면 리뷰 대상 커밋의 SHA가 바뀐다. 새 SHA로 리뷰를 다시 열면 지적은 옛 SHA의 리뷰에 남아 있으므로, 옛 서버에서 꺼내 새 서버에 넣는다. `comment get`은 지적마다 메시지를 배열로 주고 `comment add`는 첫 메시지를 `thread`, 나머지를 `reply`로 받으므로 모양을 바꿔 넣는다. 지적 id와 `codeSnapshot`(줄 내용과 지적을 단 커밋)을 그대로 실어야 fixup 트레일러와 결정 기록이 같은 지적을 가리키고, 화면이 지적의 자리를 다시 찾을 수 있다. 커밋 하나를 보며 단 지적의 `view`와 `fixupTarget`도 함께 싣는다. 답글도 id와 `choices`, `answer`를 그대로 실어야 고른 답글이 어느 답글의 고를 거리를 골랐는지 이어진다.
+접으면 리뷰 대상 커밋의 SHA가 바뀐다. 리뷰를 닫지 않고 순서나 메시지만 바꾼 경우는 difit이 옮기므로 이 절차가 필요 없다. 접은 뒤 새 SHA로 리뷰를 다시 열면 지적은 옛 SHA의 리뷰에 남아 있으므로, 옛 서버에서 꺼내 새 서버에 넣는다. `comment get`은 지적마다 메시지를 배열로 주고 `comment add`는 첫 메시지를 `thread`, 나머지를 `reply`로 받으므로 모양을 바꿔 넣는다. 지적 id와 `codeSnapshot`(줄 내용과 지적을 단 커밋)을 그대로 실어야 fixup 트레일러와 결정 기록이 같은 지적을 가리키고, 화면이 지적의 자리를 다시 찾을 수 있다. 커밋 하나를 보며 단 지적의 `view`와 `fixupTarget`도 함께 싣는다. 답글도 id와 `choices`, `answer`를 그대로 실어야 고른 답글이 어느 답글의 고를 거리를 골랐는지 이어진다.
 
 ```sh
 difit comment get --port <옛 port> --format json > old.json
