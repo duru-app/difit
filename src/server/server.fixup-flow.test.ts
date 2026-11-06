@@ -1975,6 +1975,88 @@ it('refuses to follow a rewrite the history does not show', async () => {
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(adds);
 });
 
+it('refuses a report that moved a waiting fixup into the review, and keeps it waiting above', async () => {
+  const { repo, base, adds, edits } = conflictingStack();
+  const other = commit(repo, 'other', { 'o.js': '1\n' });
+  const fixup = commit(repo, `fixup! ${edits}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const { api, post } = await startReview(repo, base, other, 9290);
+  const query = `?base=${base}&target=${other}`;
+  const at = '2020-01-01T00:00:00Z';
+  await post(`/api/comments${query}`, {
+    threads: [
+      {
+        id: 't1',
+        position: { scope: 'commit' },
+        fixupTarget: edits,
+        view: { baseCommitish: adds, targetCommitish: edits },
+        createdAt: at,
+        updatedAt: at,
+        messages: [{ id: 't1-m', body: 'x', author: 'User', createdAt: at, updatedAt: at }],
+      },
+    ],
+  });
+  const waiting = async () => {
+    const response = await fetch(api('/api/fixups'));
+    const { fixups } = (await response.json()) as { fixups: Array<{ threadIds: string[] }> };
+    const output = await (await fetch(api('/api/comments-output'))).text();
+    return {
+      fixups: fixups.map(({ threadIds }) => threadIds),
+      pending: output.includes('[승인 대기]'),
+    };
+  };
+  expect(await waiting()).toEqual({ fixups: [['t1']], pending: true });
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const movedEdits = commit(repo, 'edits', { 'b.js': '2\n' });
+  const insideFixup = commit(repo, `fixup! ${movedEdits}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const movedAdds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const movedOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const refused = await post(`/api/history-rewritten${query}`, {
+    rewritten: {
+      [edits]: movedEdits,
+      [fixup]: insideFixup,
+      [adds]: movedAdds,
+      [other]: movedOther,
+    },
+  });
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ reason: 'stale-view' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(movedOther);
+  const stayed = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(stayed.review!.commits.map(({ sha }) => sha)).toEqual([adds, edits, other]);
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const newEdits = commit(repo, 'edits', { 'b.js': '2\n' });
+  const newAdds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const newOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const aboveFixup = commit(repo, `fixup! ${newEdits}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const followed = await post(`/api/history-rewritten${query}`, {
+    rewritten: { [edits]: newEdits, [fixup]: aboveFixup, [adds]: newAdds, [other]: newOther },
+  });
+  expect(followed.status).toBe(200);
+  expect(await waiting()).toEqual({ fixups: [['t1']], pending: true });
+});
+
+it('follows a report that leaves a fixup inside the review where it already stood', async () => {
+  const { repo, base, adds } = conflictingStack();
+  git(repo, ['reset', '-q', '--hard', adds]);
+  const fixup = commit(repo, `fixup! ${adds}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const other = commit(repo, 'other', { 'o.js': '1\n' });
+  const { api, post } = await startReview(repo, base, other, 9291);
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const newAdds = commit(repo, 'adds', { 'b.js': '1\n', 'n.js': '1\n' });
+  const newFixup = commit(repo, `fixup! ${newAdds}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const newOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const followed = await post(`/api/history-rewritten?base=${base}&target=${other}`, {
+    rewritten: { [adds]: newAdds, [fixup]: newFixup, [other]: newOther },
+  });
+
+  expect(followed.status).toBe(200);
+  const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(review!.commits.map(({ sha }) => sha)).toEqual([newAdds, newOther]);
+});
+
 it('hands a reword over when rebuilding a merge conflicts', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
