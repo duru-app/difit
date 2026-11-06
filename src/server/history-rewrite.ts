@@ -46,10 +46,17 @@ export async function readRewriteState(
   target: string,
   oldestReplaced: string,
   defaultBranch: string | null,
-): Promise<Pick<RewriteState, 'branch' | 'targetInHead' | 'operationInProgress' | 'leftBranches'>> {
-  const [headBranch, onHead, operationInProgress] = await Promise.all([
+): Promise<
+  Pick<
+    RewriteState,
+    'branch' | 'targetInHead' | 'operationInProgress' | 'leftBranches' | 'rewritesPushedCommit'
+  >
+> {
+  const [headBranch, onHead, onUpstream, operationInProgress] = await Promise.all([
     runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']),
     runGit(repoPath, ['merge-base', '--is-ancestor', target, 'HEAD']),
+    // Git fails this the same way when the branch has no upstream, which counts as not pushed.
+    runGit(repoPath, ['merge-base', '--is-ancestor', oldestReplaced, '@{upstream}']),
     hasOperationInProgress(repoPath),
   ]);
   const branch = headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null;
@@ -58,7 +65,13 @@ export async function readRewriteState(
     headBranch: branch,
     defaultBranch,
   });
-  return { branch, targetInHead: onHead.code === 0, operationInProgress, leftBranches: left };
+  return {
+    branch,
+    targetInHead: onHead.code === 0,
+    rewritesPushedCommit: onUpstream.code === 0,
+    operationInProgress,
+    leftBranches: left,
+  };
 }
 
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;

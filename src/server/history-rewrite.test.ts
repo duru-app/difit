@@ -12,7 +12,12 @@ import { tmpdir } from 'os';
 import { delimiter, join } from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { type HistoryRewrite, removeAbandonedRewrites, rewriteHistory } from './history-rewrite';
+import {
+  type HistoryRewrite,
+  readRewriteState,
+  removeAbandonedRewrites,
+  rewriteHistory,
+} from './history-rewrite';
 
 let home: string;
 const savedEnv = { ...process.env };
@@ -683,5 +688,35 @@ describe.skipIf(process.platform === 'win32')('a rewrite cut short', { timeout: 
     expect(existsSync(join(live, 'worktree'))).toBe(true);
     expect(existsSync(join(unowned, 'worktree'))).toBe(true);
     expect(worktrees(repo)).toHaveLength(3);
+  });
+});
+
+describe('readRewriteState', () => {
+  const remoteOf = (repo: string) => {
+    const remote = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-remote-'));
+    repos.push(remote);
+    git(remote, 'init', '-q', '--bare');
+    git(repo, 'remote', 'add', 'origin', remote);
+  };
+
+  it('calls nothing pushed when the branch has no upstream', async () => {
+    const { repo, first, second } = createRepo();
+    remoteOf(repo);
+    git(repo, 'push', '-q', 'origin', 'feature');
+
+    const state = await readRewriteState(repo, second, first, null);
+
+    expect(state.rewritesPushedCommit).toBe(false);
+  });
+
+  it('calls a commit pushed when the upstream holds it, and a later one not', async () => {
+    const { repo, first, second } = createRepo();
+    remoteOf(repo);
+    git(repo, 'push', '-q', '-u', 'origin', 'feature');
+    const later = commit(repo, 'not pushed yet', { 'd.ts': 'd\n' });
+
+    expect((await readRewriteState(repo, later, first, null)).rewritesPushedCommit).toBe(true);
+    expect((await readRewriteState(repo, later, second, null)).rewritesPushedCommit).toBe(true);
+    expect((await readRewriteState(repo, later, later, null)).rewritesPushedCommit).toBe(false);
   });
 });

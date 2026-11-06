@@ -2157,6 +2157,15 @@ export async function startServer(options: ServerOptions): Promise<{
       )),
       defaultBranch,
       rewordsMerge: commit.isMerge === true,
+      commentSessions: await Promise.all(
+        [...commentSessions.values()]
+          .filter(({ threads }) => threads.length > 0)
+          .map(async (session) => ({
+            threads: session.threads,
+            decisions: session.decisions,
+            fixupsByThread: await fixupsByThreadFor(session.selection),
+          })),
+      ),
     });
     const [blocked] = blocks;
     if (blocked) return refuseReword(blocked);
