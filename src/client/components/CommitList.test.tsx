@@ -720,6 +720,18 @@ describe('CommitList', () => {
       expect(card()).toHaveTextContent('본문 없음');
     });
 
+    it('stays while the pointer crosses the row buttons on its way to the card', async () => {
+      renderWithCard();
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      const copy = within(row(/2222222/).parentElement!).getByRole('button', { name: /복사/ });
+      fireEvent.mouseOut(row(/2222222/), { relatedTarget: copy });
+      await rest(1000);
+
+      expect(card()).toHaveTextContent('2222222');
+    });
+
     it('stays while the pointer is on it and goes once the pointer leaves both', async () => {
       renderWithCard();
       fireEvent.mouseEnter(row(/2222222/));
