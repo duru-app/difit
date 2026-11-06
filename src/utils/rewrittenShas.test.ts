@@ -46,7 +46,7 @@ describe('movedSelection', () => {
 describe('movedPlace', () => {
   it('moves what a comment import names and adds nothing it lacks', () => {
     const named = { body: 'x', fixupTarget: OLD };
-    const bare = { body: 'x' };
+    const bare: { body: string; fixupTarget?: string } = { body: 'x' };
     expect(movedPlace(named, REWRITTEN)).toEqual({ body: 'x', fixupTarget: NEW });
     expect(movedPlace(bare, REWRITTEN)).toEqual({ body: 'x' });
   });
