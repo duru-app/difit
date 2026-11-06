@@ -28,7 +28,12 @@ function renderList(
   {
     commits = COMMITS,
     ...options
-  }: { rangeStart?: string; inDrawer?: boolean; commits?: ReviewCommit[] } = {},
+  }: {
+    rangeStart?: string;
+    inDrawer?: boolean;
+    onClose?: () => void;
+    commits?: ReviewCommit[];
+  } = {},
 ) {
   const onSelect = vi.fn();
   const review = { ...REVIEW, commits };
@@ -532,6 +537,37 @@ describe('CommitList', () => {
       renderList({ kind: 'all' }, { inDrawer: true });
 
       expect(copyButtonOf(/2222222/)).toHaveAccessibleName('해시 복사');
+    });
+  });
+
+  describe('closing the phone drawer', () => {
+    const closeButton = () => screen.queryByRole('button', { name: '커밋 서랍 닫기' });
+
+    it('offers closing in the title row', () => {
+      const onClose = vi.fn();
+      renderList({ kind: 'all' }, { inDrawer: true, onClose });
+
+      fireEvent.click(closeButton()!);
+
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('still offers closing while a range is being picked', () => {
+      const onClose = vi.fn();
+      const { pickFrom } = renderList({ kind: 'all' }, { inDrawer: true, onClose });
+
+      pickFrom('1'.repeat(40));
+      fireEvent.click(closeButton()!);
+
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('keeps the desktop list and its range row free of it', () => {
+      const { pickFrom } = renderList({ kind: 'all' }, { onClose: vi.fn() });
+      expect(closeButton()).toBeNull();
+
+      pickFrom('1'.repeat(40));
+      expect(closeButton()).toBeNull();
     });
   });
 

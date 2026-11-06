@@ -1792,6 +1792,10 @@ function App() {
     selectView({ kind: 'cancel' });
     setIsCommitDrawerOpen(false);
   }, [selectView]);
+  useHotkeys('escape', closeCommitDrawer, {
+    scopes: 'navigation',
+    enabled: isMobile && isCommitDrawerOpen,
+  });
   const openReviewAt = useCallback(
     (commit: string) => showDiff(selectionAtCommit(selectedRevision, commit)),
     [selectedRevision, showDiff],
@@ -2697,7 +2701,7 @@ function App() {
                 }}
               />
             </h1>
-            <div className="flex items-center gap-1">
+            <div className="flex min-w-0 items-center gap-1">
               {isMobile && hasCommitList && (
                 <button
                   type="button"
@@ -3006,6 +3010,7 @@ function App() {
                 onSelect={selectView}
                 rangeStart={rangeStart}
                 inDrawer
+                onClose={closeCommitDrawer}
                 openCounts={openCountsByCommit}
                 amendedMessages={amendedMessages}
                 reword={reword}
