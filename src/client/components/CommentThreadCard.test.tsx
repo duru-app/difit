@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,16 @@ import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import { copyTextToClipboard } from '../utils/clipboard';
 
 import { CommentThreadCard } from './CommentThreadCard';
+
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn().mockResolvedValue({
+      svg: '<svg><title>Mermaid</title></svg>',
+      bindFunctions: undefined,
+    }),
+  },
+}));
 
 vi.mock('../utils/clipboard', () => ({
   copyTextToClipboard: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +62,27 @@ const threadWithUserReply: CommentThread = {
 describe('CommentThreadCard', () => {
   beforeEach(() => {
     vi.mocked(copyTextToClipboard).mockClear();
+  });
+
+  it('draws a mermaid block in a reply body', async () => {
+    const thread: CommentThread = {
+      ...mockThread,
+      messages: [
+        mockThread.messages[0]!,
+        { ...mockThread.messages[1]!, body: '```mermaid\nflowchart TD\n  A --> B\n```' },
+      ],
+    };
+    const { container } = render(
+      <CommentThreadCard
+        thread={thread}
+        onResolveThread={vi.fn()}
+        onReplyToThread={vi.fn().mockResolvedValue(undefined)}
+        onRemoveMessage={vi.fn()}
+        onUpdateMessage={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector('.mermaid-diagram svg')).not.toBeNull());
   });
 
   it('copies only the text of one message, without its location', async () => {

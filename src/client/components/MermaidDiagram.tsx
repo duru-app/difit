@@ -4,6 +4,7 @@ import { getResolvedTheme, type ResolvedTheme } from '../utils/appearanceTheme';
 
 type MermaidDiagramProps = {
   chart: string;
+  naturalSize?: boolean;
 };
 
 type MermaidModule = typeof import('mermaid');
@@ -17,7 +18,15 @@ const loadMermaid = () => {
 
 const getMermaidTheme = (theme: ResolvedTheme) => (theme === 'light' ? 'default' : 'dark');
 
-export function MermaidDiagram({ chart }: MermaidDiagramProps) {
+const showAtNaturalSize = (svg: SVGSVGElement | null) => {
+  const [, , width, height] = (svg?.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number);
+  if (!svg || !width || !height) return;
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+  svg.style.maxWidth = 'none';
+};
+
+export function MermaidDiagram({ chart, naturalSize = false }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const diagramId = useId().replace(/:/g, '-');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getResolvedTheme());
@@ -72,6 +81,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
         if (isCancelled) return;
 
         container.innerHTML = svg;
+        if (naturalSize) showAtNaturalSize(container.querySelector('svg'));
         bindFunctions?.(container);
       } catch (error) {
         if (isCancelled) return;
@@ -90,7 +100,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
         container.innerHTML = '';
       }
     };
-  }, [chart, diagramId, mermaidTheme]);
+  }, [chart, diagramId, mermaidTheme, naturalSize]);
 
   if (error) {
     return (
@@ -109,7 +119,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
     <div
       ref={containerRef}
       aria-label="Mermaid diagram"
-      className="mermaid-diagram overflow-x-auto rounded border border-github-border bg-github-bg-secondary p-3"
+      className={`mermaid-diagram overflow-x-auto rounded border border-github-border bg-github-bg-secondary p-3`}
     />
   );
 }
