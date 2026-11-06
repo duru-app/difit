@@ -149,6 +149,8 @@ const REWORD_FAILURE_MESSAGES: Record<RewordRejection, string> = {
   'operation-in-progress':
     'rebase, merge, cherry-pick, revert가 도중에 멈춰 있어 이력을 바꿀 수 없습니다.',
   'merge-commit': '머지 커밋의 메시지는 고칠 수 없습니다.',
+  'agent-working':
+    '에이전트가 작업 중입니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 저장해 주세요.',
   'empty-message': '메시지를 비울 수는 없습니다.',
   'no-change': '메시지가 바뀌지 않았습니다.',
   'needs-confirmation': '이력을 바꾸기 전에 확인이 필요합니다.',
@@ -166,6 +168,7 @@ const REWRITE_WARNING_MESSAGES: Record<RewriteWarning, (branches: string) => str
     `기본 브랜치 ${branches}는 옮기지 않습니다. 옛 커밋에 남아 지금 브랜치와 갈라집니다.`,
   'branch-elsewhere': (branches) =>
     `다른 작업 폴더에서 쓰는 브랜치 ${branches}는 옮기지 않습니다. 옛 커밋에 남습니다.`,
+  'pushed-commit': () => 'push한 커밋이 바뀝니다. 다시 올리려면 force push가 필요합니다.',
 };
 
 export function rewordFailureMessage(

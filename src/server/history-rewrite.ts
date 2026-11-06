@@ -49,12 +49,19 @@ export async function readRewriteState(
 ): Promise<
   Pick<
     RewriteState,
-    'branch' | 'defaultBranch' | 'targetInHead' | 'operationInProgress' | 'leftBranches'
+    | 'branch'
+    | 'defaultBranch'
+    | 'targetInHead'
+    | 'operationInProgress'
+    | 'leftBranches'
+    | 'rewritesPushedCommit'
   >
 > {
-  const [branch, onHead, operationInProgress] = await Promise.all([
+  const [branch, onHead, onUpstream, operationInProgress] = await Promise.all([
     headBranchOf(repoPath),
     runGit(repoPath, ['merge-base', '--is-ancestor', target, 'HEAD']),
+    // Git fails this the same way when the branch has no upstream, which counts as not pushed.
+    runGit(repoPath, ['merge-base', '--is-ancestor', oldestReplaced, '@{upstream}']),
     hasOperationInProgress(repoPath),
   ]);
   const stack = await findStackedBranches(repoPath, {
@@ -66,6 +73,7 @@ export async function readRewriteState(
     branch,
     defaultBranch: stack.defaultBranch,
     targetInHead: onHead.code === 0,
+    rewritesPushedCommit: onUpstream.code === 0,
     operationInProgress,
     leftBranches: stack.left,
   };

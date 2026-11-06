@@ -619,7 +619,11 @@ export interface RewordRequest {
   acknowledged?: RewriteWarning[];
 }
 
-export type RewriteWarning = 'default-branch' | 'default-branch-left' | 'branch-elsewhere';
+export type RewriteWarning =
+  | 'default-branch'
+  | 'default-branch-left'
+  | 'branch-elsewhere'
+  | 'pushed-commit';
 
 // Stays on the old commits after the rewrite.
 export interface LeftBranch {
@@ -633,6 +637,7 @@ export type RewordRejection =
   | 'detached-head'
   | 'operation-in-progress'
   | 'merge-commit'
+  | 'agent-working'
   | 'empty-message'
   | 'no-change'
   | 'needs-confirmation'

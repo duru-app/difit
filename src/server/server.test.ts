@@ -3500,6 +3500,7 @@ describe('Server Integration Tests', () => {
         targetInHead: true,
         operationInProgress: false,
         leftBranches: [],
+        rewritesPushedCommit: false,
       };
       let port: number;
 
