@@ -2306,8 +2306,7 @@ export async function startServer(options: ServerOptions): Promise<{
 
   // An agent rewrote the history itself: it says what became of each commit, and the review follows.
   async function applyAgentRewrite(
-    selection: DiffSelection,
-    { commits }: ReviewScope,
+    { selection, commits }: ReviewScope,
     rewritten: RewrittenShas,
   ): Promise<{ status: number; body: RewordResponse }> {
     const newShas = Object.values(rewritten);
@@ -2391,7 +2390,7 @@ export async function startServer(options: ServerOptions): Promise<{
     const rewritten = parseHistoryRewrittenRequest(req.body);
     const review = findReviewOf(selection);
     if (!rewritten || !review) return null;
-    return directEditQueue.then(() => applyAgentRewrite(selection, review, rewritten));
+    return directEditQueue.then(() => applyAgentRewrite(review, rewritten));
   });
 
   async function fixupsByThreadOrNone(

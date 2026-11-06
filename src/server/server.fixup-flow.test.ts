@@ -1638,3 +1638,36 @@ it('refuses to follow a rewrite the history does not show', async () => {
   expect(await follow({ rewritten: { [adds]: adds } })).toEqual([409, 'stale-view']);
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(adds);
 });
+
+it('hands a reword over when rebuilding a merge conflicts', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n2\n3\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  git(repo, ['checkout', '-q', '-b', 'side']);
+  commit(repo, 'side edit', { 'a.js': '1\nside\n3\n' });
+  git(repo, ['checkout', '-q', 'feature']);
+  commit(repo, 'main edit', { 'a.js': '1\nmain\n3\n' });
+  expect(() => git(repo, ['merge', '-q', '--no-ff', '-m', 'merge side', 'side'])).toThrow();
+  const merge = commit(repo, 'merge side', { 'a.js': '1\nresolved\n3\n' });
+
+  const { api, post } = await startReview(repo, base, merge, 9289);
+  const leaving = new AbortController();
+  const waiting = await fetch(api('/api/comments-wait'), { signal: leaving.signal });
+  const response = await post(`/api/reword?base=${base}&target=${merge}`, {
+    commit: typo,
+    original: 'add typpo',
+    message: 'add typo',
+  });
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({
+    reason: 'conflict',
+    conflict: { commit: { sha: merge, subject: 'merge side' }, agentAttached: true },
+  });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(merge);
+  leaving.abort();
+  await waiting.body?.cancel().catch(() => undefined);
+});
