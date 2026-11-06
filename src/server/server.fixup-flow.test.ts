@@ -1503,6 +1503,14 @@ it('reorders the commits and moves the review, its comments, fixups and decision
   writeFileSync(join(repo, 'first.js'), 'better first\n');
   git(repo, ['commit', '-q', '-a', '-m', `fixup! ${first}\n\nReview-Thread: on-first`]);
   const fixup = git(repo, ['rev-parse', 'HEAD']);
+  git(repo, [
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    `amend! ${second}\n\nsecond, renamed\n\nReview-Thread: on-second`,
+  ]);
+  const amend = git(repo, ['rev-parse', 'HEAD']);
   writeFileSync(join(repo, 'a.js'), 'work in progress\n');
 
   const { api, post } = await startReview(repo, base, third, 9281);
@@ -1525,6 +1533,7 @@ it('reorders the commits and moves the review, its comments, fixups and decision
   await post(`/api/comments${query}`, {
     threads: [
       threadOn('on-first', { baseCommitish: base, targetCommitish: first }, first, 'first.js'),
+      threadOn('on-second', { baseCommitish: first, targetCommitish: second }, second, 'second.js'),
       threadOn('on-third', { baseCommitish: second, targetCommitish: third }, third, 'third.js'),
       threadOn('on-run', { baseCommitish: first, targetCommitish: third }, third, 'third.js'),
     ],
@@ -1547,16 +1556,21 @@ it('reorders the commits and moves the review, its comments, fixups and decision
   const { rewritten } = (await response.json()) as { rewritten: Record<string, string> };
 
   expect(response.status).toBe(200);
-  const [newThird, newFirst, newSecond, newFixup] = [third, first, second, fixup].map(
-    (sha) => rewritten[sha]!,
-  );
+  const [newThird, newFirst, newSecond, newFixup, newAmend] = [
+    third,
+    first,
+    second,
+    fixup,
+    amend,
+  ].map((sha) => rewritten[sha]!);
   expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
     'third',
     'first',
     'second',
     `fixup! ${newFirst}`,
+    `amend! ${newSecond}`,
   ]);
-  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newFixup);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newAmend);
   expect(git(repo, ['status', '--porcelain'])).toBe('M a.js');
 
   const moved = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
@@ -1569,6 +1583,7 @@ it('reorders the commits and moves the review, its comments, fixups and decision
   };
   expect(fixups.map(({ sha, foldTargetSha }) => [sha, foldTargetSha])).toEqual([
     [newFixup, newFirst],
+    [newAmend, newSecond],
   ]);
 
   const stored = (await (await fetch(api('/api/comments-json'))).json()) as {
@@ -1578,7 +1593,7 @@ it('reorders the commits and moves the review, its comments, fixups and decision
       fixupTarget?: string;
       codeSnapshot?: { commit?: string };
     }>;
-    decisions: Array<{ threadId: string; fixupSha: string; kind: string }>;
+    decisions: Array<{ threadId: string; fixupSha: string; patchId?: string; kind: string }>;
   };
   const thread = (id: string) => stored.threads.find((each) => each.id === id);
   expect(thread('on-first')).toMatchObject({
@@ -1594,6 +1609,14 @@ it('reorders the commits and moves the review, its comments, fixups and decision
   expect(thread('on-run')?.view).toEqual({ baseCommitish: base, targetCommitish: newSecond });
   expect(stored.decisions).toContainEqual(
     expect.objectContaining({ threadId: 'on-first', fixupSha: newFixup, kind: 'approved' }),
+  );
+  expect(stored.decisions).toContainEqual(
+    expect.objectContaining({
+      threadId: 'on-second',
+      fixupSha: newAmend,
+      patchId: newAmend,
+      kind: 'approved',
+    }),
   );
 
   const short = git(repo, ['rev-parse', '--short', newFirst]);
@@ -1639,7 +1662,7 @@ it('reorders the commits and moves the review, its comments, fixups and decision
   expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
     'third',
     'first',
-    'second',
+    'second, renamed',
   ]);
   expect(git(repo, ['show', 'HEAD~1:first.js'])).toBe('better first');
 });
