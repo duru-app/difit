@@ -60,6 +60,18 @@ describe('CommentMermaidDiagram', () => {
     expect(large.parentElement?.parentElement).toHaveClass('w-full');
   });
 
+  it('leaves the source of a diagram it cannot draw selectable, with nothing to press', async () => {
+    setPhone(false);
+    const { default: mermaid } = await import('mermaid');
+    vi.mocked(mermaid.render).mockRejectedValueOnce(new Error('Parse error'));
+
+    renderDiagram();
+
+    const source = await screen.findByText(/flowchart TD/);
+    expect(source.closest('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: '도식 크게 보기' })).not.toBeInTheDocument();
+  });
+
   it('keeps a click in the large view away from the card around the diagram', async () => {
     setPhone(false);
     const onCardClick = vi.fn();
