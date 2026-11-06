@@ -105,6 +105,7 @@ export function CommitCommentsSection({
                 sha={commit}
                 load={loadMessage}
                 amendedMessage={amendedMessages?.get(commit)}
+                className="max-h-[40vh] overflow-y-auto"
               />
             )}
             {own.map((thread) => (
