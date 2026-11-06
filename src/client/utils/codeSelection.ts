@@ -39,9 +39,38 @@ function trimEmptyEnds(cells: SelectedCell[]): SelectedCell[] {
   return cells.slice(first, last + 1);
 }
 
+function sideOfCellAt(node: Node, container: Element) {
+  const element = node instanceof Element ? node : node.parentElement;
+  const cell = element?.closest<HTMLElement>('[data-code-side]');
+  return cell && container.contains(cell) ? cell.dataset.codeSide : undefined;
+}
+
+// A deleted line of a unified selection has no new line number, so a count of hidden lines goes
+// above the deleted lines that follow them.
+function textWithHiddenLineCounts(cells: SelectedCell[], side: DiffSide): string {
+  const parts: string[] = [];
+  let previousLine: number | undefined;
+  let afterPreviousLine = 0;
+  for (const cell of cells) {
+    if (cell.side !== side) {
+      parts.push(cell.text);
+      continue;
+    }
+    const hidden = previousLine === undefined ? 0 : cell.lineNumber - previousLine - 1;
+    if (hidden > 0) {
+      parts.splice(afterPreviousLine, 0, `… ${hidden} ${hidden === 1 ? 'line' : 'lines'}`);
+    }
+    parts.push(cell.text);
+    previousLine = cell.lineNumber;
+    afterPreviousLine = parts.length;
+  }
+  return parts.join('\n');
+}
+
 // A unified selection's text keeps deleted and added lines alike, and its lines are counted on the
-// new side unless only deleted lines were picked. A split selection keeps to the column it starts
-// in, though the browser also highlights the other column of the rows between.
+// new side unless only deleted lines were picked. A split selection keeps to the column of the code
+// cell it starts in, or else ends in, though the browser also highlights the other column of the
+// rows between. Lines the selection jumps over appear in its text as a count.
 export function selectionInCode(
   range: Range,
   container: Element,
@@ -60,26 +89,43 @@ export function selectionInCode(
     }));
 
   if (layout === 'split') {
-    const startNode = range.startContainer;
-    const startElement = startNode instanceof Element ? startNode : startNode.parentElement;
-    const startCell = startElement?.closest<HTMLElement>('[data-code-side]');
-    const startSide =
-      startCell && container.contains(startCell)
-        ? startCell.dataset.codeSide
-        : cells.find((cell) => cell.text !== '')?.side;
-    cells = cells.filter((cell) => cell.side === startSide);
+    const column =
+      sideOfCellAt(range.startContainer, container) ??
+      sideOfCellAt(range.endContainer, container) ??
+      cells.find((cell) => cell.text !== '')?.side;
+    cells = cells.filter((cell) => cell.side === column);
   }
   cells = trimEmptyEnds(cells);
   if (cells.length === 0) return null;
 
-  const text = cells.map((cell) => cell.text).join('\n');
-  if (text.trim() === '') return null;
+  if (cells.every((cell) => cell.text.trim() === '')) return null;
 
   const side: DiffSide = cells.some((cell) => cell.side === 'new') ? 'new' : 'old';
   const lineNumbers = cells.filter((cell) => cell.side === side).map((cell) => cell.lineNumber);
   const start = Math.min(...lineNumbers);
   const end = Math.max(...lineNumbers);
-  return { side, lineNumber: start === end ? start : [start, end], text };
+  return {
+    side,
+    lineNumber: start === end ? start : [start, end],
+    text: textWithHiddenLineCounts(cells, side),
+  };
+}
+
+export function clipToFile(range: Range, file: Element): Range | null {
+  const startsInside = file.contains(range.startContainer);
+  const endsInside = file.contains(range.endContainer);
+  if (startsInside && endsInside) return range;
+  if (!startsInside && !endsInside) return null;
+
+  const picksOtherFile = Array.from(file.ownerDocument.querySelectorAll('[data-code-line]')).some(
+    (cell) => !file.contains(cell) && range.intersectsNode(cell) && textInCell(range, cell) !== '',
+  );
+  if (picksOtherFile) return null;
+
+  const clipped = range.cloneRange();
+  if (startsInside) clipped.setEnd(file, file.childNodes.length);
+  else clipped.setStart(file, 0);
+  return clipped;
 }
 
 export function quoteSelection(text: string, body: string): string {

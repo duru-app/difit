@@ -389,10 +389,26 @@ const next = true;
           body: 'Test comment',
           side: 'new',
           line: 15,
+          codeSnapshot: { content: 'const x = 1;' },
         });
       });
 
       expect(result.current.threads[0]).toMatchObject({ codeSnapshot: { commit: undefined } });
+    });
+
+    it('stores no code on a line thread saved without any', () => {
+      const { result } = renderHook(() => useDiffComments('main', 'feature-branch', 'abc123'));
+
+      act(() => {
+        result.current.addThread({
+          filePath: 'src/utils/test.ts',
+          body: 'Test comment',
+          side: 'new',
+          line: { start: 4, end: 38 },
+        });
+      });
+
+      expect(result.current.threads[0]).not.toHaveProperty('codeSnapshot');
     });
 
     it('binds a thread made on one commit to that commit and the view it was made on', () => {
@@ -416,6 +432,7 @@ const next = true;
           body: 'On the whole review',
           side: 'new',
           line: 3,
+          codeSnapshot: { content: 'const x = 1;' },
         });
       });
 

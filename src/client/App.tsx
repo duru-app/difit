@@ -948,6 +948,7 @@ function App() {
   const {
     isLoading: isExpandLoading,
     openLines,
+    readLines,
     prefetchFileContent,
     getMergedChunks,
     lastUpdatedAt,
@@ -3235,6 +3236,7 @@ function App() {
                           onCommentTriggerHandled={handleCommentTriggerHandled}
                           mergedChunks={mergedChunks}
                           openLines={openLines}
+                          readLines={readLines}
                           prefetchFileContent={prefetchFileContent}
                           isExpandLoading={isExpandLoading}
                           diffVersion={diffDataVersion}

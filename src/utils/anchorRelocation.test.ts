@@ -86,6 +86,75 @@ describe('relocateAnchor', () => {
     ).toEqual({ kind: 'stale', reason: 'missing' });
   });
 
+  describe('a range with lines hidden inside it', () => {
+    const content = 'first;\nhidden 1;\nhidden 2;\nlast;';
+    const shown = (entries: [number, string][]) => new Map(entries);
+
+    it('moves as a whole when its visible lines match', () => {
+      const lines = shown([
+        [9, 'above;'],
+        [10, 'first;'],
+        [13, 'last;'],
+      ]);
+
+      expect(relocateAnchor({ line: { start: 4, end: 7 }, content }, lines)).toEqual({
+        kind: 'located',
+        line: { start: 10, end: 13 },
+      });
+    });
+
+    it('is stale as missing when a visible line inside it differs', () => {
+      const lines = shown([
+        [4, 'first;'],
+        [5, 'changed;'],
+        [7, 'last;'],
+      ]);
+
+      expect(relocateAnchor({ line: { start: 4, end: 7 }, content }, lines)).toEqual({
+        kind: 'stale',
+        reason: 'missing',
+      });
+    });
+
+    it.each([
+      ['first', [[7, 'last;']]],
+      ['last', [[4, 'first;']]],
+    ] as const)('is stale as missing when its %s line is hidden too', (_, entries) => {
+      const lines = shown(entries.map(([line, text]) => [line, text]));
+
+      expect(relocateAnchor({ line: { start: 4, end: 7 }, content }, lines)).toEqual({
+        kind: 'stale',
+        reason: 'missing',
+      });
+    });
+
+    it('is stale as missing when lines were added inside it', () => {
+      const lines = shown([
+        [4, 'first;'],
+        [9, 'last;'],
+      ]);
+
+      expect(relocateAnchor({ line: { start: 4, end: 7 }, content }, lines)).toEqual({
+        kind: 'stale',
+        reason: 'missing',
+      });
+    });
+
+    it('is stale as ambiguous when its visible lines match in two places', () => {
+      const lines = shown([
+        [4, 'first;'],
+        [7, 'last;'],
+        [20, 'first;'],
+        [23, 'last;'],
+      ]);
+
+      expect(relocateAnchor({ line: { start: 4, end: 7 }, content }, lines)).toEqual({
+        kind: 'stale',
+        reason: 'ambiguous',
+      });
+    });
+  });
+
   it('ignores trailing whitespace and CRLF line endings', () => {
     const lines = fileLines(['const a = 1;  ', 'const b = 2;']);
 

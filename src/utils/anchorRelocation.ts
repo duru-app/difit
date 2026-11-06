@@ -26,7 +26,8 @@ export function noVisibleLineContradictsAnchor(
   });
 }
 
-// Moves only to an exact match that occurs exactly once; never fits by surrounding context.
+// Moves only to an exact match that occurs exactly once; never fits by surrounding context. Only
+// lines inside the range may be missing from `lines`; its first and last lines must match.
 // At the anchor's own commit the stored line numbers are exact, so the stored position wins
 // unless a visible line contradicts it.
 export function relocateAnchor(
@@ -42,7 +43,8 @@ export function relocateAnchor(
   const matchesAt = (start: number) =>
     expected.every((content, offset) => {
       const current = lines.get(start + offset);
-      return current !== undefined && trimTrailingWhitespace(current) === content;
+      if (current === undefined) return offset > 0 && offset < expected.length - 1;
+      return trimTrailingWhitespace(current) === content;
     });
 
   const [start, ...others] = [...lines.keys()].filter(matchesAt);

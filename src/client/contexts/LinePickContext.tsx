@@ -13,6 +13,7 @@ import type {
   CommentThread,
   DiffLine,
   DiffSide,
+  ExpandedLine,
   LineNumber,
   LineSelection,
   SidedLine,
@@ -60,6 +61,8 @@ export interface LinePickStore {
   setAddMode: (on: boolean) => void;
   close: () => void;
   contentOf: (side: DiffSide, line: LineNumber) => string;
+  // The code a comment on these lines saves; undefined unless every line of them could be read.
+  snapshotOf: (side: DiffSide, line: LineNumber) => string | undefined;
   flash: (threadId: string) => void;
 }
 
@@ -73,7 +76,7 @@ const sameAnchor = (a: LineSelection | null, b: LineSelection | null) =>
 // it too while the cursor still sits there. Lines numbered apart from the file's diff, such as a
 // fixup card's, take a pick of their own from here instead of the file's shared one.
 export function useLinePickState(
-  lines: readonly DiffLine[],
+  lines: readonly ExpandedLine[],
   cursorLine: LineSelection | null,
 ): LinePickStore {
   const [pick, setPick] = useState<LinePick | null>(null);
@@ -175,18 +178,34 @@ export function useLinePickState(
     [rows],
   );
 
-  const contentOf = useCallback(
+  const linesWithin = useCallback(
     (side: DiffSide, line: LineNumber) => {
       const [start, end] = Array.isArray(line) ? line : [line, line];
-      return lines
-        .filter((diffLine) => {
-          const lineNumber = lineNumberOn(diffLine, side);
-          return lineNumber !== undefined && lineNumber >= start && lineNumber <= end;
-        })
-        .map((diffLine) => diffLine.content)
-        .join('\n');
+      return lines.filter((diffLine) => {
+        const lineNumber = lineNumberOn(diffLine, side);
+        return lineNumber !== undefined && lineNumber >= start && lineNumber <= end;
+      });
     },
     [lines],
+  );
+
+  const contentOf = useCallback(
+    (side: DiffSide, line: LineNumber) =>
+      linesWithin(side, line)
+        .map((diffLine) => diffLine.content)
+        .join('\n'),
+    [linesWithin],
+  );
+
+  const snapshotOf = useCallback(
+    (side: DiffSide, line: LineNumber) => {
+      const [start, end] = Array.isArray(line) ? line : [line, line];
+      const within = linesWithin(side, line);
+      return within.length === end - start + 1 && !within.some(({ contentUnread }) => contentUnread)
+        ? contentOf(side, line)
+        : undefined;
+    },
+    [linesWithin, contentOf],
   );
 
   const flash = useCallback((threadId: string) => {
@@ -214,6 +233,7 @@ export function useLinePickState(
       setAddMode,
       close,
       contentOf,
+      snapshotOf,
       flash,
     }),
     [
@@ -232,6 +252,7 @@ export function useLinePickState(
       placeCardOn,
       close,
       contentOf,
+      snapshotOf,
       flash,
     ],
   );
@@ -245,7 +266,7 @@ export function LinePickProvider({
   cursorLine,
   children,
 }: {
-  lines: readonly DiffLine[];
+  lines: readonly ExpandedLine[];
   cursorLine: LineSelection | null;
   children: ReactNode;
 }) {
@@ -254,7 +275,7 @@ export function LinePickProvider({
 }
 
 export function useLinePick(
-  lines: readonly DiffLine[],
+  lines: readonly ExpandedLine[],
   cursorLine: LineSelection | null,
 ): LinePickStore {
   const own = useLinePickState(lines, cursorLine);

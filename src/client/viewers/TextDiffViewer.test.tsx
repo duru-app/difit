@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChunkChangeKind, CommentThread, DiffFile, ThreadFixup } from '../../types/diff';
 import { EMPTY_FIXUP_OVERLAY, FixupOverlayProvider } from '../contexts/FixupOverlayContext';
@@ -811,3 +811,407 @@ describe.each(['unified', 'split'] as const)(
     });
   },
 );
+
+describe('TextDiffViewer selection across collapsed lines', () => {
+  const BAR_BUTTON = '고른 부분에 지적 달기';
+
+  const hunk = (start: number, word: string): MergedChunk => ({
+    header: `@@ -${start},2 +${start},2 @@`,
+    oldStart: start,
+    oldLines: 2,
+    newStart: start,
+    newLines: 2,
+    originalIndices: [start],
+    originalLineRanges: [{ originalIndex: start, start: 0, end: 2 }],
+    hiddenLinesBefore: start === 4 ? 3 : 31,
+    hiddenLinesAfter: 0,
+    lines: [
+      { type: 'delete', content: `was${word}`, oldLineNumber: start },
+      { type: 'add', content: `now${word}`, newLineNumber: start },
+      {
+        type: 'normal',
+        content: `same${word}`,
+        oldLineNumber: start + 1,
+        newLineNumber: start + 1,
+      },
+    ],
+  });
+
+  const twoHunks = (props: Partial<DiffViewerBodyProps> = {}) =>
+    viewer({
+      mergedChunks: [hunk(4, 'Alpha'), hunk(37, 'Omega')],
+      foldCommentChanges: false,
+      ...props,
+    });
+
+  const editable = (diffMode: 'unified' | 'split') => (
+    <FixupOverlayProvider
+      value={{
+        ...EMPTY_FIXUP_OVERLAY,
+        directEdit: { commit: 'b7c2e10', submit: vi.fn().mockResolvedValue(null) },
+      }}
+    >
+      {twoHunks({ diffMode })}
+    </FixupOverlayProvider>
+  );
+
+  const codeCell = (side: 'old' | 'new', line: number, root: ParentNode = document) =>
+    root.querySelector(`[data-code-side="${side}"][data-code-line="${line}"]`)!;
+
+  function textPoint(cell: Element, text: string): [Text, number] {
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const index = node.textContent?.indexOf(text) ?? -1;
+      if (index !== -1) return [node as Text, index];
+    }
+    throw new Error(`no "${text}" in the cell`);
+  }
+
+  function selectText(from: [Element, string], to: [Element, string]) {
+    const [startNode, startOffset] = textPoint(...from);
+    const [endNode, endIndex] = textPoint(...to);
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endIndex + to[1].length);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  }
+
+  const settled = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+  afterEach(() => {
+    document.getSelection()?.removeAllRanges();
+  });
+
+  it('comments on the whole range of a unified selection across lines that stay hidden, without code', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    render(twoHunks({ diffMode: 'unified', onAddComment }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+
+    const form = await screen.findByRole('textbox');
+    expect(codeCell('new', 38).closest('table')).toContainElement(form);
+    fireEvent.change(form, { target: { value: 'Why both?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith(
+        [4, 38],
+        '> nowAlpha\n> sameAlpha\n> … 31 lines\n> wasOmega\n> nowOmega\n> sameOmega\n\nWhy both?',
+        undefined,
+        'new',
+      );
+    });
+  });
+
+  it.each([
+    {
+      column: 'right',
+      side: 'new' as const,
+      from: 'nowAlpha',
+      quote: ['nowAlpha', 'sameAlpha', '… 31 lines', 'nowOmega', 'sameOmega'],
+    },
+    {
+      column: 'left',
+      side: 'old' as const,
+      from: 'wasAlpha',
+      quote: ['wasAlpha', 'sameAlpha', '… 31 lines', 'wasOmega', 'sameOmega'],
+    },
+  ])(
+    'keeps a split selection across lines that stay hidden in the $column column it starts in',
+    async ({ side, from, quote }) => {
+      const onAddComment = vi.fn().mockResolvedValue(undefined);
+      render(twoHunks({ diffMode: 'split', onAddComment }));
+
+      selectText([codeCell(side, 4), from], [codeCell(side, 38), 'sameOmega']);
+      fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+      fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why both?' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+      await waitFor(() => {
+        expect(onAddComment).toHaveBeenCalledWith(
+          [4, 38],
+          `${quote.map((line) => `> ${line}`).join('\n')}\n\nWhy both?`,
+          undefined,
+          side,
+        );
+      });
+    },
+  );
+
+  it.each(['unified', 'split'] as const)(
+    'shows one bar with 직접 고치기 for a %s selection inside one hunk',
+    async (diffMode) => {
+      render(editable(diffMode));
+
+      selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 5), 'sameAlpha']);
+      await screen.findByRole('button', { name: '직접 고치기' });
+      await settled();
+
+      expect(screen.getAllByRole('toolbar', { name: '고른 부분' })).toHaveLength(1);
+    },
+  );
+
+  it.each(['unified', 'split'] as const)(
+    'offers no 직접 고치기 for a %s selection across two hunks',
+    async (diffMode) => {
+      render(editable(diffMode));
+
+      selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+      await screen.findByRole('button', { name: BAR_BUTTON });
+      await settled();
+
+      expect(screen.getAllByRole('toolbar', { name: '고른 부분' })).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: '직접 고치기' })).toBeNull();
+    },
+  );
+
+  it.each(['unified', 'split'] as const)(
+    'shows no bar for a %s selection reaching into another file',
+    async (diffMode) => {
+      render(
+        <>
+          <div data-testid="first">{twoHunks({ diffMode })}</div>
+          <div data-testid="second">
+            {twoHunks({ diffMode, file: { ...file, path: 'src/b.ts' } })}
+          </div>
+        </>,
+      );
+
+      selectText(
+        [codeCell('new', 4, screen.getByTestId('first')), 'nowAlpha'],
+        [codeCell('new', 38, screen.getByTestId('second')), 'sameOmega'],
+      );
+      await settled();
+
+      expect(screen.queryByRole('toolbar', { name: '고른 부분' })).toBeNull();
+    },
+  );
+
+  it('keeps the bar after a tap collapses the selection', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    render(twoHunks({ diffMode: 'unified', onAddComment }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.pointerDown(await screen.findByRole('toolbar', { name: '고른 부분' }));
+    document.getSelection()?.removeAllRanges();
+    document.dispatchEvent(new Event('selectionchange'));
+    await settled();
+
+    fireEvent.click(screen.getByRole('button', { name: BAR_BUTTON }));
+    expect(codeCell('new', 38).closest('table')).toContainElement(
+      await screen.findByRole('textbox'),
+    );
+  });
+
+  it('stays on the first hunk when the selection only touches the start of the next', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    render(twoHunks({ diffMode: 'unified', onAddComment }));
+
+    const range = document.createRange();
+    const [start, offset] = textPoint(codeCell('new', 4), 'nowAlpha');
+    range.setStart(start, offset);
+    range.setEnd(codeCell('old', 37), 0);
+    document.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Here' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith(
+        [4, 5],
+        '> nowAlpha\n> sameAlpha\n\nHere',
+        'nowAlpha\nsameAlpha',
+        'new',
+      );
+    });
+  });
+
+  it('shows no bar where the diff takes no comments', async () => {
+    render(twoHunks({ diffMode: 'unified', onAddComment: undefined }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    await settled();
+
+    expect(screen.queryByRole('toolbar', { name: '고른 부분' })).toBeNull();
+  });
+
+  it.each(['unified', 'split'] as const)(
+    'comments on the selected lines of a %s selection released past the end of the file',
+    async (diffMode) => {
+      const onAddComment = vi.fn().mockResolvedValue(undefined);
+      render(
+        <>
+          {twoHunks({ diffMode, onAddComment })}
+          <div data-testid="below">empty area</div>
+        </>,
+      );
+
+      const [start, offset] = textPoint(codeCell('new', 4), 'nowAlpha');
+      const range = document.createRange();
+      range.setStart(start, offset);
+      range.setEnd(screen.getByTestId('below').firstChild!, 3);
+      document.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      await screen.findByRole('button', { name: BAR_BUTTON });
+      await settled();
+      expect(screen.getAllByRole('toolbar', { name: '고른 부분' })).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole('button', { name: BAR_BUTTON }));
+      fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Here' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+      await waitFor(() => {
+        expect(onAddComment).toHaveBeenCalledWith(
+          [4, 38],
+          expect.stringMatching(/^> nowAlpha\n/),
+          undefined,
+          'new',
+        );
+      });
+    },
+  );
+
+  it('offers no 직접 고치기 for a selection released past the end of the file', async () => {
+    render(
+      <>
+        {editable('split')}
+        <div data-testid="below">empty area</div>
+      </>,
+    );
+
+    const [start, offset] = textPoint(codeCell('new', 37), 'nowOmega');
+    const range = document.createRange();
+    range.setStart(start, offset);
+    range.setEnd(screen.getByTestId('below').firstChild!, 3);
+    document.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    await screen.findByRole('button', { name: BAR_BUTTON });
+    await settled();
+
+    expect(screen.getAllByRole('toolbar', { name: '고른 부분' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '직접 고치기' })).toBeNull();
+  });
+
+  it('stays on the right column when a split drag ends between hunks above where it started', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    render(twoHunks({ diffMode: 'split', onAddComment }));
+
+    const firstHunk = codeCell('new', 4).closest('[id^="chunk-"]')!;
+    const [end, offset] = textPoint(codeCell('new', 38), 'sameOmega');
+    const range = document.createRange();
+    range.setStartBefore(firstHunk);
+    range.setEnd(end, offset + 'sameOmega'.length);
+    document.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Here' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith(
+        [4, 38],
+        expect.stringMatching(/^> nowAlpha\n/),
+        undefined,
+        'new',
+      );
+    });
+  });
+
+  it('saves no code when hidden lines of the range could not be read', async () => {
+    const unreadLines = Array.from({ length: 31 }, (_, offset) => ({
+      type: 'normal' as const,
+      content: '',
+      oldLineNumber: offset + 6,
+      newLineNumber: offset + 6,
+      isExpanded: true,
+      contentUnread: true,
+    }));
+    const [first, second] = [hunk(4, 'Alpha'), hunk(37, 'Omega')];
+    const whole: MergedChunk = {
+      ...first,
+      oldLines: 35,
+      newLines: 35,
+      lines: [...first.lines, ...unreadLines, ...second.lines],
+    };
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    render(twoHunks({ diffMode: 'unified', onAddComment, mergedChunks: [whole] }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith(
+        [4, 38],
+        expect.stringMatching(/^> nowAlpha\n/),
+        undefined,
+        'new',
+      );
+    });
+  });
+
+  it('opens no hidden lines when the bar is pressed, saved or cancelled', async () => {
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    const openHiddenLines = vi.fn(async () => {});
+    render(twoHunks({ diffMode: 'unified', onAddComment, openHiddenLines }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    await screen.findByRole('textbox');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalled();
+    });
+    expect(openHiddenLines).not.toHaveBeenCalled();
+  });
+
+  it('saves the code of every line of a range whose hidden lines were opened first', async () => {
+    const hiddenLines = Array.from({ length: 31 }, (_, offset) => ({
+      type: 'normal' as const,
+      content: `hidden${offset + 6}`,
+      oldLineNumber: offset + 6,
+      newLineNumber: offset + 6,
+    }));
+    const [first, second] = [hunk(4, 'Alpha'), hunk(37, 'Omega')];
+    const whole: MergedChunk = {
+      ...first,
+      oldLines: 35,
+      newLines: 35,
+      lines: [...first.lines, ...hiddenLines, ...second.lines],
+    };
+    const onAddComment = vi.fn().mockResolvedValue(undefined);
+    render(twoHunks({ diffMode: 'unified', onAddComment, mergedChunks: [whole] }));
+
+    selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
+    fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith(
+        [4, 38],
+        expect.stringMatching(/^> nowAlpha\n> sameAlpha\n> hidden6\n/),
+        [
+          'nowAlpha',
+          'sameAlpha',
+          ...hiddenLines.map((line) => line.content),
+          'nowOmega',
+          'sameOmega',
+        ].join('\n'),
+        'new',
+      );
+    });
+  });
+});

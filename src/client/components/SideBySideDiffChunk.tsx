@@ -357,13 +357,13 @@ export function SideBySideDiffChunk({
     await onAddComment(
       lineNumber,
       quote === undefined ? body : quoteSelection(quote, body),
-      linePick.contentOf(side, lineNumber),
+      linePick.snapshotOf(side, lineNumber),
       side,
       ...(extraLines.length > 0
         ? [
             {
               lines: extraLines,
-              contents: extraLines.map((range) => linePick.contentOf(range.side, range.line)),
+              contents: extraLines.map((range) => linePick.snapshotOf(range.side, range.line)),
             },
           ]
         : []),

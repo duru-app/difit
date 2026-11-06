@@ -71,11 +71,12 @@ function FixupOnlyGroup({
     () => files.map((file) => ({ file: fixupDiffFile(file), labels: fixupFileLabels(file) })),
     [files],
   );
-  const { isLoading, openLines, prefetchFileContent, getMergedChunks } = useExpandedLines({
-    baseCommitish: parentSha,
-    targetCommitish: fixup.sha,
-    diffIdentity: fixup.sha,
-  });
+  const { isLoading, openLines, readLines, prefetchFileContent, getMergedChunks } =
+    useExpandedLines({
+      baseCommitish: parentSha,
+      targetCommitish: fixup.sha,
+      diffIdentity: fixup.sha,
+    });
   const mergedChunks = useMemo(
     () => sections.map(({ file }) => getMergedChunks(file)),
     [sections, getMergedChunks],
@@ -141,6 +142,7 @@ function FixupOnlyGroup({
               fixupOverlay={fixupOverlay}
               mergedChunks={mergedChunks[index] ?? NO_CHUNKS}
               openLines={openLines}
+              readLines={readLines}
               prefetchFileContent={prefetchFileContent}
               isExpandLoading={isLoading}
             />

@@ -261,7 +261,7 @@ export interface SidedLine {
 // The ranges a new comment takes besides the one its card sits under, with the code of each.
 export interface ExtraCommentLines {
   lines: SidedLine[];
-  contents: string[];
+  contents: (string | undefined)[];
 }
 
 export interface LegacyDiffComment {
@@ -738,4 +738,6 @@ export interface ExpandedRange {
 
 export interface ExpandedLine extends DiffLine {
   isExpanded?: boolean;
+  // Its file's content could not be read, so `content` is blank.
+  contentUnread?: boolean;
 }
