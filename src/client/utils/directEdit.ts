@@ -166,6 +166,26 @@ const REWRITE_WARNING_MESSAGES: Record<RewriteWarning, string> = {
   'pushed-commit': 'push한 커밋이 바뀝니다. 다시 올리려면 force push가 필요합니다.',
 };
 
+const REORDER_FAILURE_MESSAGES: Partial<Record<RewordRejection, string>> = {
+  'stale-view': '그사이 커밋 목록이 바뀌었습니다. 새로고침한 뒤 다시 옮겨 주세요.',
+  'agent-working':
+    '에이전트가 작업 중입니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 옮겨 주세요.',
+  conflict:
+    '순서를 바꾸면 충돌이 나서 옮기기 전 이력으로 되돌렸습니다. 같은 줄을 고친 커밋끼리는 순서를 바꿀 수 없고, 머지 때 손으로 푼 충돌도 다시 만들 수 없습니다. 아래 출력을 확인해 주세요.',
+  'head-moved': '옮기는 동안 HEAD가 바뀌어 이력을 바꾸지 않았습니다. 다시 옮겨 주세요.',
+  'commit-failed':
+    '이력을 다시 쓰지 못해 옮기기 전 이력 그대로 두었습니다. 아래 출력을 확인해 주세요.',
+};
+
+export function reorderFailureMessage(
+  reason: RewordRejection | undefined,
+  error: string,
+  warnings?: readonly RewriteWarning[],
+): string {
+  const own = reason && !warnings?.length ? REORDER_FAILURE_MESSAGES[reason] : undefined;
+  return own ?? rewordFailureMessage(reason, error, warnings);
+}
+
 export function rewordFailureMessage(
   reason: RewordRejection | undefined,
   error: string,
