@@ -1,14 +1,29 @@
 import { X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useHotkeys } from 'react-hotkeys-hook';
+import { useHotkeys, useHotkeysContext } from 'react-hotkeys-hook';
 
 import { useViewport } from '../hooks/useViewport';
 
 import { MermaidDiagram } from './MermaidDiagram';
 
-function EnlargedDiagram({ chart, onClose }: { chart: string; onClose: () => void }) {
+function EnlargedDiagram({
+  chart,
+  fitWindow,
+  onClose,
+}: {
+  chart: string;
+  fitWindow: boolean;
+  onClose: () => void;
+}) {
+  const { enableScope, disableScope } = useHotkeysContext();
+
   useHotkeys('escape', () => onClose(), { enableOnFormTags: true }, [onClose]);
+
+  useEffect(() => {
+    disableScope('navigation');
+    return () => enableScope('navigation');
+  }, [enableScope, disableScope]);
 
   return createPortal(
     <div
@@ -16,6 +31,7 @@ function EnlargedDiagram({ chart, onClose }: { chart: string; onClose: () => voi
       aria-modal="true"
       aria-label="도식"
       className="fixed inset-0 z-50 flex flex-col"
+      onClick={(event) => event.stopPropagation()}
     >
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
       <div className="relative flex justify-end p-2">
@@ -34,8 +50,8 @@ function EnlargedDiagram({ chart, onClose }: { chart: string; onClose: () => voi
           if (event.target === event.currentTarget) onClose();
         }}
       >
-        <div className="w-max bg-github-bg-primary">
-          <MermaidDiagram chart={chart} naturalSize />
+        <div className={`bg-github-bg-primary ${fitWindow ? 'w-full' : 'w-max'}`}>
+          <MermaidDiagram chart={chart} naturalSize={!fitWindow} />
         </div>
       </div>
     </div>,
@@ -47,14 +63,6 @@ export function CommentMermaidDiagram({ chart }: { chart: string }) {
   const { isMobile } = useViewport();
   const [isOpen, setIsOpen] = useState(false);
 
-  if (!isMobile) {
-    return (
-      <div className="my-2">
-        <MermaidDiagram chart={chart} />
-      </div>
-    );
-  }
-
   return (
     <div className="my-2">
       <button
@@ -64,11 +72,13 @@ export function CommentMermaidDiagram({ chart }: { chart: string }) {
           event.stopPropagation();
           setIsOpen(true);
         }}
-        className="block w-full text-left"
+        className="block w-full cursor-zoom-in text-left"
       >
         <MermaidDiagram chart={chart} />
       </button>
-      {isOpen && <EnlargedDiagram chart={chart} onClose={() => setIsOpen(false)} />}
+      {isOpen && (
+        <EnlargedDiagram chart={chart} fitWindow={!isMobile} onClose={() => setIsOpen(false)} />
+      )}
     </div>
   );
 }
