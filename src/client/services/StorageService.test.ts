@@ -104,6 +104,52 @@ describe('StorageService - moving records after a history rewrite', () => {
     });
   });
 
+  it('moves a record and the view of its thread to where a reorder left them', () => {
+    const service = new StorageService();
+    const onTip = { baseCommitish: OLD_FIXUP, targetCommitish: OLD_TIP };
+    const rewritten = { [OLD_FIXUP]: NEW_FIXUP, [OLD_TIP]: NEW_TIP };
+    service.saveDiffContextData(
+      OLD_PARENT,
+      OLD_TIP,
+      {
+        version: 2,
+        baseCommitish: OLD_PARENT,
+        targetCommitish: OLD_TIP,
+        createdAt: at,
+        lastModifiedAt: at,
+        threads: [{ ...thread, view: onTip }],
+        viewedFiles: [],
+        appliedCommentImportIds: [],
+      },
+      undefined,
+      undefined,
+      'repo',
+    );
+
+    service.moveRewrittenRecords(rewritten, 'repo', [
+      {
+        rewritten,
+        reorder: {
+          before: [
+            { sha: OLD_FIXUP, parentSha: OLD_PARENT },
+            { sha: OLD_TIP, parentSha: OLD_FIXUP },
+          ],
+          after: [
+            { sha: NEW_TIP, parentSha: OLD_PARENT },
+            { sha: NEW_FIXUP, parentSha: NEW_TIP },
+          ],
+        },
+      },
+    ]);
+
+    expect(
+      service.getDiffContextData(OLD_PARENT, NEW_FIXUP, undefined, undefined, 'repo'),
+    ).toMatchObject({
+      targetCommitish: NEW_FIXUP,
+      threads: [{ view: { baseCommitish: OLD_PARENT, targetCommitish: NEW_TIP } }],
+    });
+  });
+
   it('moves the record of a one-commit review, whose base is written with a caret', () => {
     const service = new StorageService();
     save(service, `${OLD_TIP}^`, OLD_TIP, 'repo');

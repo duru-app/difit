@@ -1,18 +1,24 @@
 import { X } from 'lucide-react';
 
-import { movedBranchesNotice } from '../utils/directEdit';
+import { LEFT_BRANCHES_REASON, leftBranchesNotice, movedBranchesNotice } from '../utils/directEdit';
 
 interface MovedBranchesNoticeProps {
   branches: readonly string[];
+  left?: readonly string[];
   onDismiss: () => void;
 }
 
-export function MovedBranchesNotice({ branches, onDismiss }: MovedBranchesNoticeProps) {
-  if (branches.length === 0) return null;
+export function MovedBranchesNotice({ branches, left, onDismiss }: MovedBranchesNoticeProps) {
+  if (branches.length === 0 && !left?.length) return null;
   return (
     <div className="shrink-0 flex items-center gap-2 px-4 py-1 text-xs bg-github-bg-tertiary border-t border-github-border">
       <p role="status" className="min-w-0 flex-1 text-github-text-secondary">
-        {movedBranchesNotice(branches)}
+        {branches.length > 0 && <span className="block">{movedBranchesNotice(branches)}</span>}
+        {left?.length ? (
+          <span className="block" title={LEFT_BRANCHES_REASON}>
+            {leftBranchesNotice(left)}
+          </span>
+        ) : null}
       </p>
       <button
         type="button"
