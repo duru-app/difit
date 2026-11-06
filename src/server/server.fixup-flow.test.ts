@@ -652,6 +652,181 @@ it('warns before rewording on the default branch and rewrites once the warning i
   expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
 });
 
+it('warns before rewording a commit already pushed and rewrites without pushing once confirmed', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  const remote = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-remote-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  cleanups.push(() => rmSync(remote, { recursive: true, force: true }));
+  git(remote, ['init', '-q', '--bare']);
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  git(repo, ['remote', 'add', 'origin', remote]);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  git(repo, ['push', '-q', '-u', 'origin', 'feature']);
+  const local = commit(repo, 'locl', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, local),
+    repoPath: repo,
+    preferredPort: 9278,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const reword = (body: object) =>
+    fetch(api(`/api/reword?base=${base}&target=${local}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const notPushed = await reword({ commit: local, original: 'locl', message: 'local' });
+  expect(notPushed.status).toBe(200);
+  const head = git(repo, ['rev-parse', 'HEAD']);
+
+  const fixTypo = { commit: typo, original: 'add typpo', message: 'add typo' };
+  const warned = await reword(fixTypo);
+  expect(warned.status).toBe(409);
+  expect(await warned.json()).toMatchObject({
+    reason: 'needs-confirmation',
+    warnings: ['pushed-commit'],
+  });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(head);
+
+  const confirmed = await reword({ ...fixTypo, acknowledged: ['pushed-commit'] });
+  expect(confirmed.status).toBe(200);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add typo',
+    'local',
+  ]);
+  expect(git(remote, ['rev-parse', 'feature'])).toBe(typo);
+  expect(git(repo, ['rev-parse', '@{upstream}'])).toBe(typo);
+});
+
+it("blocks rewording while a thread is the agent's, and not while the agent only waits", async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const tip = commit(repo, 'mistke', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9279,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const query = `?base=${base}&target=${tip}`;
+  const reword = (body: object) =>
+    fetch(api(`/api/reword${query}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const comment = (entry: object) =>
+    fetch(api('/api/comment-imports'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([entry]),
+    });
+
+  const waiting = new AbortController();
+  cleanups.push(() => waiting.abort());
+  const wait = await fetch(api('/api/comments-wait'), { signal: waiting.signal });
+  expect(wait.status).toBe(200);
+  const onlyWaiting = await reword({ commit: tip, original: 'mistke', message: 'mistake' });
+  expect(onlyWaiting.status).toBe(200);
+  const movedTip = git(repo, ['rev-parse', 'HEAD']);
+
+  const position = { scope: 'commit' };
+  await comment({
+    type: 'thread',
+    id: 't1',
+    author: 'User',
+    position,
+    fixupTarget: typo,
+    body: 'typo in the subject',
+  });
+  const fixTypo = { commit: typo, original: 'add typpo', message: 'add typo' };
+  const blocked = await reword(fixTypo);
+  expect(blocked.status).toBe(409);
+  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(movedTip);
+
+  await comment({
+    type: 'reply',
+    author: 'Agent',
+    position,
+    fixupTarget: typo,
+    body: 'on it',
+    fixPending: true,
+  });
+  const stillFixing = await reword(fixTypo);
+  expect(stillFixing.status).toBe(409);
+  expect(await stillFixing.json()).toMatchObject({ reason: 'agent-working' });
+
+  await comment({
+    type: 'reply',
+    author: 'Agent',
+    position,
+    fixupTarget: typo,
+    body: 'nothing to change after all',
+  });
+  const answered = await reword(fixTypo);
+  expect(answered.status).toBe(200);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add typo',
+    'mistake',
+  ]);
+});
+
+it("blocks rewording while a thread of another selection on the server is the agent's", async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const tip = commit(repo, 'mistke', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9280,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  await fetch(api('/api/comment-imports?base=HEAD&target=.'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      {
+        type: 'thread',
+        id: 'working-tree',
+        author: 'User',
+        filePath: 'c.js',
+        position: { side: 'new', line: 1 },
+        body: 'about the working tree',
+      },
+    ]),
+  });
+
+  const response = await fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commit: tip, original: 'mistke', message: 'mistake' }),
+  });
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ reason: 'agent-working' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
+});
+
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));

@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { delimiter, join } from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { rewriteHistory } from './history-rewrite';
+import { readRewriteState, rewriteHistory } from './history-rewrite';
 
 let home: string;
 const savedEnv = { ...process.env };
@@ -334,5 +334,35 @@ describe('rewriteHistory', () => {
       expect(result).toMatchObject({ ok: false, reason: 'head-moved' });
       expect(subjects(repo, `${base}..HEAD`)).toEqual(['add feture', 'use feature', 'landed']);
     });
+  });
+});
+
+describe('readRewriteState', () => {
+  const remoteOf = (repo: string) => {
+    const remote = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-remote-'));
+    repos.push(remote);
+    git(remote, 'init', '-q', '--bare');
+    git(repo, 'remote', 'add', 'origin', remote);
+  };
+
+  it('calls nothing pushed when the branch has no upstream', async () => {
+    const { repo, first, second } = createRepo();
+    remoteOf(repo);
+    git(repo, 'push', '-q', 'origin', 'feature');
+
+    const state = await readRewriteState(repo, second, first);
+
+    expect(state.rewritesPushedCommit).toBe(false);
+  });
+
+  it('calls a commit pushed when the upstream holds it, and a later one not', async () => {
+    const { repo, first, second } = createRepo();
+    remoteOf(repo);
+    git(repo, 'push', '-q', '-u', 'origin', 'feature');
+    const later = commit(repo, 'not pushed yet', { 'd.ts': 'd\n' });
+
+    expect((await readRewriteState(repo, later, first)).rewritesPushedCommit).toBe(true);
+    expect((await readRewriteState(repo, later, second)).rewritesPushedCommit).toBe(true);
+    expect((await readRewriteState(repo, later, later)).rewritesPushedCommit).toBe(false);
   });
 });

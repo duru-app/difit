@@ -5,6 +5,7 @@ import type { DiffLine } from '../../types/diff';
 import {
   directEditFailureMessage,
   fetchLinesAt,
+  rewordFailureMessage,
   hunkRange,
   newSideLineNumbers,
   rangeOfLine,
@@ -95,5 +96,26 @@ describe('directEditFailureMessage', () => {
   it('says the edit was committed unapproved when the card changed during the commit', () => {
     expect(directEditFailureMessage('card-changed', '', true)).toContain('fixup 커밋으로 남았지만');
     expect(directEditFailureMessage('card-changed', '')).toContain('카드를 다시 확인한 뒤 고쳐');
+  });
+});
+
+describe('rewordFailureMessage', () => {
+  it('names the force push a pushed commit will need', () => {
+    expect(rewordFailureMessage('needs-confirmation', '', ['pushed-commit'])).toBe(
+      'push한 커밋이 바뀝니다. 다시 올리려면 force push가 필요합니다.',
+    );
+  });
+
+  it('says every warning when more than one applies', () => {
+    const message = rewordFailureMessage('needs-confirmation', '', [
+      'default-branch',
+      'pushed-commit',
+    ]);
+    expect(message).toContain('기본 브랜치');
+    expect(message).toContain('force push');
+  });
+
+  it('says the agent is at work', () => {
+    expect(rewordFailureMessage('agent-working', '')).toContain('에이전트가 작업 중입니다.');
   });
 });

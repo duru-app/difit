@@ -486,6 +486,21 @@ function agentTurnOn(
   return { state, label: reviewStateLabel(state), ...fixupsToDrop(rejectedFixupShas) };
 }
 
+// The agent's turn, or a fix it promised and has not delivered: either way it may be changing the
+// working folder. A connection waiting on `difit comment wait` alone is neither.
+export function isAgentAtWork(
+  thread: ThreadTurn,
+  fixupsByThread: ReadonlyMap<string, ThreadFixup[]> | undefined,
+  decisions: ReviewDecision[],
+): boolean {
+  if (agentTurnOn(thread, fixupsByThread, decisions)) return true;
+  const fixups = fixupsByThread?.get(thread.id) ?? [];
+  return (
+    !isThreadResolved(thread.id, decisions, fixups) &&
+    deriveThreadReviewState(thread.id, fixups, decisions, thread) === 'fix-pending'
+  );
+}
+
 export function selectThreadsAwaitingAgent(
   threads: ThreadForAgent[],
   fixupsByThread: ReadonlyMap<string, ThreadFixup[]> | undefined,

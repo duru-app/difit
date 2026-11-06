@@ -2148,9 +2148,18 @@ export async function startServer(options: ServerOptions): Promise<{
     if (message.length === 0) return refuseReword('empty-message');
 
     const { blocks, warnings } = checkRewrite({
-      ...(await readRewriteState(repositoryPath, selection.targetCommitish)),
+      ...(await readRewriteState(repositoryPath, selection.targetCommitish, commit.sha)),
       defaultBranch: await parser.getDefaultBranch(),
       rewordsMerge: commit.isMerge === true,
+      commentSessions: await Promise.all(
+        [...commentSessions.values()]
+          .filter(({ threads }) => threads.length > 0)
+          .map(async (session) => ({
+            threads: session.threads,
+            decisions: session.decisions,
+            fixupsByThread: await fixupsByThreadFor(session.selection),
+          })),
+      ),
     });
     const [blocked] = blocks;
     if (blocked) return refuseReword(blocked);

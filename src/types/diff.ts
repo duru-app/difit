@@ -616,7 +616,7 @@ export interface RewordRequest {
   acknowledged?: RewriteWarning[];
 }
 
-export type RewriteWarning = 'default-branch';
+export type RewriteWarning = 'default-branch' | 'pushed-commit';
 
 export type RewordRejection =
   | 'stale-view'
@@ -624,6 +624,7 @@ export type RewordRejection =
   | 'detached-head'
   | 'operation-in-progress'
   | 'merge-commit'
+  | 'agent-working'
   | 'empty-message'
   | 'no-change'
   | 'needs-confirmation'
