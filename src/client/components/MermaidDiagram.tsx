@@ -5,6 +5,7 @@ import { getResolvedTheme, type ResolvedTheme } from '../utils/appearanceTheme';
 type MermaidDiagramProps = {
   chart: string;
   naturalSize?: boolean;
+  onEnlarge?: () => void;
 };
 
 type MermaidModule = typeof import('mermaid');
@@ -26,7 +27,7 @@ const showAtNaturalSize = (svg: SVGSVGElement | null) => {
   svg.style.maxWidth = 'none';
 };
 
-export function MermaidDiagram({ chart, naturalSize = false }: MermaidDiagramProps) {
+export function MermaidDiagram({ chart, naturalSize = false, onEnlarge }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const diagramId = useId().replace(/:/g, '-');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getResolvedTheme());
@@ -116,11 +117,27 @@ export function MermaidDiagram({ chart, naturalSize = false }: MermaidDiagramPro
     );
   }
 
-  return (
+  const diagram = (
     <div
       ref={containerRef}
       aria-label="Mermaid diagram"
       className={`mermaid-diagram overflow-x-auto rounded border border-github-border bg-github-bg-secondary p-3`}
     />
+  );
+
+  if (!onEnlarge) return diagram;
+
+  return (
+    <button
+      type="button"
+      aria-label="도식 크게 보기"
+      onClick={(event) => {
+        event.stopPropagation();
+        onEnlarge();
+      }}
+      className="block w-full cursor-zoom-in text-left"
+    >
+      {diagram}
+    </button>
   );
 }

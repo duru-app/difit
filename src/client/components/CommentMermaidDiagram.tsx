@@ -65,17 +65,7 @@ export function CommentMermaidDiagram({ chart }: { chart: string }) {
 
   return (
     <div className="my-2">
-      <button
-        type="button"
-        aria-label="도식 크게 보기"
-        onClick={(event) => {
-          event.stopPropagation();
-          setIsOpen(true);
-        }}
-        className="block w-full cursor-zoom-in text-left"
-      >
-        <MermaidDiagram chart={chart} />
-      </button>
+      <MermaidDiagram chart={chart} onEnlarge={() => setIsOpen(true)} />
       {isOpen && (
         <EnlargedDiagram chart={chart} fitWindow={!isMobile} onClose={() => setIsOpen(false)} />
       )}
