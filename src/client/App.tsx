@@ -130,6 +130,7 @@ import {
   type MergedChunk,
 } from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
+import type { CursorPosition } from './hooks/keyboardNavigation/types';
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation';
 import { useChunkChangeKinds } from './hooks/useChunkChangeKinds';
 import { diffRevisionKey, useLazyDiffRendering } from './hooks/useLazyDiffRendering';
@@ -1412,13 +1413,20 @@ function App() {
     [toggleFileReviewed, diffData, rememberFilePosition],
   );
 
+  const cursorAwaitingRenderRef = useRef<CursorPosition | null>(null);
   useEffect(() => {
     if (!diffData || !cursor) return;
 
     const filePath = diffData.files[cursor.fileIndex]?.path;
-    if (!filePath || renderedFilePaths.has(filePath)) return;
+    if (!filePath) return;
+    if (!renderedFilePaths.has(filePath)) {
+      cursorAwaitingRenderRef.current = cursor;
+      ensureFilesRenderedUpTo(filePath);
+      return;
+    }
+    if (cursorAwaitingRenderRef.current !== cursor) return;
 
-    ensureFilesRenderedUpTo(filePath);
+    cursorAwaitingRenderRef.current = null;
     requestAnimationFrame(() => {
       setCursorPosition(cursor);
     });
@@ -3272,6 +3280,7 @@ function App() {
             >
               <div className="flex-1 overflow-y-auto">
                 <FileList
+                  key={diffRevision}
                   ref={fileListRef}
                   files={diffData.files}
                   onScrollToFile={jumpToFile}
