@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { createRequire } from 'module';
 import { basename, extname } from 'path';
 import { fileURLToPath } from 'url';
-import { Language, Parser, type Tree } from 'web-tree-sitter';
+import { Edit, Language, Parser, type Tree } from 'web-tree-sitter';
 
 import type { ChunkChangeKind, DiffChunk } from '../types/diff.js';
 import { combineChangeKinds, leavesCodeAlone } from '../utils/changeKind.js';
@@ -120,14 +120,81 @@ function signaturesOf(tree: Tree, source: string): Signatures {
 
 const letRequestsThrough = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+function signaturesOfParsed(tree: Tree | null, source: string): Signatures | null {
+  if (!tree) return null;
+  return tree.rootNode.hasError ? null : signaturesOf(tree, source);
+}
+
 async function parseSignatures(parser: Parser, source: string): Promise<Signatures | null> {
   await letRequestsThrough();
   const tree = parser.parse(source);
-  if (!tree) return null;
   try {
-    return tree.rootNode.hasError ? null : signaturesOf(tree, source);
+    return signaturesOfParsed(tree, source);
   } finally {
-    tree.delete();
+    tree?.delete();
+  }
+}
+
+const isHighSurrogate = (unit: number) => unit >= 0xd800 && unit <= 0xdbff;
+const isLowSurrogate = (unit: number) => unit >= 0xdc00 && unit <= 0xdfff;
+
+function pointAt(text: string, index: number) {
+  let row = 0;
+  let lineStart = 0;
+  for (
+    let newline = text.indexOf('\n');
+    newline !== -1 && newline < index;
+    newline = text.indexOf('\n', lineStart)
+  ) {
+    row += 1;
+    lineStart = newline + 1;
+  }
+  return { row, column: index - lineStart };
+}
+
+function editBetween(before: string, after: string): Edit {
+  const shorter = Math.min(before.length, after.length);
+  let start = 0;
+  while (start < shorter && before.charCodeAt(start) === after.charCodeAt(start)) start += 1;
+  if (start > 0 && isHighSurrogate(before.charCodeAt(start - 1))) start -= 1;
+
+  let tail = 0;
+  while (
+    tail < shorter - start &&
+    before.charCodeAt(before.length - 1 - tail) === after.charCodeAt(after.length - 1 - tail)
+  ) {
+    tail += 1;
+  }
+  if (tail > 0 && isLowSurrogate(before.charCodeAt(before.length - tail))) tail -= 1;
+
+  const oldEndIndex = before.length - tail;
+  const newEndIndex = after.length - tail;
+  return new Edit({
+    startIndex: start,
+    oldEndIndex,
+    newEndIndex,
+    startPosition: pointAt(before, start),
+    oldEndPosition: pointAt(before, oldEndIndex),
+    newEndPosition: pointAt(after, newEndIndex),
+  });
+}
+
+async function parseEditedSignatures(
+  parser: Parser,
+  parsed: Tree,
+  parsedSource: string,
+  source: string,
+): Promise<Signatures | null> {
+  await letRequestsThrough();
+  const previous = parsed.copy();
+  let tree: Tree | null = null;
+  try {
+    previous.edit(editBetween(parsedSource, source));
+    tree = parser.parse(source, previous);
+    return signaturesOfParsed(tree, source);
+  } finally {
+    tree?.delete();
+    previous.delete();
   }
 }
 
@@ -219,48 +286,55 @@ async function judgeChunks(
   if (!runs || runs.length > MAX_CLASSIFIED_RUNS_PER_FILE) return unknown();
 
   parser.setLanguage(language);
-  const before = await parseSignatures(parser, oldText);
-  const after = await parseSignatures(parser, newText);
-  if (!before || !after) return unknown();
+  await letRequestsThrough();
+  const oldTree = parser.parse(oldText);
+  if (!oldTree) return unknown();
+  try {
+    const before = signaturesOfParsed(oldTree, oldText);
+    const after = await parseSignatures(parser, newText);
+    if (!before || !after) return unknown();
 
-  const runKinds: ChunkChangeKind[] = [];
-  for (const run of runs) {
-    const applied = [
-      ...oldLines.slice(0, run.oldStart),
-      ...newLines.slice(run.newStart, run.newStart + run.newCount),
-      ...oldLines.slice(run.oldStart + run.oldCount),
-    ].join('\n');
-    const signatures = await parseSignatures(parser, applied);
-    if (!signatures) runKinds.push('unknown');
-    else if (signatures.withComments === before.withComments) runKinds.push('whitespace');
-    else runKinds.push(signatures.code === before.code ? 'comment' : 'code');
-  }
-
-  // Each run was judged alone against the old file. Taking all of them back out of the new file must
-  // leave its code unchanged too, or one of them changes code together with another run.
-  const neutral = runs.filter((_, index) => leavesCodeAlone(runKinds[index]));
-  if (neutral.length > 0) {
-    const reverted = [...newLines];
-    for (const run of [...neutral].reverse()) {
-      reverted.splice(
-        run.newStart,
-        run.newCount,
-        ...oldLines.slice(run.oldStart, run.oldStart + run.oldCount),
-      );
+    const runKinds: ChunkChangeKind[] = [];
+    for (const run of runs) {
+      const applied = [
+        ...oldLines.slice(0, run.oldStart),
+        ...newLines.slice(run.newStart, run.newStart + run.newCount),
+        ...oldLines.slice(run.oldStart + run.oldCount),
+      ].join('\n');
+      const signatures = await parseEditedSignatures(parser, oldTree, oldText, applied);
+      if (!signatures) runKinds.push('unknown');
+      else if (signatures.withComments === before.withComments) runKinds.push('whitespace');
+      else runKinds.push(signatures.code === before.code ? 'comment' : 'code');
     }
-    const signatures = await parseSignatures(parser, reverted.join('\n'));
-    if (!signatures || signatures.code !== after.code) {
-      for (const [index, kind] of runKinds.entries()) {
-        if (leavesCodeAlone(kind)) runKinds[index] = 'unknown';
+
+    // Taking every neutral run back out of the new file must leave its code unchanged, or one of them
+    // changes code together with another run.
+    const neutral = runs.filter((_, index) => leavesCodeAlone(runKinds[index]));
+    if (neutral.length > 0) {
+      const reverted = [...newLines];
+      for (const run of [...neutral].reverse()) {
+        reverted.splice(
+          run.newStart,
+          run.newCount,
+          ...oldLines.slice(run.oldStart, run.oldStart + run.oldCount),
+        );
+      }
+      const signatures = await parseSignatures(parser, reverted.join('\n'));
+      if (!signatures || signatures.code !== after.code) {
+        for (const [index, kind] of runKinds.entries()) {
+          if (leavesCodeAlone(kind)) runKinds[index] = 'unknown';
+        }
       }
     }
-  }
 
-  return chunks.map(
-    (_, chunkIndex) =>
-      combineChangeKinds(runKinds.filter((_, index) => runs[index]?.chunkIndex === chunkIndex)) ??
-      'unknown',
-  );
+    return chunks.map(
+      (_, chunkIndex) =>
+        combineChangeKinds(runKinds.filter((_, index) => runs[index]?.chunkIndex === chunkIndex)) ??
+        'unknown',
+    );
+  } finally {
+    oldTree.delete();
+  }
 }
 
 // Per chunk, whether its changed lines alter only comments, only whitespace, or the code. Null when
