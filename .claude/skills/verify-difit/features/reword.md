@@ -57,7 +57,7 @@ A pushed commit: before `start`, make a bare repository with `git init -q --bare
 
 The agent at work: a thread added with `"author":"User"` makes the POST answer 409 `{"reason":"agent-working","blockingThreads":[…]}`, where each entry names the thread, its commit, its file and line, and the review to open to see it. A reply with `"fixPending":true` keeps it so. A later reply without the mark lets the POST through. `difit comment wait` running in the background with no such thread changes nothing.
 
-A merge kept in the range: before `start`, make a side branch and merge it with `--no-ff` on top of the commit to reword. After the POST, `git log --merges` still lists the merge and `git rev-parse HEAD^{tree}` is unchanged. Resolve a conflict by hand in that merge instead and the POST answers 409 `{"reason":"conflict"}` with the git output, and `HEAD` and the working tree stay as they were.
+A merge kept in the range: before `start`, make a side branch and merge it with `--no-ff` on top of the commit to reword. After the POST, `git log --merges` still lists the merge and `git rev-parse HEAD^{tree}` is unchanged. Resolve a conflict by hand in that merge instead and the POST answers 409 `{"reason":"conflict"}` with the git output, and `HEAD` and the working tree stay as they were. Its `conflict` carries the commit and `agentAttached`; handing it over goes as in `reorder.md`, with the wanted message in the comment.
 
 A stopped rebase: `git rebase -i` with an `edit` before the POST answers 409 `{"reason":"operation-in-progress"}`.
 
