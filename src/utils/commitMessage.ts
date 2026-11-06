@@ -25,6 +25,13 @@ export function withoutThreadTrailers(message: string): string {
   );
 }
 
+export function threadIdsOf(message: string): string[] {
+  return message
+    .split('\n')
+    .filter((line) => THREAD_TRAILER_LINE.test(line))
+    .map((line) => line.replace(THREAD_TRAILER_LINE, '').trim());
+}
+
 export function withThreadTrailer(message: string, threadId: string): string {
   const trailer = `${REVIEW_THREAD_TRAILER}: ${threadId}`;
   const paragraphs = message.split('\n\n');

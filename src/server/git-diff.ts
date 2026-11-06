@@ -848,7 +848,10 @@ export class GitDiffParser {
             withoutFirstParagraph(messageOf.get(commit.sha) ?? ''),
           );
           if (after.length === 0) break;
-          if (threadShas.has(commit.sha)) bySha.set(commit.sha, { before: message, after });
+          // A reword saved over a pending amend! leaves one that changes nothing.
+          if (threadShas.has(commit.sha) && after !== message) {
+            bySha.set(commit.sha, { before: message, after });
+          }
           message = after;
         }
       }

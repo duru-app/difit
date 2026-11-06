@@ -5,6 +5,7 @@ import '@testing-library/jest-dom';
 import type { ReviewCommit, ReviewView } from '../../types/diff';
 
 import { CommitList } from './CommitList';
+import type { RewordControls } from './CommitMessageForm';
 
 const commit = (digit: string, subject: string): ReviewCommit => ({
   sha: digit.repeat(40),
@@ -296,10 +297,7 @@ describe('CommitList', () => {
       inDrawer = false,
     }: {
       load?: (sha: string) => Promise<string | null>;
-      save?: (request: { commit: string; original: string; message: string }) => Promise<{
-        message: string;
-        output?: string;
-      } | null>;
+      save?: RewordControls['save'];
       inDrawer?: boolean;
     } = {}) {
       const onSelect = vi.fn();
@@ -418,6 +416,45 @@ describe('CommitList', () => {
 
       expect(hintOf(editor)).toHaveTextContent('');
       expect(screen.getByRole('button', { name: '저장' })).toBeDisabled();
+    });
+
+    it('saves again with the warnings acknowledged when told to go ahead', async () => {
+      const save = vi.fn<RewordControls['save']>(async (request) =>
+        request.acknowledged
+          ? null
+          : { message: '기본 브랜치의 이력이 바뀝니다.', warnings: ['default-branch' as const] },
+      );
+      renderRewordable({ save });
+      fireEvent.click(editButtonOf(/2222222/));
+      const editor = await screen.findByRole('textbox', { name: '커밋 메시지' });
+      fireEvent.change(editor, { target: { value: 'better' } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '저장' }));
+      });
+
+      expect(screen.getByRole('alert')).toHaveTextContent('기본 브랜치의 이력이 바뀝니다.');
+      expect(screen.getByRole('textbox', { name: '커밋 메시지' })).toHaveValue('better');
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '그래도 저장' }));
+      });
+
+      expect(save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ message: 'better', acknowledged: ['default-branch'] }),
+      );
+      expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).not.toBeInTheDocument();
+    });
+
+    it('offers no way past a plain refusal', async () => {
+      renderRewordable({ save: vi.fn(async () => ({ message: 'refused' })) });
+      fireEvent.click(editButtonOf(/2222222/));
+      fireEvent.change(await screen.findByRole('textbox', { name: '커밋 메시지' }), {
+        target: { value: 'better' },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '저장' }));
+      });
+
+      expect(screen.queryByRole('button', { name: '그래도 저장' })).not.toBeInTheDocument();
     });
 
     it('drops an earlier refusal once the message is edited again', async () => {

@@ -8,7 +8,7 @@ export interface TodoCommit {
   subject: string;
 }
 
-function squashTarget(commits: TodoCommit[], index: number): TodoCommit | undefined {
+export function squashTarget(commits: TodoCommit[], index: number): TodoCommit | undefined {
   const subject = commits[index]?.subject ?? '';
   if (!AUTOSQUASH_PREFIX.test(subject)) return undefined;
   const earlier = commits.slice(0, index);
