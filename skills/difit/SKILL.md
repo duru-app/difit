@@ -63,6 +63,7 @@ This is useful for review findings, explanations, and any context the user shoul
 - Use `"scope": "file"` in place of `line` for a remark about the whole file rather than any of its lines, with `side: "old"` only when the diff deletes the file.
 - For a remark about one commit as a whole, leave out `filePath`, use `"position": {"scope": "commit"}` with no `side`, and name the commit in `fixupTarget`.
 - When a body or reply points at another place in the diff, write it as `path:line` or `path:start-end` (for example `src/cli/comment.ts:88`); difit turns it into a link to that line of the new file.
+- To explain a flow with several steps or branches, a call sequence, or how parts relate, put a fenced code block with the language `mermaid` (a `flowchart` or a `sequenceDiagram`) in the body. difit draws it inside the card (on a phone it is shrunk to the card width and a tap enlarges it). Keep it small, about 10 nodes or fewer, and keep the prose too. Do not use it for a simple list, a single fact or a table. Invalid mermaid is shown as source.
 - Never copy secrets, tokens, passwords, API keys, private keys, or other credential-like material from the diff into `--comment` bodies or any command-line arguments.
 
 ## Including Untracked Files
@@ -121,6 +122,8 @@ Once a thread reaches you either way, its card shows `응답 중` until you repl
 The user can also edit code in the viewer. difit then commits a `fixup! <target SHA>` commit with a `Review-Thread` trailer on top of HEAD and records it as approved. Its author is `reviewer-edit`.
 
 The user can also reword a commit from the commit list. difit then commits an `amend! <target SHA>` commit that changes no file, whose message below the first paragraph is the new message with a `Review-Thread` trailer, and records it as approved under a new thread whose `filePath` is `/COMMIT_MSG` (line 1), with `fixupTarget` the reworded commit and author `reviewer-edit`. It needs nothing from you until folding.
+
+A reply body can carry a `mermaid` code block the same way as a comment body (see the comment-bodies list above).
 
 ### Naming the thread a reply answers
 
