@@ -113,10 +113,10 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
 
 리뷰어가 커밋 목록에서 순서를 바꾸거나 메시지를 고치다 충돌하면 difit은 이력을 저장 전으로 되돌린다. 이때 `difit comment wait`가 열려 있거나 서버를 띄운 Claude Code 세션의 소켓이 열려 있으면 화면에 `에이전트에게 맡기기`가 뜨고, 리뷰어가 누르면 커밋 지적이 생겨 다른 지적처럼 `wait`와 `comment get`으로 온다. 본문에는 원하는 순서(오래된 커밋부터)나 고칠 메시지, 충돌한 커밋이 적혀 있다. 리뷰어가 순서를 바꾸자고 직접 단 지적도 같은 방법으로 한다. 답하기 전까지 이 지적은 에이전트 차례이므로 화면의 순서 바꾸기와 메시지 고치기는 막혀 있다.
 
-1. `git rebase -i --rebase-merges --autostash <리뷰 범위의 시작 커밋>`에서 맡겨진 순서대로 줄을 옮기거나, 메시지를 고칠 커밋을 `reword`로 바꾼다. 범위 위쪽 커밋의 SHA가 바뀌므로 시작하기 전 HEAD의 SHA를 적어 둔다.
-2. 아직 접지 않은 `fixup! <SHA>`와 `amend! <SHA>`는 대상 커밋 바로 뒤에 두고, 제목의 SHA를 대상의 새 SHA로 고친다.
-3. 충돌로 멈추면 그 커밋이 하던 변경을 남기도록 풀고 `git add <파일>` 뒤 `GIT_EDITOR=true git rebase --continue`로 잇는다. 머지 때 손으로 풀었던 충돌은 다시 풀어야 한다.
-4. 끝나면 `git diff --exit-code <시작 전 SHA> HEAD`를 돌린다. 무언가 찍히면 푼 결과가 전과 다르다는 뜻이다. `git reset --hard <시작 전 SHA>`로 되돌리고 답글로 어떻게 할지 묻는다.
+1. `git rebase -i --rebase-merges --autostash --no-autosquash <리뷰 범위의 시작 커밋>`에서 맡겨진 순서대로 줄을 옮기거나, 메시지를 고칠 커밋을 `reword`로 바꾼다. 범위 위쪽 커밋의 SHA가 바뀌므로 시작하기 전 HEAD의 SHA를 적어 둔다.
+2. 리뷰 목록의 마지막 커밋 위에 있는 커밋은 그대로 위에 둔다. 아직 접지 않은 `fixup! <SHA>`와 `amend! <SHA>`도 대상 커밋을 따라 옮기지 말고, `reword`로 제목의 SHA만 대상의 새 SHA로 고친다. 마지막 커밋 위에 있어야 승인을 기다리는 fixup으로 읽히기 때문이다. 이미 그 아래에 있던 fixup만 대상보다 뒤에 둔다.
+3. 충돌로 멈추면 그 커밋이 하던 변경을 남기도록 풀고 `git add <파일>` 뒤 `GIT_EDITOR=true git rebase --continue`로 잇는다. `reword`로 바꾼 fixup에서 멈췄으면 `GIT_EDITOR=true` 없이 이어 제목을 고친다. 풀고 나니 바뀐 것이 없거나 커밋이 비어 멈추면 잇기 전에 `git commit --allow-empty -C REBASE_HEAD`로 남긴다. 그대로 이으면 커밋이 사라져 5번에서 올릴 새 SHA가 없다. 머지 때 손으로 풀었던 충돌은 다시 풀어야 한다.
+4. 끝나면 `git diff --exit-code <시작 전 SHA> HEAD`를 돌린다. 무언가 찍히면 푼 결과가 전과 다르다는 뜻이다. `git reset --keep <시작 전 SHA>`로 되돌리고 답글로 어떻게 할지 묻는다. `--hard`는 `--autostash`가 돌려놓은 리뷰어의 커밋하지 않은 변경까지 지운다.
 5. 바뀐 커밋마다 옛 SHA와 새 SHA의 짝을 서버에 올린다. difit이 리뷰, 지적, 결정 기록을 새 SHA로 옮기고 열린 탭에 알리므로 지적을 손으로 옮기지 않는다.
 
    ```sh
@@ -125,7 +125,7 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
      -d '{"rewritten":{"<옛 SHA>":"<새 SHA>"}}'
    ```
 
-   전체 SHA만 받는다. 새 SHA가 HEAD의 이력에 없거나, 리뷰가 나열하는 커밋 가운데 짝이 없는 커밋이 HEAD의 이력에도 없으면 409 `stale-view`로 답하고 아무것도 옮기지 않는다.
+   전체 SHA만 받는다. 새 SHA가 HEAD의 이력에 없거나, 리뷰가 나열하는 커밋이 새 SHA로도 옛 SHA로도 HEAD의 첫 부모 줄에 없거나, 리뷰 위에 있던 커밋이 리뷰 안으로 들어왔으면 409 `stale-view`로 답하고 아무것도 옮기지 않는다. 이때는 이력을 고쳐 다시 올린다.
 
 6. 그 지적에 답글로 무엇을 했는지 답한다.
 

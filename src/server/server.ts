@@ -2328,6 +2328,19 @@ export async function startServer(options: ServerOptions): Promise<{
     if (lost) {
       return refuseRewrite('stale-view', `Nothing on the line of HEAD stands for ${lost.sha}.`);
     }
+    // A fixup is read as one only above the review's last commit; below it, its card would go.
+    const inside = await runGit(repositoryPath, [
+      'rev-list',
+      '--first-parent',
+      '--count',
+      `${selection.baseCommitish}..${commits.at(-1)?.sha ?? ''}`,
+    ]);
+    if (Math.max(...commits.map(placeOf)) + 1 > Number(inside.stdout.toString('utf8'))) {
+      return refuseRewrite(
+        'stale-view',
+        'A commit from above the review now stands inside it. Leave it above the last reviewed commit.',
+      );
+    }
     const order = [...commits].sort((a, b) => placeOf(a) - placeOf(b)).map(({ sha }) => sha);
     return followOrder(selection, commits, order, rewritten);
   }

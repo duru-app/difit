@@ -200,10 +200,10 @@ The user can pick lines on a fixup drawn under a comment, or in the box a fixup 
 
 When the user reorders commits or rewords one from the commit list and the rebase conflicts, difit restores the history. While a `difit comment wait` is open, or the socket of the Claude Code session that started the server still listens, the screen then offers `에이전트에게 맡기기`. Pressing it leaves a comment on a commit, which reaches you like any other. Its body holds the wanted order, oldest first, or the wanted message, and the commit that conflicted. Treat a comment asking for a new order the same way. Until you answer, the thread is your turn and the user's own reorder and reword are refused.
 
-1. Note HEAD's SHA, then run `git rebase -i --rebase-merges --autostash <review base>`. Move the lines into the wanted order, or mark the commit `reword`.
-2. Keep each unfolded `fixup! <SHA>` and `amend! <SHA>` right behind its target and change the SHA in its subject to the target's new SHA.
-3. At a conflict, keep what that commit was doing, then `git add <file>` and `GIT_EDITOR=true git rebase --continue`. Conflicts resolved by hand in a merge have to be resolved again.
-4. Run `git diff --exit-code <noted SHA> HEAD`. If it prints anything, the resolution changed the result: `git reset --hard <noted SHA>` and ask in a reply.
+1. Note HEAD's SHA, then run `git rebase -i --rebase-merges --autostash --no-autosquash <review base>`. Move the lines into the wanted order, or mark the commit `reword`.
+2. Leave everything above the last commit the review lists above it. That includes each unfolded `fixup! <SHA>` and `amend! <SHA>`: do not move it to its target, only mark it `reword` and change the SHA in its subject to the target's new SHA. Only above that commit is it read as a fixup waiting for approval. A fixup already below that commit stays somewhere behind its target.
+3. At a conflict, keep what that commit was doing, then `git add <file>` and `GIT_EDITOR=true git rebase --continue`. If it stopped at a fixup you marked `reword`, continue without `GIT_EDITOR=true` and change the subject. If resolving leaves nothing to commit, or a commit stops because it became empty, keep it with `git commit --allow-empty -C REBASE_HEAD` before continuing. Continuing as it is drops the commit, and step 5 has no new SHA for it. Conflicts resolved by hand in a merge have to be resolved again.
+4. Run `git diff --exit-code <noted SHA> HEAD`. If it prints anything, the resolution changed the result: `git reset --keep <noted SHA>` and ask in a reply. `--hard` would also wipe the user's uncommitted changes that `--autostash` put back.
 5. Report the old and new SHA of each commit that changed. difit moves the review, the comments and the decisions and tells open tabs, so do not copy comments by hand:
 
    ```bash
@@ -212,7 +212,7 @@ When the user reorders commits or rewords one from the commit list and the rebas
      -d '{"rewritten":{"<old sha>":"<new sha>"}}'
    ```
 
-   It takes full SHAs only. It answers 409 `stale-view` and moves nothing when a new SHA is not in HEAD's history, or when a commit the review lists has no pair and is not in HEAD's history either.
+   It takes full SHAs only. It answers 409 `stale-view` and moves nothing when a new SHA is not in HEAD's history, when a commit the review lists is not on HEAD's first-parent line under its new SHA or its old one, or when a commit from above the review now stands inside it. Correct the history and report again.
 
 6. Reply on the thread with what you did.
 
