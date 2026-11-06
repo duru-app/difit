@@ -1658,7 +1658,8 @@ function App() {
     saveClientSettings({ commentsPanelOpen: isCommentsPanelOpen });
   }, [isCommentsPanelOpen]);
 
-  // Fetch revision options on mount
+  const rewrittenCommitCount = Object.keys(diffData?.rewritten ?? {}).length;
+
   useEffect(() => {
     fetch('/api/revisions')
       .then((res) => (res.ok ? res.json() : null))
@@ -1675,7 +1676,7 @@ function App() {
         }
       })
       .catch(() => setRevisionOptions(null));
-  }, []);
+  }, [rewrittenCommitCount]);
 
   // Handle revision change
   const handleRevisionChange = useCallback(

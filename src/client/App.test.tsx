@@ -3483,6 +3483,12 @@ describe('App Component - Commits of the review', () => {
     });
     expect(moveRecords).toHaveBeenCalledWith(rewritten, 'repo-1');
     expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).toBeNull();
+    await waitFor(() => {
+      const revisionReads = vi
+        .mocked(global.fetch)
+        .mock.calls.filter(([url]) => String(url) === '/api/revisions');
+      expect(revisionReads).toHaveLength(2);
+    });
   });
 
   it('shows the warning from saving on the default branch and goes ahead once confirmed', async () => {
