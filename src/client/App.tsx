@@ -110,6 +110,7 @@ import { DiffLineLinkProvider, type DiffLineLinks } from './contexts/DiffLineLin
 import { PickedThreadProvider } from './contexts/PickedThreadContext';
 import { WordHighlightProvider } from './contexts/WordHighlightContext';
 import { useAppearanceSettings } from './hooks/useAppearanceSettings';
+import { useCanHover } from './hooks/useCanHover';
 import { useDiffComments } from './hooks/useDiffComments';
 import { rangesAroundNewLines, useExpandedLines, type MergedChunk } from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
@@ -538,6 +539,7 @@ function App() {
 
   const { settings, updateSettings } = useAppearanceSettings();
   const { isMobile, isDesktop } = useViewport();
+  const canHover = useCanHover();
   const isFileTreeShown = isMobile ? isFileDrawerOpen : isFileTreeOpen;
   const setFileTreeShown = isMobile ? setIsFileDrawerOpen : setIsFileTreeOpen;
   useHotkeys('escape', () => setIsFileDrawerOpen(false), {
@@ -3180,7 +3182,7 @@ function App() {
                     onReplyToThread={handleReplyToThread}
                     onRemoveMessage={removeMessage}
                     onUpdateMessage={updateMessage}
-                    loadMessage={isMobile ? loadCommitMessage : undefined}
+                    loadMessage={isMobile || !canHover ? loadCommitMessage : undefined}
                     amendedMessages={amendedMessages}
                   />
                 )}
