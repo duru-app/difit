@@ -34,6 +34,79 @@ async function kindOf(path: string, oldText: string, newText: string) {
 }
 
 describe('classifyChunks', () => {
+  describe('parsing only what a run changed', () => {
+    const korean = '// 앞줄에 한글이 있고 이모지 🎉 도 있다\nconst 이름 = "값 🎉";\n';
+
+    it.each([
+      [
+        'a changed comment after non-ASCII lines',
+        `${korean}f(); // old\ng();\n`,
+        `${korean}f(); // new\ng();\n`,
+        ['comment'],
+      ],
+      [
+        'changed code after non-ASCII lines',
+        `${korean}f(); // old\ng();\n`,
+        `${korean}h(); // old\ng();\n`,
+        ['code'],
+      ],
+      [
+        'a comment changed inside a non-ASCII line',
+        '// 가나다 🎉 old\nf();\n',
+        '// 가나다 🎉 new\nf();\n',
+        ['comment'],
+      ],
+      [
+        'a changed emoji sharing its first code unit',
+        '// 🎉\nf();\n',
+        '// 🎊\nf();\n',
+        ['comment'],
+      ],
+      ['an added last line without a newline', 'f();\n// 끝', 'f();\n// 끝\n// 더', ['comment']],
+      ['a removed last line without a newline', 'f();\n// 끝\n// 더', 'f();\n// 끝', ['comment']],
+      ['a removed first line', '// 첫 줄\nf();\n', 'f();\n', ['comment']],
+      [
+        'reformatting after non-ASCII lines',
+        `${korean}f( 1 );\n`,
+        `${korean}f(1);\n`,
+        ['whitespace'],
+      ],
+      ['code turned into a comment', `${korean}f();\n`, `${korean}// f();\n`, ['code']],
+      [
+        'a run that opens a block comment',
+        '/* 가\nf();\n*/\ng();\n',
+        '/* 가\nf();\n*/\n/* g();\n',
+        ['unknown'],
+      ],
+    ])('judges %s', async (_name, oldText, newText, kinds) => {
+      expect(await kindsOf('edited.ts', oldText, newText)).toEqual(kinds);
+    });
+
+    it('judges several runs in one file on their own', async () => {
+      const lines = (first: string, second: string, third: string) =>
+        [
+          `// 가 ${first}`,
+          'a();',
+          'b();',
+          'c();',
+          'd();',
+          `${second}();`,
+          'e();',
+          'f();',
+          'g();',
+          'h();',
+          `// 🎉 ${third}`,
+          '',
+        ].join('\n');
+
+      expect(await kindsOf('edited.ts', lines('1', 'x', '1'), lines('2', 'y', '2'), 1)).toEqual([
+        'comment',
+        'code',
+        'comment',
+      ]);
+    });
+  });
+
   describe('while other requests wait', () => {
     it('lets the server answer between the parses of one file', async () => {
       let turns = 0;
@@ -77,6 +150,16 @@ describe('classifyChunks', () => {
       ]);
 
       expect(results).toEqual(['comment', 'comment', 'code', 'code']);
+    });
+
+    it('parses each changed run from the tree of the old file', async () => {
+      const parse = vi.spyOn(Parser.prototype, 'parse');
+
+      await kindsOf('edited.ts', 'a(); // old\nb();\nc();\n', 'a(); // new\nb();\nd();\n', 0);
+
+      const fromOldTree = parse.mock.calls.filter(([, oldTree]) => oldTree);
+      parse.mockRestore();
+      expect(fromOldTree).toHaveLength(2);
     });
 
     it('does not parse content it has already judged', async () => {
