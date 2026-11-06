@@ -1865,6 +1865,11 @@ describe(
       ];
       renderApp();
       await screen.findAllByTitle('c.ts');
+      fireEvent.click(
+        within(document.getElementById(getFileElementId('c.ts'))!).getByRole('button', {
+          name: 'Load now',
+        }),
+      );
       await scrollTo(6100);
 
       fireEvent.click(await screen.findByRole('button', { name: '이 지적을 달던 시점으로' }));
@@ -3526,6 +3531,25 @@ describe('App Component - Commits of the review', () => {
     ]);
   });
 
+  it('keeps the shown diff dimmed under the commit list while another commit loads', async () => {
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+    const shownFile = document.querySelector('main [data-file-path]');
+    expect(shownFile).not.toBeNull();
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation((input, init) =>
+      String(input).startsWith('/api/diff') ? new Promise<Response>(() => {}) : answer(input, init),
+    );
+
+    fireEvent.click(commitButton(/1111111/));
+
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true'));
+    expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('main')).toHaveClass('opacity-50');
+    expect(shownFile).toBeInTheDocument();
+    expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
+  });
+
   it('shows the whole review on a second click of the shown commit and that commit again on Back', async () => {
     renderApp();
     await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
@@ -3562,6 +3586,7 @@ describe('App Component - Commits of the review', () => {
     expect(await screen.findByText('Look here')).toBeInTheDocument();
 
     fireEvent.click(commitButton('전체'));
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'false'));
     expect(await screen.findByText('Look here')).toBeInTheDocument();
   });
 
@@ -3627,6 +3652,7 @@ describe('App Component - Commits of the review', () => {
     await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
     fireEvent.click(commitButton(/abc1234/), { shiftKey: true });
     await waitFor(() => expect(commitButton(/abc1234/)).toHaveAttribute('aria-current', 'true'));
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'false'));
   };
 
   it('binds a comment made on a run of commits to the run and the commit the server chose', async () => {
@@ -4303,7 +4329,7 @@ describe('App Component - Commits of the review', () => {
     expect(commentsPanelHasFocus()).toBe(false);
   });
 
-  it('leaves the keys on the diff when Back cancels going to another view to show a comment', async () => {
+  it('keeps the keys on the panel when Back cancels going to another view to show a comment', async () => {
     renderApp();
     await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
     fireEvent.click(commitButton(/1111111/));
@@ -4320,14 +4346,12 @@ describe('App Component - Commits of the review', () => {
     });
 
     await userEvent.keyboard('{Enter}');
-    await waitFor(() =>
-      expect(screen.queryByRole('region', { name: '리뷰 범위의 커밋' })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true'));
     act(() => window.history.back());
 
     await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
     expect(commentsPanel()).toBeInTheDocument();
-    expect(commentsPanelHasFocus()).toBe(false);
+    expect(commentsPanelHasFocus()).toBe(true);
   });
 
   it('goes back to the whole review for a comment on a file the shown commit leaves alone', async () => {
