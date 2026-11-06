@@ -535,7 +535,13 @@ export function CommitList({
                   </li>
                 ))}
                 <li className="group">
-                  <div className="relative flex items-stretch">
+                  <div
+                    className="relative flex items-stretch"
+                    onMouseEnter={(event) => {
+                      if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
+                    }}
+                    onMouseLeave={loadCardMessage && hoverCard.leave}
+                  >
                     <button
                       type="button"
                       data-commit-sha={commit.sha}
@@ -544,11 +550,9 @@ export function CommitList({
                           setDrag({ fromSha: commit.sha, overSha: null });
                         }
                       }}
-                      onMouseEnter={(event) => {
+                      onMouseEnter={() => {
                         setDrag((current) => current && { ...current, overSha: commit.sha });
-                        if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
                       }}
-                      onMouseLeave={loadCardMessage && hoverCard.leave}
                       onFocus={(event) => {
                         if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
                       }}
