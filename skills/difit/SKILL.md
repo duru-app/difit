@@ -159,7 +159,7 @@ The user can pick lines on a fixup drawn under a comment, or in the box a fixup 
 
    A comment on the whole file has `"position": {"side": "new", "scope": "file"}` with no `line` (`"side": "old"` when the diff deletes the file), and its text output location is the bare path, without `:L<n>`, followed by `(old)` for a deleted file. It is about the file as a whole, so read the whole file and fix wherever the remark applies, still in one fixup. Its `fixupTarget` is the last commit of the view that changed the file, or the view's last commit when none did; commits the commit list leaves out do not count. Reply to it with the same `position`.
 
-   A comment on a whole commit has no `filePath`, `"position": {"scope": "commit"}`, and `fixupTarget` naming that commit. It is about the commit itself: its message, what it covers, whether to split or merge it. Its text output location is `커밋 <short sha> <subject>`, without a separate `고쳐 넣을 커밋:` line. When a code or message change answers it, make one `fixup!` or `amend!` into that commit with the `Review-Thread` trailer as for any comment. When it asks for something one fixup cannot do, such as splitting or reordering commits, do not act on it; reply and ask how to proceed. Reply with `{"type": "reply", "position": {"scope": "commit"}, "fixupTarget": "<sha>", ...}`, no `filePath`.
+   A comment on a whole commit has no `filePath`, `"position": {"scope": "commit"}`, and `fixupTarget` naming that commit. It is about the commit itself: its message, what it covers, whether to split or merge it. Its text output location is `커밋 <short sha> <subject>`, without a separate `고쳐 넣을 커밋:` line. When a code or message change answers it, make one `fixup!` or `amend!` into that commit with the `Review-Thread` trailer as for any comment. When it asks for something one fixup cannot do, such as splitting a commit, do not act on it; reply and ask how to proceed. A request to reorder commits is done as in "Taking over a reorder or a reword". Reply with `{"type": "reply", "position": {"scope": "commit"}, "fixupTarget": "<sha>", ...}`, no `filePath`.
 
    A comment on several ranges of one file has `extraRanges` next to `line` in its `position`, e.g. `{"side": "new", "line": {"start": 77, "end": 80}, "extraRanges": [12, 40]}`: the lines in `extraRanges` belong to the same comment too. `line` is the range that ended lowest in the view the comment was written in, `extraRanges` lists the others, and the text output location lists them all, `path:L12,L40,L77-L80`. The card sits under whichever range ends lowest in the current view, so in the other of the unified and split views it can sit under another range than `line`. `codeSnapshot.extraContents` holds the code of each extra range in the same order, so find each range in HEAD by its own content. Fix every range in the same fixup, and reply, with or without choices, with the same `position` including `extraRanges`: a reply that gives only `line` does not attach to the comment. When the ranges cover both removed and kept lines, each range on the side other than `position.side` names its side, `{"side": "old", "start": 12, "end": 14}` (both ends even for one line), and its line numbers belong to that side's tree. Stored `extraRanges` list the ranges on `position.side` first and the other side's after them, each side top to bottom; reply with the `position` copied as it is. The text output location then leads each side's ranges with the side, old first, `path:old:L12-L14,new:L12-L13`, without the `(old)` suffix.
 
@@ -196,6 +196,26 @@ The user can pick lines on a fixup drawn under a comment, or in the box a fixup 
 - The user can also edit lines inside the fixup card under a comment. The viewer then adds the user's fixup on top of yours, with the same `Review-Thread` trailer and target commit, and approves both, which closes the comment; there is nothing for you to do. If the user reverts that edit, the comment goes back to `[승인 대기]` for the user to judge your fixup again, and `difit comment wait` does not bring it back. The reverted fixup remains only as a `rejected` record in `decisions`; drop it with the other rejected fixups when folding.
 - `[지움]` means the user deleted the comment. Stop any work on it and do not reply to it. With `rejectedFixupShas`, drop those fixups; until they are dropped, `difit comment wait` keeps bringing the thread back. Deleted threads no longer appear in `comment get`.
 
+### Taking over a reorder or a reword
+
+When the user reorders commits or rewords one from the commit list and the rebase conflicts, difit restores the history. While a `difit comment wait` is open, or the socket of the Claude Code session that started the server still listens, the screen then offers `에이전트에게 맡기기`. Pressing it leaves a comment on a commit, which reaches you like any other. Its body holds the wanted order, oldest first, or the wanted message, and the commit that conflicted. Treat a comment asking for a new order the same way. Until you answer, the thread is your turn and the user's own reorder and reword are refused.
+
+1. Note HEAD's SHA, then run `git rebase -i --rebase-merges --autostash <review base>`. Move the lines into the wanted order, or mark the commit `reword`.
+2. Keep each unfolded `fixup! <SHA>` and `amend! <SHA>` right behind its target and change the SHA in its subject to the target's new SHA.
+3. At a conflict, keep what that commit was doing, then `git add <file>` and `GIT_EDITOR=true git rebase --continue`. Conflicts resolved by hand in a merge have to be resolved again.
+4. Run `git diff --exit-code <noted SHA> HEAD`. If it prints anything, the resolution changed the result: `git reset --hard <noted SHA>` and ask in a reply.
+5. Report the old and new SHA of each commit that changed. difit moves the review, the comments and the decisions and tells open tabs, so do not copy comments by hand:
+
+   ```bash
+   curl -X POST "http://localhost:<port>/api/history-rewritten" \
+     -H 'Content-Type: application/json' \
+     -d '{"rewritten":{"<old sha>":"<new sha>"}}'
+   ```
+
+   It takes full SHAs only. It answers 409 `stale-view` and moves nothing when a new SHA is not in HEAD's history, or when a commit the review lists has no pair and is not in HEAD's history either.
+
+6. Reply on the thread with what you did.
+
 ### Folding approved fixups
 
 Fold once, when the branch is wrapped up: every remaining fixup is `[승인됨]`, every rejected fixup is dropped, and so is every fixup whose `Review-Thread` trailer names a thread with a `"kind": "deleted"` record in the JSON `decisions`. `--autosquash` folds all fixups in range.
@@ -224,7 +244,7 @@ Folding `amend!` commits needs git 2.32 or later. An older git does not recogniz
 `<review base>` is the compare-with side of the diff, or `<SHA>^` for a single-commit review. Start from the review base, not the target commit: a fixup for a comment made on one commit, or one the user made in the viewer, can point at an earlier commit in the range. Folding only regroups changes, so afterwards `git diff --exit-code <pre-fold SHA> HEAD` must print nothing. Note the SHA itself rather than a shell variable: a variable does not survive into the next command when each command runs on its own.
 
 - If a fixup deletes everything its target added, the rebase stops at `Could not apply ... fixup!`. Keep an empty commit with `git commit --amend --allow-empty --no-edit`, or drop it with `git reset --soft HEAD^`, then `git rebase --continue`.
-- Fixups from the viewer name their target by SHA. Rebasing onto a newer base or rewording the target yourself before folding gives it a new SHA and leaves the fixup unfolded, so do those after folding. A reword the user saves from the commit list moves the fixup subjects along with it. The rebase still reports success; confirm nothing is left:
+- Fixups from the viewer name their target by SHA. Rebasing onto a newer base or rewording the target yourself before folding gives it a new SHA and leaves the fixup unfolded, so do those after folding. A reword the user saves from the commit list moves the fixup subjects along with it. A reorder handed to you changes them as in "Taking over a reorder or a reword". The rebase still reports success; confirm nothing is left:
 
   ```bash
   git log --format='%h %s' <review base>..HEAD | grep -E '^[0-9a-f]+ (fixup|squash|amend)! '
@@ -253,7 +273,7 @@ When a fixup targets a commit in the middle of the range and a later commit chan
 
 ### Moving comments to the folded commit
 
-Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
+Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. A reorder or a reword within a running review needs none of this, because difit moves the comments. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
 
 ```bash
 difit comment get --port <old port> --format json > old.json
