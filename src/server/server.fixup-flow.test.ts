@@ -434,16 +434,27 @@ it('keeps a comment on a whole commit without a file and hands it over naming th
   expect(handed).not.toHaveProperty('filePath');
 });
 
-it('rewords a commit of the review into an amend! the commit list then shows', async () => {
+it('rewords a commit in place and moves the review, its comments and its decisions onto the new SHAs', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
   git(repo, ['init', '-q']);
-  git(repo, ['checkout', '-q', '-b', 'main']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
   const base = commit(repo, 'base', { 'price.js': 'export const price = 1;\n' });
   const typo = commit(repo, 'add prcie helper\n\nRounds down.', {
     'helper.js': 'export const helper = 1;\n',
   });
   const tip = commit(repo, 'use helper', { 'price.js': 'export const price = 2;\n' });
+  writeFileSync(join(repo, 'helper.js'), 'export const helper = 2;\n');
+  git(repo, ['commit', '-q', '-a', '-m', `fixup! ${typo}\n\nReview-Thread: code`]);
+  const codeFixup = git(repo, ['rev-parse', 'HEAD']);
+  git(repo, [
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    `amend! ${tip}\n\nuse the helper\n\nReview-Thread: message`,
+  ]);
+  const amend = git(repo, ['rev-parse', 'HEAD']);
   writeFileSync(join(repo, 'price.js'), 'work in progress\n');
 
   const { port, server } = await startServer({
@@ -453,16 +464,55 @@ it('rewords a commit of the review into an amend! the commit list then shows', a
   });
   cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
   const api = (path: string) => `http://localhost:${port}${path}`;
-  const review = ((await (await fetch(api('/api/diff'))).json()) as DiffResponse).review!;
-  const query = `?base=${review.selection.baseCommitish}&target=${review.selection.targetCommitish}`;
-  const messageOf = async () =>
-    (
-      (await (await fetch(api(`/api/commit-message${query}&commit=${typo}`))).json()) as {
-        message: string;
-      }
-    ).message;
+  const diff = await (await fetch(api('/api/diff'))).json();
+  const { review } = diff as DiffResponse;
+  const query = `?base=${review!.selection.baseCommitish}&target=${review!.selection.targetCommitish}`;
+  const at = '2026-10-19T00:00:00Z';
+  const author = { author: 'User', createdAt: at, updatedAt: at };
+  await fetch(api(`/api/comments${query}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      threads: [
+        {
+          id: 'code',
+          filePath: 'helper.js',
+          createdAt: at,
+          updatedAt: at,
+          position: { side: 'new', line: 1 },
+          codeSnapshot: { content: 'export const helper = 1;', commit: typo },
+          view: { baseCommitish: base, targetCommitish: typo },
+          fixupTarget: typo,
+          messages: [{ id: 'code', body: 'Make it two.', ...author }],
+        },
+        {
+          id: 'message',
+          position: { scope: 'commit' },
+          createdAt: at,
+          updatedAt: at,
+          fixupTarget: tip,
+          messages: [{ id: 'message', body: 'Say the helper.', ...author }],
+        },
+      ],
+    }),
+  });
+  const before = (await (await fetch(api(`/api/fixups${query}`))).json()) as {
+    fixups: Array<{ sha: string; patchId: string; threadIds: string[] }>;
+  };
+  await fetch(api(`/api/decisions${query}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(
+      before.fixups.map(({ sha, patchId, threadIds }) => ({
+        threadId: threadIds[0],
+        kind: 'approved',
+        fixupSha: sha,
+        patchId,
+        at,
+      })),
+    ),
+  });
 
-  expect(await messageOf()).toBe('add prcie helper\n\nRounds down.');
   const response = await fetch(api(`/api/reword${query}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -472,37 +522,165 @@ it('rewords a commit of the review into an amend! the commit list then shows', a
       message: 'add price helper\n\nRounds down.',
     }),
   });
-  const { threadId, sha } = (await response.json()) as { threadId: string; sha: string };
+  const { rewritten } = (await response.json()) as { rewritten: Record<string, string> };
 
   expect(response.status).toBe(200);
-  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(sha);
-  expect(git(repo, ['log', '-1', '--format=%B'])).toBe(
-    `amend! ${typo}\n\nadd price helper\n\nRounds down.\n\nReview-Thread: ${threadId}`,
-  );
-  expect(git(repo, ['status', '--porcelain'])).toBe('M price.js');
-  const { fixups } = (await (await fetch(api(`/api/fixups${query}`))).json()) as {
-    fixups: Array<{
-      sha: string;
-      threadIds: string[];
-      foldTargetSha?: string;
-      amendedMessage?: unknown;
-    }>;
-  };
-  expect(fixups).toEqual([
-    expect.objectContaining({
-      sha,
-      threadIds: [threadId],
-      foldTargetSha: typo,
-      amendedMessage: {
-        before: 'add prcie helper\n\nRounds down.',
-        after: 'add price helper\n\nRounds down.',
-      },
-    }),
+  const newTypo = rewritten[typo]!;
+  const newTip = rewritten[tip]!;
+  const newCodeFixup = rewritten[codeFixup]!;
+  const newAmend = rewritten[amend]!;
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newAmend);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add price helper',
+    'use helper',
+    `fixup! ${newTypo}`,
+    `amend! ${newTip}`,
   ]);
-  expect(await messageOf()).toBe('add price helper\n\nRounds down.');
-  const commits = ((await (await fetch(api(`/api/diff${query}`))).json()) as DiffResponse).review!
-    .commits;
-  expect(commits.map(({ sha: commitSha }) => commitSha)).toEqual([typo, tip]);
+  expect(git(repo, ['status', '--porcelain'])).toBe('M price.js');
+
+  const moved = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(moved.review!.requested.targetCommitish).toBe(newTip);
+  expect(moved.rewritten).toEqual(rewritten);
+  expect(moved.review!.commits.map(({ sha, subject }) => [sha, subject])).toEqual([
+    [newTypo, 'add price helper'],
+    [newTip, 'use helper'],
+  ]);
+
+  const movedQuery = `?base=${base}&target=${newTip}`;
+  const { fixups } = (await (await fetch(api(`/api/fixups${movedQuery}`))).json()) as {
+    fixups: Array<{ sha: string; foldTargetSha?: string }>;
+  };
+  expect(fixups.map(({ sha, foldTargetSha }) => [sha, foldTargetSha])).toEqual([
+    [newCodeFixup, newTypo],
+    [newAmend, newTip],
+  ]);
+
+  const stored = (await (await fetch(api('/api/comments-json'))).json()) as {
+    threads: Array<{
+      id: string;
+      view?: unknown;
+      fixupTarget?: string;
+      codeSnapshot?: { commit?: string };
+    }>;
+    decisions: Array<{ threadId: string; fixupSha: string; patchId?: string; kind: string }>;
+  };
+  const code = stored.threads.find(({ id }) => id === 'code');
+  expect(code?.view).toEqual({ baseCommitish: base, targetCommitish: newTypo });
+  expect(code?.fixupTarget).toBe(newTypo);
+  expect(code?.codeSnapshot?.commit).toBe(newTypo);
+  expect(stored.threads.find(({ id }) => id === 'message')?.fixupTarget).toBe(newTip);
+  expect(stored.decisions).toContainEqual(
+    expect.objectContaining({ threadId: 'message', fixupSha: newAmend, patchId: newAmend }),
+  );
+  expect(stored.decisions).toContainEqual(
+    expect.objectContaining({ threadId: 'code', fixupSha: newCodeFixup }),
+  );
+
+  const short = (sha: string) => git(repo, ['rev-parse', '--short', sha]);
+  expect(await (await fetch(api('/api/comments-output'))).text()).toContain(
+    `helper.js:L1 [승인됨]\n고쳐 넣을 커밋: ${short(newTypo)} add price helper\n`,
+  );
+  const json = (await (await fetch(api(`/api/comments-json${query}`))).json()) as {
+    threads: unknown[];
+  };
+  expect(json.threads).toEqual(stored.threads);
+  await fetch(api('/api/comment-imports'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      {
+        type: 'thread',
+        id: 'after',
+        author: 'User',
+        filePath: 'helper.js',
+        position: { side: 'new', line: 1 },
+        fixupTarget: typo,
+        body: 'Said with the old SHA.',
+      },
+    ]),
+  });
+  const added = (await (await fetch(api('/api/comments-json'))).json()) as typeof stored;
+  expect(added.threads.find(({ id }) => id === 'after')?.fixupTarget).toBe(newTypo);
+  expect(
+    await (await fetch(api(`/api/commit-message${movedQuery}&commit=${newTypo}`))).json(),
+  ).toEqual({
+    message: 'add price helper\n\nRounds down.',
+  });
+
+  git(repo, ['checkout', '-q', '--', 'price.js']);
+  git(repo, ['-c', 'sequence.editor=true', 'rebase', '-q', '-i', '--autosquash', base]);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add price helper',
+    'use the helper',
+  ]);
+});
+
+it('warns before rewording on the default branch and rewrites once the warning is acknowledged', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const tip = commit(repo, 'tip', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9275,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const reword = (extra: object) =>
+    fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo', ...extra }),
+    });
+
+  const warned = await reword({});
+  expect(warned.status).toBe(409);
+  expect(await warned.json()).toMatchObject({
+    reason: 'needs-confirmation',
+    warnings: ['default-branch'],
+  });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
+
+  const confirmed = await reword({ acknowledged: ['default-branch'] });
+  expect(confirmed.status).toBe(200);
+  expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
+});
+
+it('refuses to reword while a rebase is stopped and leaves the history', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const tip = commit(repo, 'tip', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9277,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  git(repo, ['-c', 'sequence.editor=sed -i 1s/^pick/edit/', 'rebase', '-q', '-i', base]);
+
+  const response = await fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo' }),
+  });
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ reason: 'operation-in-progress' });
+  git(repo, ['rebase', '--abort']);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
 });
 
 it('stacks an edit made on the card on the agent fixup and folds both into the commit it folds into', async () => {
