@@ -30,9 +30,10 @@ S=$(bash .claude/skills/verify-difit/harness.sh new)
 bash .claude/skills/verify-difit/harness.sh start "$S" HEAD HEAD~2
 ( . "$S/env.sh"; cd "$REPO"
   TARGET=$(git rev-parse HEAD); BASE=$(git rev-parse HEAD~2); TYPO=$TARGET
-  git commit -q --allow-empty -m "fixup! $TYPO" -m 'Review-Thread: t1'
   curl -s "$URL/api/diff" >/dev/null
   difit comment add --port "$PORT" "{\"type\":\"thread\",\"id\":\"t1\",\"author\":\"User\",\"position\":{\"scope\":\"commit\"},\"fixupTarget\":\"$TYPO\",\"body\":\"third, not thrid\"}"
+  sleep 1
+  git commit -q --allow-empty -m "fixup! $TYPO" -m 'Review-Thread: t1'
   curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"commit\":\"$TYPO\",\"original\":\"add thrid\",\"message\":\"add third\"}" \
     "$URL/api/reword?base=$BASE&target=$TARGET" | tee "$EVIDENCE/reword.json"
@@ -82,3 +83,4 @@ Stopping mid-rewrite: stack 150 empty commits on a branch above `feature`, POST 
 - The query of `/api/reword` names the review, not the commit. After a rewrite the old SHAs in it are still understood, because the server keeps the map until it stops.
 - Only a review pinned to a commit can be reworded. `start` resolves names to SHAs, so `start "$S" HEAD HEAD~2` is pinned; a revision picked by branch name in the browser is not.
 - The fixup above needs the commit list to come from the reviewed target, so add it after `start`.
+- The fixup comes a second after the comment, because a comment newer than the fixup's author date is the agent's turn and the POST answers `agent-working`.
