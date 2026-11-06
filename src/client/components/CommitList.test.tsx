@@ -240,20 +240,20 @@ describe('CommitList', () => {
 
       const amended = row(/2222222/);
       expect(within(amended).getByText('change the behavior').tagName).not.toBe('DEL');
-      expect(within(amended).getByText('본문만 바뀜')).toBeInTheDocument();
+      expect(within(amended).getByText('본문 변경됨')).toBeInTheDocument();
     });
 
     it('reads the subject as git does, joining the lines of the first paragraph', () => {
       renderAmended('change the  \nbehavior\n\nwith a new body');
 
-      expect(within(row(/2222222/)).getByText('본문만 바뀜')).toBeInTheDocument();
+      expect(within(row(/2222222/)).getByText('본문 변경됨')).toBeInTheDocument();
     });
 
     it('counts leading spaces as part of the subject, as git does', () => {
       renderAmended('  change the behavior');
 
       expect(row(/2222222/).querySelector('del')).toHaveTextContent('change the behavior');
-      expect(within(row(/2222222/)).queryByText('본문만 바뀜')).not.toBeInTheDocument();
+      expect(within(row(/2222222/)).queryByText('본문 변경됨')).not.toBeInTheDocument();
     });
 
     it('shows the subject it will get in the phone drawer too', () => {

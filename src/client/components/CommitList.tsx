@@ -98,7 +98,7 @@ function AmendedSubject({ subject, message }: { subject: string; message: string
         className={`min-w-0 flex items-center gap-1.5 ${AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS}`}
       >
         <span className="min-w-0 truncate">{subject}</span>
-        <span className={AMEND_BADGE_CLASS}>본문만 바뀜</span>
+        <span className={AMEND_BADGE_CLASS}>본문 변경됨</span>
       </span>
     );
   }
