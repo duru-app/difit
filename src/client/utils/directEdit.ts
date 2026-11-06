@@ -4,6 +4,7 @@ import type {
   ExpandedLine,
   LineNumber,
   RewordRejection,
+  RewriteWarning,
 } from '../../types/diff';
 
 export interface EditRange {
@@ -145,15 +146,30 @@ const REWORD_FAILURE_MESSAGES: Record<RewordRejection, string> = {
   'stale-view': '그사이 이 커밋의 메시지가 바뀌었습니다. 닫았다가 다시 열어 고쳐 주세요.',
   'target-not-in-head': FAILURE_MESSAGES['target-not-in-head'],
   'detached-head': FAILURE_MESSAGES['detached-head'],
-  'operation-in-progress': FAILURE_MESSAGES['operation-in-progress'],
-  'merge-commit':
-    '머지 커밋의 메시지는 고칠 수 없습니다. 접을 때 rebase가 머지 커밋을 펴서 고친 메시지가 들어갈 자리가 없습니다.',
+  'operation-in-progress':
+    'rebase, merge, cherry-pick, revert가 도중에 멈춰 있어 이력을 바꿀 수 없습니다.',
+  'merge-commit': '머지 커밋의 메시지는 고칠 수 없습니다.',
   'empty-message': '메시지를 비울 수는 없습니다.',
   'no-change': '메시지가 바뀌지 않았습니다.',
-  'head-moved': FAILURE_MESSAGES['head-moved'],
-  'commit-failed': 'amend! 커밋을 만들지 못했습니다. 아래 출력을 확인해 주세요.',
+  'needs-confirmation': '이력을 바꾸기 전에 확인이 필요합니다.',
+  conflict:
+    '다시 쌓다가 충돌해 저장 전 이력으로 되돌렸습니다. 머지 때 손으로 푼 충돌이나 머지 안에서 고친 내용은 다시 만들 수 없습니다. 아래 출력을 확인해 주세요.',
+  'head-moved': '저장하는 동안 HEAD가 바뀌어 이력을 바꾸지 않았습니다. 다시 저장해 주세요.',
+  'commit-failed':
+    '이력을 다시 쓰지 못해 저장 전 이력 그대로 두었습니다. 아래 출력을 확인해 주세요.',
 };
 
-export function rewordFailureMessage(reason: RewordRejection | undefined, error: string): string {
+const REWRITE_WARNING_MESSAGES: Record<RewriteWarning, string> = {
+  'default-branch': '기본 브랜치의 이력이 바뀝니다.',
+};
+
+export function rewordFailureMessage(
+  reason: RewordRejection | undefined,
+  error: string,
+  warnings?: readonly RewriteWarning[],
+): string {
+  if (warnings && warnings.length > 0) {
+    return warnings.map((warning) => REWRITE_WARNING_MESSAGES[warning]).join(' ');
+  }
   return reason ? REWORD_FAILURE_MESSAGES[reason] : error;
 }

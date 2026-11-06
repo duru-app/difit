@@ -5,12 +5,14 @@ import {
   type DiffContextStorage,
   type LegacyDiffContextStorage,
   type LegacyDiffComment,
+  type RewrittenShas,
   type ViewedHashIndex,
   type ViewedHashIndexEntry,
   type ViewedHashRemoval,
 } from '../../types/diff';
 import { isOnCommit } from '../../utils/commentPosition';
-import { normalizeBaseMode } from '../../utils/diffSelection';
+import { diffSelectionsEqual, normalizeBaseMode } from '../../utils/diffSelection';
+import { movedDecision, movedSelection, movedThread } from '../../utils/rewrittenShas';
 import {
   isMarkedAfterUnmark,
   keepNewestViewedItems,
@@ -288,6 +290,40 @@ export class StorageService {
         // Could implement cleanup here
       } else {
         console.error('Error saving diff context data:', error);
+      }
+    }
+  }
+
+  // A record already under its new key stays: it was written after the rewrite.
+  moveRewrittenRecords(rewritten: RewrittenShas, repositoryId: string | undefined): void {
+    if (!repositoryId) return;
+    const prefix = this.getFullStorageKey(repositoryId, '');
+    const keys = Array.from({ length: localStorage.length }, (_, index) =>
+      localStorage.key(index),
+    ).filter((key): key is string => key?.startsWith(prefix) === true);
+    for (const key of keys) {
+      try {
+        const record = JSON.parse(localStorage.getItem(key) ?? 'null') as DiffContextStorage | null;
+        if (!record?.threads) continue;
+        const moved = movedSelection(record, rewritten);
+        if (diffSelectionsEqual(moved, record)) continue;
+        const movedKey = this.getFullStorageKey(
+          repositoryId,
+          this.generateStorageKey(moved.baseCommitish, moved.targetCommitish, record.baseMode),
+        );
+        if (localStorage.getItem(movedKey) === null) {
+          const movedRecord: DiffContextStorage = {
+            ...record,
+            baseCommitish: moved.baseCommitish,
+            targetCommitish: moved.targetCommitish,
+            threads: record.threads.map((thread) => movedThread(thread, rewritten)),
+            decisions: record.decisions?.map((decision) => movedDecision(decision, rewritten)),
+          };
+          localStorage.setItem(movedKey, JSON.stringify(movedRecord));
+        }
+        localStorage.removeItem(key);
+      } catch (error) {
+        console.error('Error moving a rewritten review record:', error);
       }
     }
   }
