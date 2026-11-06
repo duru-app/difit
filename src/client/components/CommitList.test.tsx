@@ -737,6 +737,24 @@ describe('CommitList', () => {
       expect(card()).toBeNull();
     });
 
+    it('shows for a row reached by keyboard and goes on Escape or when focus moves on', async () => {
+      renderWithCard();
+
+      fireEvent.focus(row(/2222222/));
+      await rest(350);
+      expect(card()).toHaveTextContent('The old one dropped data.');
+
+      fireEvent.keyDown(row(/2222222/), { key: 'Escape' });
+      expect(card()).toBeNull();
+
+      fireEvent.focus(row(/3333333/));
+      await rest(350);
+      expect(card()).toHaveTextContent('3333333');
+      fireEvent.blur(row(/3333333/));
+      await rest(200);
+      expect(card()).toBeNull();
+    });
+
     it('never shows when the pointer only passes over a row', async () => {
       const { loadMessage } = renderWithCard();
 

@@ -570,6 +570,13 @@ export function CommitList({
                         if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
                       }}
                       onMouseLeave={loadCardMessage && hoverCard.leave}
+                      onFocus={(event) => {
+                        if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
+                      }}
+                      onBlur={loadCardMessage && hoverCard.leave}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape' && hoverCard.place) hoverCard.hide();
+                      }}
                       onMouseUp={() => {
                         if (drag && drag.fromSha !== commit.sha) {
                           onSelect({
