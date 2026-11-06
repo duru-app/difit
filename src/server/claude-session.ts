@@ -18,6 +18,18 @@ export function reviewDoneMessageFor(port: number): string {
   return `difit review: the reviewer ended the review on port ${port}\n${REVIEW_DONE_LINE}`;
 }
 
+export function claudeSessionListening(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  const socketPath = env.CLAUDE_CODE_MESSAGING_SOCKET;
+  if (!socketPath) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const connection = createConnection(socketPath, () => {
+      connection.end();
+      resolve(true);
+    });
+    connection.on('error', () => resolve(false));
+  });
+}
+
 // Resolves to whether the message reached the session's socket.
 export function sendToClaudeSession(
   content: string,
