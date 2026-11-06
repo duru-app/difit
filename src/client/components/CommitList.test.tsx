@@ -650,6 +650,152 @@ describe('CommitList', () => {
     });
   });
 
+  describe('message card', () => {
+    const MESSAGE = 'change the behavior\n\nThe old one dropped data.\nKeep it.';
+
+    function renderWithCard({
+      inDrawer = false,
+      amendedMessages,
+      loadMessage = vi.fn(async (sha: string) => (sha === COMMITS[1]!.sha ? MESSAGE : 'tidy up')),
+    }: {
+      inDrawer?: boolean;
+      amendedMessages?: ReadonlyMap<string, string>;
+      loadMessage?: (sha: string) => Promise<string | null>;
+    } = {}) {
+      const onSelect = vi.fn();
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={onSelect}
+          inDrawer={inDrawer}
+          amendedMessages={amendedMessages}
+          loadMessage={loadMessage}
+        />,
+      );
+      return { onSelect, loadMessage };
+    }
+
+    const card = () => screen.queryByRole('tooltip');
+    const rest = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('shows the hash, the subject and the whole body once the pointer rests on a row', async () => {
+      const { onSelect } = renderWithCard();
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(349);
+      expect(card()).toBeNull();
+      await rest(1);
+
+      expect(card()).toHaveTextContent('2222222');
+      expect(card()).toHaveTextContent('change the behavior');
+      expect(card()!.textContent).toContain('The old one dropped data.\nKeep it.');
+      expect(row(/2222222/)).toHaveAttribute('aria-describedby', card()!.id);
+      expect(row(/2222222/)).not.toHaveAttribute('title');
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('switches to the next row at once while it is open', async () => {
+      renderWithCard();
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      fireEvent.mouseLeave(row(/2222222/));
+      fireEvent.mouseEnter(row(/3333333/));
+      await rest(0);
+
+      expect(card()).toHaveTextContent('3333333');
+      expect(card()).toHaveTextContent('본문 없음');
+    });
+
+    it('stays while the pointer is on it and goes once the pointer leaves both', async () => {
+      renderWithCard();
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      fireEvent.mouseLeave(row(/2222222/));
+      fireEvent.mouseEnter(card()!);
+      await rest(1000);
+      expect(card()).toHaveTextContent('2222222');
+
+      fireEvent.mouseLeave(card()!);
+      await rest(199);
+      expect(card()).not.toBeNull();
+      await rest(1);
+      expect(card()).toBeNull();
+    });
+
+    it('never shows when the pointer only passes over a row', async () => {
+      const { loadMessage } = renderWithCard();
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(100);
+      fireEvent.mouseLeave(row(/2222222/));
+      await rest(1000);
+
+      expect(card()).toBeNull();
+      expect(loadMessage).not.toHaveBeenCalled();
+    });
+
+    it('reads each message once', async () => {
+      const { loadMessage } = renderWithCard();
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+      fireEvent.mouseLeave(row(/2222222/));
+      await rest(200);
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      expect(loadMessage).toHaveBeenCalledExactlyOnceWith(COMMITS[1]!.sha);
+    });
+
+    it('says so when the message cannot be read', async () => {
+      renderWithCard({ loadMessage: vi.fn(async () => null) });
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      expect(card()).toHaveTextContent('메시지를 읽지 못했습니다.');
+    });
+
+    it('shows the message an amend! will leave without reading the commit', async () => {
+      const { loadMessage } = renderWithCard({
+        amendedMessages: new Map([[COMMITS[1]!.sha, 'change the behavior on purpose\n\nWhy.']]),
+      });
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      expect(card()).toHaveTextContent('바뀔 메시지');
+      expect(card()!.textContent).toContain('change the behavior on purpose\n\nWhy.');
+      expect(loadMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps the subject as a tooltip and shows no card in the phone drawer', async () => {
+      const { loadMessage } = renderWithCard({ inDrawer: true });
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(1000);
+
+      expect(card()).toBeNull();
+      expect(loadMessage).not.toHaveBeenCalled();
+      expect(row(/2222222/)).toHaveAttribute('title', 'change the behavior');
+    });
+  });
+
   describe('row buttons', () => {
     const actionsOf = (name: RegExp) =>
       within(row(name).closest('li')!).getByRole('button', { name: COPY_NAME }).parentElement!;
