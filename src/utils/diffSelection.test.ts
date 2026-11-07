@@ -13,7 +13,25 @@ import {
   reviewViewShown,
   selectReviewView,
   selectionAtCommit,
+  shortRef,
 } from './diffSelection';
+
+describe('shortRef', () => {
+  it.each([
+    ['0123456789abcdef0123456789abcdef01234567', '0123456'],
+    ['0123456789abcdef0123456789abcdef01234567^', '0123456^'],
+    ['0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '0123456'],
+    ['0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef^', '0123456^'],
+    ['HEAD', 'HEAD'],
+    ['abc1234', 'abc1234'],
+    [
+      'feature/0123456789abcdef0123456789abcdef01234567',
+      'feature/0123456789abcdef0123456789abcdef01234567',
+    ],
+  ])('shows %s as %s', (ref, shown) => {
+    expect(shortRef(ref)).toBe(shown);
+  });
+});
 
 describe('isSameCommit', () => {
   const full = 'b7c2e10a9f' + '0'.repeat(30);

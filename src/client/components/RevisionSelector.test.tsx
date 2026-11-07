@@ -27,6 +27,19 @@ describe('RevisionSelector', () => {
     commits: [{ hash: 'abc1234', shortHash: 'abc1234', message: 'Commit A' }],
   };
 
+  it('shortens a full SHA missing from the commit list', () => {
+    render(
+      <RevisionSelector
+        label="Target"
+        value="0b6a93f4a1c2d3e4f5061728394a5b6c7d8e9f01"
+        onChange={vi.fn()}
+        options={options}
+      />,
+    );
+
+    expect(screen.getByText('0b6a93f')).toBeInTheDocument();
+  });
+
   it('renders special options and keeps working disabled when specified', () => {
     render(
       <RevisionSelector

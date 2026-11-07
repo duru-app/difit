@@ -11,6 +11,7 @@ import type {
   SymbolMatch,
   SymbolSearchResponse,
 } from '../../types/diff';
+import { shortRef } from '../../utils/diffSelection';
 import { useHighlightedCode } from '../hooks/useHighlightedCode';
 import { NO_INDEX_UPDATES, type SymbolIndexUpdates } from '../hooks/useSymbolPeek';
 import { fetchBlobText, tokenizeContent } from '../utils/fileTokens';
@@ -23,7 +24,6 @@ import {
   isSameMatch,
   type PeekSelection,
   reselect,
-  shortRef,
   type SymbolPeekRequest,
 } from '../utils/symbolPeek';
 
