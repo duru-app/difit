@@ -70,7 +70,7 @@ Stale lists: an `order` that leaves a commit out or names another answers 409 `{
 
 ## Gotchas
 
-- `order` holds only what `review.commits` lists. Fixups between them go along with the commit before them, or right behind their target when it moved past them; commits above the reviewed target stay above it.
+- `order` holds only what `review.commits` lists. Fixups between them go along with the commit before them, or behind their target when it moved past them; fixups of one target keep their original order. Commits above the reviewed target stay above it.
 - The query of `/api/reorder` names the review, not the commit. After a rewrite the old SHAs in it are still understood, because the server keeps the moves until it stops.
 - The fixup comes a second after the comment, because a comment newer than the fixup's author date is the agent's turn and the POST answers `agent-working`.
 - A thread's stored line does not move, so `comment get` still prints it. The page finds the line again from the code snapshot when an earlier commit's lines shifted it.

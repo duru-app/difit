@@ -56,8 +56,9 @@ export async function readRewriteState(
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 // The whole first-parent line in its new order, or null when `order` names a commit off that line.
-// A commit the review does not list goes with the listed commit before it, behind its squash target
-// if that moved past it. What stands above the last listed commit stays above the review.
+// A commit the review does not list goes with the listed commit before it. A fixup standing ahead of
+// the commit before it in its autosquash group then goes right behind that commit. What stands above
+// the last listed commit stays above the review.
 function lineInOrder(
   line: readonly string[],
   order: readonly string[],
@@ -75,21 +76,17 @@ function lineInOrder(
     else current.push(commit);
   }
   const placed = order.flatMap((commit) => [commit, ...(following.get(commit) ?? [])]);
-
-  const targetOf = new Map(
-    listed.flatMap((commit, index) => {
-      const target = squashTarget(listed, index);
-      return target ? [[commit.sha, target.sha] as const] : [];
-    }),
-  );
-  const before = (commit: string, other: string) => placed.indexOf(commit) < placed.indexOf(other);
-  const late = placed.filter((commit) => {
-    const target = targetOf.get(commit);
-    return target !== undefined && placed.includes(target) && before(commit, target);
-  });
-  const settled = placed.filter((commit) => !late.includes(commit));
-  for (const commit of [...late].reverse()) {
-    settled.splice(settled.indexOf(targetOf.get(commit) ?? '') + 1, 0, commit);
+  const settled = [...placed];
+  for (const group of autosquashGroups(listed)) {
+    let previous: string | undefined;
+    for (const { sha } of group) {
+      if (!settled.includes(sha)) continue;
+      if (previous !== undefined && settled.indexOf(sha) < settled.indexOf(previous)) {
+        settled.splice(settled.indexOf(sha), 1);
+        settled.splice(settled.indexOf(previous) + 1, 0, sha);
+      }
+      previous = sha;
+    }
   }
   return [...line.slice(0, firstListed), ...settled, ...line.slice(lastListed + 1)];
 }
