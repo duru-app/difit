@@ -7,6 +7,7 @@ import type {
   ReviewDecision,
   ThreadFixup,
 } from '../types/diff.js';
+import { createDiffSelection } from '../utils/diffSelection.js';
 
 const FEATURE_BRANCH: RewriteState = {
   branch: 'feature',
@@ -54,12 +55,18 @@ const OLD_COMMITS = [
   },
 ];
 
-const pinnedSession = (threads: DiffCommentThread[], decisions: ReviewDecision[] = []) => ({
+const pinnedSession = (
+  threads: DiffCommentThread[],
+  decisions: ReviewDecision[] = [],
+  lineCommits = new Map<string, string | null>(),
+) => ({
   selection: OLD_REVIEW,
-  review: { requested: OLD_REQUESTED, commits: OLD_COMMITS },
+  review: { requested: OLD_REQUESTED },
+  commits: OLD_COMMITS,
   threads,
   decisions,
   fixupsByThread: new Map<string, ThreadFixup[]>(),
+  lineCommits,
 });
 
 const blockingThreadsOf = (session: ReturnType<typeof pinnedSession>) =>
@@ -76,9 +83,11 @@ const blocksWith = (
       {
         selection: OLD_REVIEW,
         review: undefined,
+        commits: [],
         threads: [thread('t1', messages)],
         decisions,
         fixupsByThread: new Map([['t1', fixups]]),
+        lineCommits: new Map(),
       },
     ],
   }).blocks;
@@ -157,9 +166,11 @@ describe('checkRewrite', () => {
     const empty = {
       selection: OLD_REVIEW,
       review: undefined,
+      commits: [],
       threads: [],
       decisions: [],
       fixupsByThread: undefined,
+      lineCommits: new Map(),
     };
     const waiting = { ...empty, threads: [thread('t2', [said('User')])] };
     expect(checkRewrite({ ...FEATURE_BRANCH, commentSessions: [empty, waiting] }).blocks).toEqual([
@@ -249,12 +260,17 @@ describe('checkRewrite', () => {
   });
 
   describe('where the blocking comments are', () => {
-    it('names the review target when the comment was made on the whole review', () => {
-      expect(blockingThreadsOf(pinnedSession([thread('t1', [said('User')])]))).toEqual([
+    it('names the commit the lines of a comment with no fixup target come from', () => {
+      const session = pinnedSession(
+        [thread('t1', [said('User')])],
+        [],
+        new Map([['t1', 'c'.repeat(40)]]),
+      );
+      expect(blockingThreadsOf(session)).toEqual([
         {
           threadId: 't1',
           review: OLD_REQUESTED,
-          commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+          commit: { shortSha: 'ccccccc', subject: 'feat: first' },
           file: 'src/c.js',
           line: 4,
         },
@@ -287,8 +303,8 @@ describe('checkRewrite', () => {
       ]);
     });
 
-    it('names no commit for a comment on uncommitted changes', () => {
-      const selection = { baseCommitish: 'HEAD', targetCommitish: '.' };
+    it('names a commit only for the committed lines of a review of the working tree', () => {
+      const selection = createDiffSelection('aaaaaaa', '.', 'merge-base');
       expect(
         checkRewrite({
           ...FEATURE_BRANCH,
@@ -296,13 +312,27 @@ describe('checkRewrite', () => {
             {
               selection,
               review: undefined,
-              threads: [thread('t1', [said('User')])],
+              commits: OLD_COMMITS,
+              threads: [thread('t1', [said('User')]), thread('t2', [said('User')])],
               decisions: [],
               fixupsByThread: undefined,
+              lineCommits: new Map([
+                ['t1', 'c'.repeat(40)],
+                ['t2', null],
+              ]),
             },
           ],
         }).blockingThreads,
-      ).toEqual([{ threadId: 't1', review: selection, file: 'src/c.js', line: 4 }]);
+      ).toEqual([
+        {
+          threadId: 't1',
+          review: selection,
+          commit: { shortSha: 'ccccccc', subject: 'feat: first' },
+          file: 'src/c.js',
+          line: 4,
+        },
+        { threadId: 't2', review: selection, file: 'src/c.js', line: 4 },
+      ]);
     });
 
     it('marks a deleted comment whose fixup is still in the range', () => {

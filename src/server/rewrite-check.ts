@@ -2,6 +2,7 @@ import type {
   DiffCommentThread,
   DiffSelection,
   LeftBranch,
+  ReviewCommit,
   ReviewDecision,
   ReviewScope,
   RewordRejection,
@@ -10,17 +11,24 @@ import type {
   ThreadFixup,
 } from '../types/diff.js';
 import { isOnCommit, lineOfPosition } from '../utils/commentPosition.js';
-import { fixupCommitOf, isCommitTarget } from '../utils/diffSelection.js';
+import { fixupCommitOf } from '../utils/diffSelection.js';
 import { isAgentAtWork, isThreadDeleted } from '../utils/reviewDecisions.js';
+
+type CommentsOfSession = Pick<RewriteCommentSession, 'threads' | 'decisions' | 'fixupsByThread'>;
 
 interface RewriteCommentSession {
   selection: DiffSelection;
   // Undefined on a review that is not pinned to a commit.
-  review: Pick<ReviewScope, 'requested' | 'commits'> | undefined;
+  review: Pick<ReviewScope, 'requested'> | undefined;
+  // The commits the session's comments can be on, for their subjects.
+  commits: readonly ReviewCommit[];
   threads: DiffCommentThread[];
   decisions: ReviewDecision[];
   // Undefined on a review that is not pinned to a commit.
   fixupsByThread: ReadonlyMap<string, ThreadFixup[]> | undefined;
+  // By thread id, for each of threadsAtWork with no fixupTarget: the full SHA of the commit its
+  // lines come from, null when they are not committed.
+  lineCommits: ReadonlyMap<string, string | null>;
 }
 
 export interface RewriteState {
@@ -44,16 +52,24 @@ export interface RewriteCheck {
   blockingThreads: RewriteBlockingThread[];
 }
 
+export function threadsAtWork({
+  threads,
+  decisions,
+  fixupsByThread,
+}: CommentsOfSession): DiffCommentThread[] {
+  return threads.filter((thread) => isAgentAtWork(thread, fixupsByThread, decisions));
+}
+
 function blockingThreadOf(
   thread: DiffCommentThread,
-  { selection, review, decisions }: RewriteCommentSession,
+  { selection, review, commits, decisions, lineCommits }: RewriteCommentSession,
 ): RewriteBlockingThread {
-  const commit = thread.fixupTarget ?? selection.targetCommitish;
+  const commit = thread.fixupTarget ?? lineCommits.get(thread.id);
   const line = isOnCommit(thread) ? undefined : lineOfPosition(thread.position);
   return {
     threadId: thread.id,
     review: review?.requested ?? selection,
-    ...(isCommitTarget(commit) ? { commit: fixupCommitOf(commit, review?.commits ?? []) } : {}),
+    ...(commit ? { commit: fixupCommitOf(commit, commits) } : {}),
     ...(isOnCommit(thread) ? {} : { file: thread.filePath }),
     ...(line === undefined ? {} : { line }),
     ...(isThreadDeleted(thread.id, decisions) ? { deleted: true as const } : {}),
@@ -68,9 +84,7 @@ export function checkRewrite(state: RewriteState): RewriteCheck {
   if (!state.targetInHead) blocks.push('target-not-in-head');
   if (state.rewordsMerge) blocks.push('merge-commit');
   const blockingThreads = state.commentSessions.flatMap((session) =>
-    session.threads
-      .filter((thread) => isAgentAtWork(thread, session.fixupsByThread, session.decisions))
-      .map((thread) => blockingThreadOf(thread, session)),
+    threadsAtWork(session).map((thread) => blockingThreadOf(thread, session)),
   );
   if (blockingThreads.length > 0) blocks.push('agent-working');
   const warnings: RewriteWarning[] = [];

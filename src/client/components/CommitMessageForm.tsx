@@ -30,8 +30,6 @@ export interface RewordControls {
   showBlockingThread: (thread: RewriteBlockingThread) => void;
 }
 
-const MAX_BLOCKING_THREADS_SHOWN = 3;
-
 function locationOf({ commit, file, line }: RewriteBlockingThread, shownFile = file): string {
   const lines = Array.isArray(line) ? line.join('-') : line;
   const place = lines === undefined ? shownFile : `${shownFile}:${lines}`;
@@ -49,14 +47,16 @@ function BlockingThreads({
   shownReview: DiffSelection;
   onShow: (thread: RewriteBlockingThread) => void;
 }) {
-  const hiddenCount = threads.length - MAX_BLOCKING_THREADS_SHOWN;
+  const inShownReview = (thread: RewriteBlockingThread) =>
+    diffSelectionsEqual(thread.review, shownReview);
+  const ordered = [...threads.filter(inShownReview), ...threads.filter((t) => !inShownReview(t))];
   return (
     <div className="mt-1">
       <p className="text-github-text-secondary">막고 있는 지적</p>
-      <ul className="m-0 list-none p-0">
-        {threads.slice(0, MAX_BLOCKING_THREADS_SHOWN).map((thread) => {
-          const inShownReview = diffSelectionsEqual(thread.review, shownReview);
-          const note = thread.deleted ? '지운 지적' : inShownReview ? null : '다른 리뷰';
+      <ul className="m-0 max-h-32 list-none overflow-auto p-0">
+        {ordered.map((thread) => {
+          const onScreen = inShownReview(thread);
+          const note = thread.deleted ? '지운 지적' : onScreen ? null : '다른 리뷰';
           const label = (
             <>
               <span className="min-w-0 truncate">
@@ -68,7 +68,7 @@ function BlockingThreads({
           const rowClass = 'flex w-full items-baseline gap-1 text-left';
           return (
             <li key={`${thread.review.targetCommitish}:${thread.threadId}`}>
-              {thread.deleted && inShownReview ? (
+              {thread.deleted && onScreen ? (
                 <span className={rowClass} title={locationOf(thread)}>
                   {label}
                 </span>
@@ -86,7 +86,6 @@ function BlockingThreads({
           );
         })}
       </ul>
-      {hiddenCount > 0 && <p className="text-github-text-secondary">외 {hiddenCount}개</p>}
     </div>
   );
 }

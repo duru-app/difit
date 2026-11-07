@@ -4,7 +4,11 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { chooseFixupTarget, type FixupTargetQuery } from './fixup-target';
+import {
+  chooseCommitOfUncommittedView,
+  chooseFixupTarget,
+  type FixupTargetQuery,
+} from './fixup-target';
 
 let home: string;
 const savedEnv = { ...process.env };
@@ -297,5 +301,75 @@ describe('chooseFixupTarget', () => {
         chooseFixupTarget(repo, wholeFile(view, 'notes.md', { commits: [pin, fix] })),
       ).resolves.toBe(fix);
     });
+  });
+});
+
+describe('chooseCommitOfUncommittedView', () => {
+  const changed = (repo: string, path: string, content: string) =>
+    writeFileSync(join(repo, path), content);
+  const atLines = (start: number, end = start) => ({ startLine: start, endLine: end });
+
+  it('names the commit of a committed line and none for a line not committed', async () => {
+    const { repo, base, pin, fix } = pinThenFix();
+    changed(
+      repo,
+      'discount.test.js',
+      lines("test('discount', () => {", '  expect(discount(105)).toBe(11);', '});'),
+    );
+    const view = { base, newSide: 'working-tree' as const, side: 'new' as const };
+    const choose = (filePath: string, at: ReturnType<typeof atLines>) =>
+      chooseCommitOfUncommittedView(repo, { ...view, filePath, ...at });
+
+    await expect(choose('discount.test.js', atLines(1))).resolves.toBe(pin);
+    await expect(choose('discount.test.js', atLines(2))).resolves.toBeNull();
+    await expect(choose('discount.test.js', atLines(1, 2))).resolves.toBeNull();
+    await expect(choose('discount.js', atLines(2))).resolves.toBe(fix);
+    await expect(choose('discount.js', atLines(1))).resolves.toBeNull();
+    changed(repo, 'new.js', lines('new'));
+    await expect(choose('new.js', atLines(1))).resolves.toBeNull();
+    await expect(
+      chooseCommitOfUncommittedView(repo, {
+        ...view,
+        filePath: 'discount.js',
+        side: 'old',
+        ...atLines(2),
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('reads the lines of a view of staged changes from the index', async () => {
+    const { repo, base, pin } = pinThenFix();
+    changed(
+      repo,
+      'discount.test.js',
+      lines("test('discount', () => {", '  expect(discount(105)).toBe(11);', '});'),
+    );
+    git(repo, 'add', 'discount.test.js');
+    changed(
+      repo,
+      'discount.test.js',
+      lines("test('rounds', () => {", '  expect(discount(105)).toBe(11);', '});'),
+    );
+    const view = { base, filePath: 'discount.test.js', side: 'new' as const, ...atLines(1) };
+
+    await expect(chooseCommitOfUncommittedView(repo, { ...view, newSide: 'index' })).resolves.toBe(
+      pin,
+    );
+    await expect(
+      chooseCommitOfUncommittedView(repo, { ...view, newSide: 'working-tree' }),
+    ).resolves.toBeNull();
+  });
+
+  it('names the last commit that changed a whole file with nothing uncommitted', async () => {
+    const { repo, base, fix } = pinThenFix();
+    changed(repo, 'discount.test.js', lines('changed'));
+    const view = { base, newSide: 'working-tree' as const, side: 'new' as const };
+
+    await expect(
+      chooseCommitOfUncommittedView(repo, { ...view, filePath: 'discount.js' }),
+    ).resolves.toBe(fix);
+    await expect(
+      chooseCommitOfUncommittedView(repo, { ...view, filePath: 'discount.test.js' }),
+    ).resolves.toBeNull();
   });
 });
