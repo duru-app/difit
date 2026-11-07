@@ -2459,9 +2459,10 @@ export async function startServer(options: ServerOptions): Promise<{
     if (message === current) return refuseReword('no-change');
     if (message.length === 0) return refuseReword('empty-message');
 
+    const defaultBranch = await parser.getDefaultBranch();
     const { blocks, warnings } = checkRewrite({
       ...(await readRewriteState(repositoryPath, selection.targetCommitish)),
-      defaultBranch: await parser.getDefaultBranch(),
+      defaultBranch,
       rewordsMerge: commit.isMerge === true,
     });
     const [blocked] = blocks;
@@ -2475,6 +2476,7 @@ export async function startServer(options: ServerOptions): Promise<{
     const result = await rewriteHistory(repositoryPath, {
       base: selection.baseCommitish,
       messages: new Map([[commit.sha, message]]),
+      defaultBranch,
     });
     if (!result.ok) return refuseReword(result.reason, result.output);
     await followRewrite(result.rewritten);
@@ -2489,6 +2491,7 @@ export async function startServer(options: ServerOptions): Promise<{
         version: session.version,
         threads: session.threads,
         decisions: session.decisions,
+        branches: result.branches,
       },
     };
   }

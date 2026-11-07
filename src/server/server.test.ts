@@ -3527,6 +3527,7 @@ describe('Server Integration Tests', () => {
           ok: true,
           head: NEW_SECOND_SHA,
           rewritten: { [SECOND_SHA]: NEW_SECOND_SHA },
+          branches: { moved: ['stacked'], left: [] },
         });
         readRewriteState.mockReset();
         readRewriteState.mockResolvedValue(FEATURE_BRANCH);
@@ -3560,8 +3561,10 @@ describe('Server Integration Tests', () => {
         expect(rewriteHistory).toHaveBeenCalledWith(expect.any(String), {
           base: expect.any(String),
           messages: new Map([[SECOND_SHA, 'second, better\n\nExplains it.']]),
+          defaultBranch: null,
         });
         expect(data.rewritten).toEqual({ [SECOND_SHA]: NEW_SECOND_SHA });
+        expect(data.branches).toEqual({ moved: ['stacked'], left: [] });
         expect(data.threads).toEqual([]);
         expect(data.decisions).toEqual([]);
       });
