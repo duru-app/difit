@@ -342,7 +342,6 @@ describe('rewriteHistory', () => {
   });
 
   describe('local branches stacked on the rewritten commits', () => {
-    // main: base; feature (HEAD): base first second; low: first; up: second third
     function stackedRepo() {
       const { repo, base, first, second } = createRepo();
       git(repo, 'branch', 'main', base);

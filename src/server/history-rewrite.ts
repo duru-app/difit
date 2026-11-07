@@ -206,7 +206,6 @@ export async function rewriteHistory(
       length: Number(await gitText(repoPath, ['rev-list', '--count', `${oldest}^..${branch.tip}`])),
     })),
   );
-  // A longer stack first, so a shorter one sharing its commits finds them already replayed.
   byLength.sort((a, b) => b.length - a.length);
 
   const dir = await fs.mkdtemp(join(tmpdir(), 'difit-history-rewrite-'));
@@ -314,7 +313,7 @@ async function whatMoved(
 // The rebases run in a worktree of their own, so the reviewer's files, index and branches stay put
 // until the one ref transaction at the end, and giving up leaves nothing to undo.
 class Replay {
-  // Every commit replayed so far, by where it landed, unchanged ones included.
+  // Unchanged commits included, unlike rewritten.
   readonly landedAt = new Map<string, string>();
   readonly rewritten: Record<string, string> = {};
 
@@ -337,7 +336,6 @@ class Replay {
     return run.code === 0 ? null : { ok: false, reason: 'commit-failed', output: run.output };
   }
 
-  // Replays the commits from the upstream to the tip checked out, stopping after each one.
   async run(plan: ReturnType<typeof messagePlanner>): Promise<{ ok: true } | Failure> {
     const { worktree, config } = this;
     const generatedPath = join(this.dir, 'generated-todo');
