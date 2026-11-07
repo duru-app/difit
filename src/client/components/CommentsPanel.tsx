@@ -268,7 +268,7 @@ export function CommentsPanel({
                         )
                       : commitLocationLabel(thread)}
                   </span>
-                  {(status === 'resolved' || !responding) && (
+                  {(resolvedThreadIds.has(thread.id) || !responding) && (
                     <span
                       className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${chip.className}`}
                     >

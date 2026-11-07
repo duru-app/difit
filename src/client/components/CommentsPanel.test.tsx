@@ -153,6 +153,20 @@ describe('CommentsPanel', () => {
     expect(within(row).getByTestId('responding-chip')).toBeInTheDocument();
   });
 
+  it('shows only 응답 중 on a row the card does not show as resolved, whatever its panel status', () => {
+    render(
+      <Harness
+        initialFilter="all"
+        statusById={new Map([...STATUSES, ['b5', 'resolved']])}
+        respondingThreadIds={new Set(['b5'])}
+      />,
+    );
+
+    const row = screen.getByRole('button', { name: /b\.ts:5/ });
+    expect(within(row).getByTestId('responding-chip')).toBeInTheDocument();
+    expect(row).not.toHaveTextContent('해결');
+  });
+
   it('shows no pick count when nothing waits for a pick', () => {
     render(<Harness />);
 

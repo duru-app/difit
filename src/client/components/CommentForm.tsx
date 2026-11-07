@@ -77,7 +77,7 @@ export function CommentForm({
 
   return (
     <form
-      className={`rounded-[16px] bg-composer-bg px-[16px] py-[12px] text-composer-text shadow-[var(--composer-shadow)] ${
+      className={`rounded-[16px] bg-composer-bg px-[16px] py-[12px] font-(family-name:--app-font-family) text-composer-text shadow-[var(--composer-shadow)] ${
         embedded ? '' : 'm-2 mx-3'
       }`}
       aria-label={label}
@@ -90,7 +90,7 @@ export function CommentForm({
           › {location}
         </span>
         {hasSuggestion && (
-          <div className="flex items-center border border-github-border rounded-md overflow-hidden">
+          <div className="flex shrink-0 items-center border border-github-border rounded-md overflow-hidden">
             <button
               type="button"
               onClick={() => setMode('edit')}

@@ -3975,6 +3975,52 @@ describe('App Component - Commits of the review', () => {
     expect(row).not.toHaveTextContent('열림');
   });
 
+  it('shows no 해결 on the panel row of a withdrawn edit the agent is answering, as on the card', async () => {
+    const edit = {
+      sha: 'd'.repeat(40),
+      shortSha: 'ddddddd',
+      patchId: 'patch-d',
+      authoredAt: '2026-01-01T00:00:00Z',
+      subject: `fixup! ${COMMITS[0]!.subject}`,
+      threadIds: ['c1'],
+      files: [],
+      foldTargetSha: COMMITS[0]!.sha,
+    };
+    fixupsFor.current = [edit];
+    mockComments = [
+      createMockThread({
+        id: 'c1',
+        filePath: 'test.ts',
+        line: 1,
+        body: 'My edit',
+        author: 'reviewer-edit',
+      }),
+    ];
+    mockDecisions = [
+      { threadId: 'c1', kind: 'rejected', fixupSha: edit.sha, at: '2026-01-02T00:00:00Z' },
+      { threadId: 'c1', kind: 'handed', fixupSha: '', at: '2026-01-03T00:00:00Z' },
+    ];
+    renderApp();
+    const card = await waitFor(() => {
+      const found = document.getElementById('comment-thread-c1');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    await waitFor(() => expect(within(card).getByTestId('responding-chip')).toBeInTheDocument());
+    expect(within(card).queryByTestId('resolved-chip')).not.toBeInTheDocument();
+
+    await userEvent.keyboard('{Shift>}L{/Shift}');
+    fireEvent.click(await screen.findByRole('button', { name: /^전체 \d+/ }));
+
+    const row = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-thread-id="c1"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(within(row).getByTestId('responding-chip')).toHaveTextContent('응답 중');
+    expect(row).not.toHaveTextContent('해결');
+  });
+
   it('paints a run of commits shown on load and names its ends in the header', async () => {
     review = THREE_COMMITS;
 

@@ -38,6 +38,22 @@ describe('CommentForm', () => {
     expect(screen.getByText('› src/a.ts:12')).toBeInTheDocument();
   });
 
+  it('keeps the Edit and Preview switch at full width beside a long location', () => {
+    renderWithBody('Look:\n```suggestion\nx\n```');
+
+    const switcher = screen.getByRole('button', { name: 'Preview' }).parentElement!;
+    expect(switcher).toBe(screen.getByRole('button', { name: 'Edit' }).parentElement);
+    expect(switcher).toHaveClass('shrink-0');
+  });
+
+  it('sets the app font itself, so a box inside the monospace diff table reads like the others', () => {
+    renderWithBody('');
+
+    expect(screen.getByRole('textbox').closest('form')).toHaveClass(
+      'font-(family-name:--app-font-family)',
+    );
+  });
+
   it('sends with the green main button and cancels with a quiet one', () => {
     const { onSubmit } = renderWithBody('looks good');
 
