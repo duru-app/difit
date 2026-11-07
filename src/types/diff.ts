@@ -626,6 +626,7 @@ export type RewordRejection =
   | 'operation-in-progress'
   | 'merge-commit'
   | 'agent-working'
+  | 'comments-waiting'
   | 'empty-message'
   | 'no-change'
   | 'needs-confirmation'

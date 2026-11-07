@@ -2113,13 +2113,17 @@ export async function startServer(options: ServerOptions): Promise<{
     },
   });
 
+  const isAgentAttached = async () => commentWaits.size > 0 || (await claudeSessionListening());
+
   async function refuseFailedRewrite(
     failure: Extract<HistoryRewriteResult, { ok: false }>,
   ): Promise<{ status: number; body: RewordResponse }> {
     const refused = refuseRewrite(failure.reason, failure.output);
     if (failure.reason !== 'conflict') return refused;
-    const agentAttached = commentWaits.size > 0 || (await claudeSessionListening());
-    const conflict = { ...(failure.commit ? { commit: failure.commit } : {}), agentAttached };
+    const conflict = {
+      ...(failure.commit ? { commit: failure.commit } : {}),
+      agentAttached: await isAgentAttached(),
+    };
     return { ...refused, body: { ...refused.body, conflict } };
   }
 
@@ -2187,6 +2191,9 @@ export async function startServer(options: ServerOptions): Promise<{
       ),
     });
     const [blocked] = blocks;
+    if (blocked === 'agent-working' && !(await isAgentAttached())) {
+      return refuseRewrite('comments-waiting');
+    }
     if (blocked) return refuseRewrite(blocked);
     const unseen = warnings.filter((warning) => !acknowledged?.includes(warning));
     if (unseen.length > 0) {

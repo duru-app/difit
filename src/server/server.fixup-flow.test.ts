@@ -756,7 +756,7 @@ it("blocks rewording while a thread is the agent's, and not while the agent only
   const fixTypo = { commit: typo, original: 'add typpo', message: 'add typo' };
   const blocked = await reword(fixTypo);
   expect(blocked.status).toBe(409);
-  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await blocked.json()).toMatchObject({ reason: 'comments-waiting' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(movedTip);
 
   await comment({
@@ -769,7 +769,7 @@ it("blocks rewording while a thread is the agent's, and not while the agent only
   });
   const stillFixing = await reword(fixTypo);
   expect(stillFixing.status).toBe(409);
-  expect(await stillFixing.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await stillFixing.json()).toMatchObject({ reason: 'comments-waiting' });
 
   await comment({
     type: 'reply',
@@ -824,7 +824,7 @@ it("blocks rewording while a thread of another selection on the server is the ag
   });
 
   expect(response.status).toBe(409);
-  expect(await response.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await response.json()).toMatchObject({ reason: 'comments-waiting' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
 });
 
@@ -1436,7 +1436,7 @@ it('runs the same checks before a reorder as before a reword', async () => {
   });
   const blocked = await reorder({ acknowledged: ['default-branch', 'pushed-commit'] });
   expect(blocked.status).toBe(409);
-  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await blocked.json()).toMatchObject({ reason: 'comments-waiting' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(second);
   await post(`/api/comments${query}`, { threads: [] });
 
@@ -1545,6 +1545,37 @@ describe.skipIf(process.platform === 'win32')('a Claude Code session behind the 
     expect(await attached()).toBe(true);
     expect(received).toEqual([]);
   });
+
+  it('names an agent at work only while the socket answers', async () => {
+    const { repo, base, adds, edits } = conflictingStack();
+    const { post } = await startReview(repo, base, edits, 9299);
+    const refusal = async () => {
+      const response = await post(`/api/reorder?base=${base}&target=${edits}`, {
+        order: [edits, adds],
+      });
+      return ((await response.json()) as { reason?: string }).reason;
+    };
+    const path = join(repo, 'session.sock');
+    process.env.CLAUDE_CODE_MESSAGING_SOCKET = path;
+    await post('/api/comment-imports', [
+      {
+        type: 'thread',
+        id: 't1',
+        author: 'User',
+        position: { scope: 'commit' },
+        fixupTarget: edits,
+        body: 'fix this',
+      },
+    ]);
+
+    expect(await refusal()).toBe('comments-waiting');
+
+    const session = createServer();
+    await new Promise<void>((resolve) => session.listen(path, resolve));
+    cleanups.push(() => new Promise<void>((resolve) => session.close(() => resolve())));
+
+    expect(await refusal()).toBe('agent-working');
+  });
 });
 
 it('hands a conflicting order over: the agent gets its turn, rebases, and difit follows', async () => {
@@ -1590,7 +1621,7 @@ it('hands a conflicting order over: the agent gets its turn, rebases, and difit 
   const blocked = await post(`/api/reorder?base=${base}&target=${other}`, {
     order: [adds, other, edits],
   });
-  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await blocked.json()).toMatchObject({ reason: 'comments-waiting' });
 
   git(repo, ['reset', '-q', '--hard', base]);
   const newEdits = commit(repo, 'edits', { 'b.js': '2\n' });
