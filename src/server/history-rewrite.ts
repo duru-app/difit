@@ -2,10 +2,10 @@ import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
-import type { RewrittenShas } from '../types/diff.js';
+import { AUTOSQUASH_PREFIX, type RewrittenShas } from '../types/diff.js';
 import { threadIdsOf, withThreadTrailer } from '../utils/commitMessage.js';
 
-import { autosquashGroups, squashTarget, type TodoCommit } from './autosquash.js';
+import { autosquashGroups, SHA_NAME, squashTarget, type TodoCommit } from './autosquash.js';
 import { hasOperationInProgress } from './direct-edit.js';
 import type { RewriteState } from './rewrite-check.js';
 import { type GitOptions, runGit } from './run-git.js';
@@ -62,7 +62,7 @@ const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 function lineInOrder(
   line: readonly string[],
   order: readonly string[],
-  listed: TodoCommit[],
+  groups: readonly TodoCommit[][],
 ): string[] | null {
   if (order.some((commit) => !line.includes(commit))) return null;
   const isListed = new Set(order);
@@ -77,7 +77,7 @@ function lineInOrder(
   }
   const placed = order.flatMap((commit) => [commit, ...(following.get(commit) ?? [])]);
   const settled = [...placed];
-  for (const group of autosquashGroups(listed)) {
+  for (const group of groups) {
     let previous: string | undefined;
     for (const { sha } of group) {
       if (!settled.includes(sha)) continue;
@@ -89,6 +89,46 @@ function lineInOrder(
     }
   }
   return [...line.slice(0, firstListed), ...settled, ...line.slice(lastListed + 1)];
+}
+
+// The autosquash groups, with the fixups of one commit below the base joined into one group.
+async function orderingGroups(repoPath: string, listed: TodoCommit[]): Promise<TodoCommit[][]> {
+  const groups = autosquashGroups(listed);
+  const nameOf = (subject: string) => subject.replace(AUTOSQUASH_PREFIXES, '');
+  const unplacedNames = groups.flatMap(([root]) =>
+    root && AUTOSQUASH_PREFIX.test(root.subject) ? [nameOf(root.subject)] : [],
+  );
+  const shaNames = [...new Set(unplacedNames.filter((name) => SHA_NAME.test(name)))];
+  const subjectOfSha = new Map(
+    await Promise.all(
+      shaNames.map(async (name) => {
+        const run = await runGit(repoPath, ['log', '-1', '--format=%s', `${name}^{commit}`, '--']);
+        return [name, run.code === 0 ? run.stdout.toString('utf8').trim() : name] as const;
+      }),
+    ),
+  );
+  const position = new Map(listed.map(({ sha }, at) => [sha, at]));
+  const byTarget = new Map<string, TodoCommit[]>();
+  const joined: TodoCommit[][] = [];
+  for (const group of groups) {
+    const [root] = group;
+    if (!root || !AUTOSQUASH_PREFIX.test(root.subject)) {
+      joined.push(group);
+      continue;
+    }
+    const name = nameOf(root.subject);
+    const target = subjectOfSha.get(name) ?? name;
+    const same = byTarget.get(target);
+    if (same) {
+      same.push(...group);
+      same.sort((a, b) => (position.get(a.sha) ?? 0) - (position.get(b.sha) ?? 0));
+    } else {
+      const fresh = [...group];
+      byTarget.set(target, fresh);
+      joined.push(fresh);
+    }
+  }
+  return joined;
 }
 
 // A commit a side branch grows from carries the label git put after it, and the lines of that branch
@@ -245,7 +285,9 @@ export async function rewriteHistory(
   const line = (await gitText(repoPath, ['rev-list', '--first-parent', '--reverse', range])).split(
     '\n',
   );
-  const lineWanted = request.order ? lineInOrder(line, request.order, listed) : null;
+  const lineWanted = request.order
+    ? lineInOrder(line, request.order, await orderingGroups(repoPath, listed))
+    : null;
   if (request.order && lineWanted === null) {
     return { ok: false, reason: 'commit-failed', output: 'A commit left the line of the review.' };
   }
