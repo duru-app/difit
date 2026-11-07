@@ -945,6 +945,9 @@ describe('rewriteHistory with a new order', () => {
       ['its subject', (_: string) => 'below', (_: string) => 'below'],
       ['its SHA', (sha: string) => sha, (sha: string) => sha],
       ['its subject and its short SHA', (_: string) => 'below', (sha: string) => sha.slice(0, 7)],
+      ['its subject and a prefix of it', (_: string) => 'below', (_: string) => 'bel'],
+      ['a prefix of its subject and its subject', (_: string) => 'bel', (_: string) => 'below'],
+      ['its SHA and a prefix of its subject', (sha: string) => sha, (_: string) => 'bel'],
     ])('of a commit below the review base, named by %s', (_, firstName, secondName) => {
       it('keeps them in order when the commits they follow swap', async () => {
         const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
@@ -973,6 +976,49 @@ describe('rewriteHistory with a new order', () => {
         ]);
         expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
       });
+    });
+
+    it('joins a prefix naming several commits below the base to the oldest, as git does', async () => {
+      const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+      repos.push(repo);
+      git(repo, 'init', '-q');
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      const root = commit(repo, 'root', { 'a.ts': '1\n2\n3\n', 'b.ts': '1\n2\n3\n' });
+      commit(repo, 'long subject', { 'a.ts': '1\nA\n3\n' });
+      const later = commit(repo, 'later', { 'b.ts': '1\nB\n3\n' });
+      const p = commit(repo, 'p', { 'p.ts': 'p\n' });
+      commit(repo, 'fixup! long subject', { 'a.ts': '1\na1\n3\n' });
+      const q = commit(repo, 'q', { 'q.ts': 'q\n' });
+      commit(repo, 'fixup! later', { 'b.ts': '1\nb1\n3\n' });
+      const r = commit(repo, 'r', { 'r.ts': 'r\n' });
+      commit(repo, 'fixup! l', { 'a.ts': '1\na2\n3\n' });
+      const s = commit(repo, 's', { 's.ts': 's\n' });
+      const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+
+      expectOk(await reorder(repo, later, [q, r, p, s]));
+
+      expect(subjects(repo, `${later}..HEAD`)).toEqual([
+        'q',
+        'fixup! later',
+        'r',
+        'p',
+        'fixup! long subject',
+        'fixup! l',
+        's',
+      ]);
+      expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+      execFileSync('git', ['rebase', '-q', '-i', '--autosquash', root], {
+        cwd: repo,
+        env: { ...process.env, GIT_SEQUENCE_EDITOR: 'true' },
+      });
+      expect(subjects(repo, `${root}..HEAD`)).toEqual([
+        'long subject',
+        'later',
+        'q',
+        'r',
+        'p',
+        's',
+      ]);
     });
   });
 
