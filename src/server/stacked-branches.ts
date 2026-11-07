@@ -1,0 +1,99 @@
+import { promises as fs } from 'fs';
+import { join, resolve } from 'path';
+
+import type { LeftBranch } from '../types/diff.js';
+
+import { runGit } from './run-git.js';
+
+export interface StackedBranches {
+  moving: { name: string; tip: string }[];
+  left: LeftBranch[];
+  // Short names, HEAD's branch among them, whose upstream holds a commit the rewrite replaces.
+  pushed: string[];
+}
+
+const BRANCH_PREFIX = 'refs/heads/';
+const shortName = (ref: string) =>
+  ref.startsWith(BRANCH_PREFIX) ? ref.slice(BRANCH_PREFIX.length) : ref;
+
+async function gitLines(repoPath: string, args: string[]): Promise<string[]> {
+  const run = await runGit(repoPath, args);
+  if (run.code !== 0) throw new Error(`git ${args[0]} failed: ${run.output}`);
+  return run.stdout
+    .toString('utf8')
+    .split('\n')
+    .filter((line) => line !== '');
+}
+
+async function readIfPresent(path: string): Promise<string | null> {
+  try {
+    return (await fs.readFile(path, 'utf8')).trim();
+  } catch {
+    return null;
+  }
+}
+
+// A worktree stopped in a rebase or a bisect shows as detached, so only these files tell its branch.
+async function branchesInOperation(repoPath: string): Promise<Set<string>> {
+  const [common = ''] = await gitLines(repoPath, ['rev-parse', '--git-common-dir']);
+  const commonDir = resolve(repoPath, common);
+  const linked = await fs.readdir(join(commonDir, 'worktrees')).catch(() => [] as string[]);
+  const gitDirs = [commonDir, ...linked.map((name) => join(commonDir, 'worktrees', name))];
+  const names = await Promise.all(
+    gitDirs.flatMap((gitDir) =>
+      [
+        join(gitDir, 'rebase-merge', 'head-name'),
+        join(gitDir, 'rebase-apply', 'head-name'),
+        join(gitDir, 'BISECT_START'),
+      ].map(readIfPresent),
+    ),
+  );
+  return new Set(names.flatMap((name) => (name ? [shortName(name)] : [])));
+}
+
+export async function findStackedBranches(
+  repoPath: string,
+  {
+    oldest,
+    headBranch,
+    defaultBranch,
+  }: { oldest: string; headBranch: string | null; defaultBranch: string | null },
+): Promise<StackedBranches> {
+  const [heads, remotes, inOperation] = await Promise.all([
+    gitLines(repoPath, [
+      'for-each-ref',
+      '--contains',
+      oldest,
+      '--format=%(refname)%00%(objectname)%00%(worktreepath)%00%(upstream)',
+      'refs/heads',
+    ]),
+    gitLines(repoPath, [
+      'for-each-ref',
+      '--contains',
+      oldest,
+      '--format=%(refname)',
+      'refs/remotes',
+    ]),
+    branchesInOperation(repoPath),
+  ]);
+  const pushedUpstreams = new Set(remotes);
+  const result: StackedBranches = { moving: [], left: [], pushed: [] };
+  for (const line of heads) {
+    const [ref = '', tip = '', worktree = '', upstream = ''] = line.split('\0');
+    const name = shortName(ref);
+    const isHead = name === headBranch;
+    if (!isHead && name === defaultBranch) continue;
+    if (!isHead && worktree !== '') {
+      result.left.push({ name, why: 'worktree' });
+      continue;
+    }
+    if (!isHead && inOperation.has(name)) {
+      result.left.push({ name, why: 'operation' });
+      continue;
+    }
+    if (pushedUpstreams.has(upstream)) result.pushed.push(name);
+    if (!isHead) result.moving.push({ name, tip });
+  }
+  result.pushed.sort();
+  return result;
+}

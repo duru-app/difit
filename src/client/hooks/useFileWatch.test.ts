@@ -252,6 +252,26 @@ describe('useFileWatch', () => {
       expect(MockWebSocket.instances).toHaveLength(1);
     });
 
+    it('tells of a rewritten history to the callback of the latest render', () => {
+      const first = vi.fn(async () => {});
+      const second = vi.fn(async () => {});
+      const { rerender } = renderHook(
+        ({ onHistoryRewritten }) =>
+          useFileWatch(undefined, undefined, undefined, undefined, onHistoryRewritten),
+        { initialProps: { onHistoryRewritten: first } },
+      );
+
+      rerender({ onHistoryRewritten: second });
+      act(() => {
+        MockWebSocket.instances[0]!.dispatchMessage(
+          JSON.stringify({ type: 'historyRewritten', timestamp: new Date().toISOString() }),
+        );
+      });
+
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledTimes(1);
+    });
+
     it('passes on a change of a commit index without reconnecting', () => {
       const onSymbolIndexChanged = vi.fn();
       renderHook(() => useFileWatch(undefined, undefined, onSymbolIndexChanged));

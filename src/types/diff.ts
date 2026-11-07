@@ -133,6 +133,7 @@ export interface DiffResponse {
   commentImportId?: string;
   // The review this diff is a view of; comments and decisions belong to it.
   review?: ReviewScope;
+  rewritten?: RewrittenShas;
 }
 
 export interface ChangeKindsResponse {
@@ -488,9 +489,6 @@ export const AUTOSQUASH_PREFIX = /^(?:fixup|squash|amend)! /;
 
 export const REVIEWER_EDIT_AUTHOR = 'reviewer-edit';
 
-// Where a thread opened by rewording a commit message sits, after Gerrit's name for the message.
-export const COMMIT_MESSAGE_PATH = '/COMMIT_MSG';
-
 // Author the page writes on everything the reviewer types; any other author is the agent's.
 export const REVIEWER_AUTHOR = 'User';
 
@@ -615,6 +613,16 @@ export interface RewordRequest {
   // The message the reviewer started from; a mismatch means the view is out of date.
   original: string;
   message: string;
+  acknowledged?: RewriteWarning[];
+}
+
+export type RewriteWarning = 'default-branch';
+
+// A local branch holding a replaced commit that the rewrite leaves on the old commits.
+export interface LeftBranch {
+  name: string;
+  // Checked out in another worktree, or under a rebase or bisect there.
+  why: 'worktree' | 'operation';
 }
 
 export type RewordRejection =
@@ -625,19 +633,25 @@ export type RewordRejection =
   | 'merge-commit'
   | 'empty-message'
   | 'no-change'
+  | 'needs-confirmation'
+  | 'conflict'
   | 'head-moved'
+  | 'branch-moved'
   | 'commit-failed';
+
+// Keyed by the old full SHA; only commits the rewrite actually replaced.
+export type RewrittenShas = Readonly<Record<string, string>>;
 
 export type RewordResponse =
   | {
       success: true;
-      sha: string;
-      threadId: string;
+      rewritten: RewrittenShas;
       version: number;
       threads: DiffCommentThread[];
       decisions: ReviewDecision[];
+      branches: { moved: string[]; left: LeftBranch[] };
     }
-  | { error: string; reason?: RewordRejection; output?: string };
+  | { error: string; reason?: RewordRejection; output?: string; warnings?: RewriteWarning[] };
 
 // The message a commit of the review shows: the one its pending amend! commits leave, or its own.
 export interface CommitMessageResponse {
