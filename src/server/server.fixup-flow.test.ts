@@ -1009,6 +1009,117 @@ it('says where a comment of an earlier review holds a reword up after the review
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newTip);
 });
 
+async function blockingThreadsOfReword(
+  api: (path: string) => string,
+  review: { base: string; tip: string },
+  request: { commit: string; original: string; message: string },
+): Promise<RewriteBlockingThread[]> {
+  const blocked = await fetch(api(`/api/reword?base=${review.base}&target=${review.tip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  expect(blocked.status).toBe(409);
+  return ((await blocked.json()) as { blockingThreads: RewriteBlockingThread[] }).blockingThreads;
+}
+
+const agentsTurn = (id: string, filePath: string, line: number) => ({
+  type: 'thread',
+  id,
+  author: 'User',
+  filePath,
+  position: { side: 'new', line },
+  body: 'please fix',
+});
+
+it('names the commit a line comes from for a comment with no fixup target', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': 'one\n' });
+  const tip = commit(repo, 'add c', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9282,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  await fetch(api('/api/comment-imports'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([agentsTurn('on-b', 'b.js', 1), agentsTurn('on-c', 'c.js', 1)]),
+  });
+
+  const blocking = await blockingThreadsOfReword(
+    api,
+    { base, tip },
+    { commit: typo, original: 'add typpo', message: 'add typo' },
+  );
+
+  expect(blocking.map(({ threadId, commit }) => ({ threadId, commit }))).toEqual([
+    { threadId: 'on-b', commit: { shortSha: typo.slice(0, 7), subject: 'add typpo' } },
+    { threadId: 'on-c', commit: { shortSha: tip.slice(0, 7), subject: 'add c' } },
+  ]);
+});
+
+it('names the commit of a committed line in a review of the working tree', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const main = commit(repo, 'base', { 'a.js': '1\n' });
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const typo = commit(repo, 'add typpo', { 'b.js': 'one\n' });
+  const tip = commit(repo, 'add c', { 'c.js': '1\n' });
+  writeFileSync(join(repo, 'b.js'), 'one\ntwo\n');
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(main, tip),
+    repoPath: repo,
+    preferredPort: 9283,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const working = `base=${main.slice(0, 7)}&target=.&baseMode=merge-base`;
+  await fetch(api(`/api/diff?${working}`));
+  await fetch(api(`/api/comment-imports?${working}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      agentsTurn('committed', 'b.js', 1),
+      agentsTurn('uncommitted', 'b.js', 2),
+    ]),
+  });
+
+  const blocking = await blockingThreadsOfReword(
+    api,
+    { base: main, tip },
+    { commit: typo, original: 'add typpo', message: 'add typo' },
+  );
+
+  expect(blocking).toEqual([
+    {
+      threadId: 'committed',
+      review: createDiffSelection(main.slice(0, 7), '.', 'merge-base'),
+      commit: { shortSha: typo.slice(0, 7), subject: 'add typpo' },
+      file: 'b.js',
+      line: 1,
+    },
+    {
+      threadId: 'uncommitted',
+      review: createDiffSelection(main.slice(0, 7), '.', 'merge-base'),
+      file: 'b.js',
+      line: 2,
+    },
+  ]);
+});
+
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));

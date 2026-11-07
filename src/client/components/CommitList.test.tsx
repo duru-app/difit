@@ -440,20 +440,22 @@ describe('CommitList', () => {
         ).toBeInTheDocument();
       });
 
-      it('lists three comments and counts the rest', async () => {
-        const { alert } = await refuseWith(
-          ['t1', 't2', 't3', 't4', 't5'].map((id) => blocking(id)),
+      it('names every comment, those of the review on screen first', async () => {
+        const elsewhere = [1, 2, 3, 4, 5].map((line) => blocking(`old-${line}`, { line }));
+        const here = [6, 7].map((line) =>
+          blocking(`here-${line}`, { line, review: REVIEW.requested }),
         );
+        const { alert } = await refuseWith([...elsewhere, ...here]);
 
-        expect(within(alert).getAllByRole('button')).toHaveLength(3);
-        expect(alert).toHaveTextContent('외 2개');
-      });
-
-      it('counts nothing when every comment fits', async () => {
-        const { alert } = await refuseWith(['t1', 't2', 't3'].map((id) => blocking(id)));
-
-        expect(within(alert).getAllByRole('button')).toHaveLength(3);
-        expect(alert).not.toHaveTextContent('외');
+        expect(
+          within(alert)
+            .getAllByRole('button')
+            .map((link) => link.textContent),
+        ).toEqual([
+          'bbbbbbb · c.ts:6 · feat: second',
+          'bbbbbbb · c.ts:7 · feat: second',
+          ...[1, 2, 3, 4, 5].map((line) => `bbbbbbb · c.ts:${line} · feat: second · 다른 리뷰`),
+        ]);
       });
 
       it('names a comment on uncommitted changes without a commit', async () => {
