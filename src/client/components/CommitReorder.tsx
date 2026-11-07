@@ -242,7 +242,7 @@ export function ReorderNotice({
   return (
     <div
       role="alert"
-      className="mx-3 my-1 shrink-0 rounded border border-github-danger bg-github-danger/10 px-2 py-1.5 text-xs text-github-text-primary select-text"
+      className="mx-3 my-1 min-h-0 overflow-y-auto rounded border border-github-danger bg-github-danger/10 px-2 pt-1.5 text-xs text-github-text-primary select-text"
     >
       <p>{message}</p>
       {blockingThreads && onShowThread && (
@@ -258,7 +258,7 @@ export function ReorderNotice({
         </pre>
       )}
       {conflict && <ConflictDetails conflict={conflict} />}
-      <div className="mt-1 flex justify-end gap-2">
+      <div className="sticky bottom-0 mt-1 flex justify-end gap-2 bg-github-bg-secondary py-1.5">
         <button type="button" onClick={onDismiss} className={NOTICE_BUTTON_CLASS}>
           {warnings ? '취소' : '닫기'}
         </button>
