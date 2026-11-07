@@ -3,7 +3,7 @@ import { AUTOSQUASH_PREFIX } from '../types/diff.js';
 // Orders commits the way `git rebase --autosquash` does: a fixup, squash or amend names its target
 // by exact subject, then by commit id, then by subject prefix, and moves behind it.
 
-export const SHA_NAME = /^[0-9a-f]{4,64}$/;
+const SHA_NAME = /^[0-9a-f]{4,64}$/;
 
 export interface TodoCommit {
   sha: string;

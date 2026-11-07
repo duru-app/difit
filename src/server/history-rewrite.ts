@@ -5,7 +5,7 @@ import { join, resolve } from 'path';
 import { AUTOSQUASH_PREFIX, type RewrittenShas } from '../types/diff.js';
 import { threadIdsOf, withThreadTrailer } from '../utils/commitMessage.js';
 
-import { autosquashGroups, SHA_NAME, squashTarget, type TodoCommit } from './autosquash.js';
+import { autosquashGroups, squashTarget, type TodoCommit } from './autosquash.js';
 import { hasOperationInProgress } from './direct-edit.js';
 import type { RewriteState } from './rewrite-check.js';
 import { type GitOptions, runGit } from './run-git.js';
@@ -91,22 +91,64 @@ function lineInOrder(
   return [...line.slice(0, firstListed), ...settled, ...line.slice(lastListed + 1)];
 }
 
-// The autosquash groups, with the fixups of one commit below the base joined into one group.
-async function orderingGroups(repoPath: string, listed: TodoCommit[]): Promise<TodoCommit[][]> {
-  const groups = autosquashGroups(listed);
-  const nameOf = (subject: string) => subject.replace(AUTOSQUASH_PREFIXES, '');
-  const unplacedNames = groups.flatMap(([root]) =>
-    root && AUTOSQUASH_PREFIX.test(root.subject) ? [nameOf(root.subject)] : [],
-  );
-  const shaNames = [...new Set(unplacedNames.filter((name) => SHA_NAME.test(name)))];
-  const subjectOfSha = new Map(
-    await Promise.all(
-      shaNames.map(async (name) => {
-        const run = await runGit(repoPath, ['log', '-1', '--format=%s', `${name}^{commit}`, '--']);
-        return [name, run.code === 0 ? run.stdout.toString('utf8').trim() : name] as const;
-      }),
+const TARGET_SEARCH_DEPTH = 1000;
+
+// The commit below the base each fixup folds into, as git picks it in the shortest autosquash
+// rebase that reaches the nearest match of every fixup: the oldest exact subject, then the commit
+// id, then the oldest subject that starts with the name.
+async function targetsBelow(
+  repoPath: string,
+  base: string,
+  fixups: TodoCommit[],
+): Promise<Map<string, string>> {
+  const log = await runGit(repoPath, [
+    'log',
+    '--topo-order',
+    '--no-merges',
+    '--no-show-signature',
+    '--encoding=UTF-8',
+    `--max-count=${TARGET_SEARCH_DEPTH}`,
+    '--format=%H%x00%s',
+    base,
+    '--',
+  ]);
+  if (log.code !== 0) return new Map();
+  const below = log.stdout
+    .toString('utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [sha = '', subject = ''] = line.split('\0');
+      return { sha, subject };
+    });
+  const reach = Math.max(
+    -1,
+    ...fixups.map((fixup) =>
+      below.findIndex((commit) => squashTarget([commit, fixup], 1) !== undefined),
     ),
   );
+  const reached = below.slice(0, reach + 1).reverse();
+  return new Map(
+    fixups.flatMap((fixup) => {
+      const target = squashTarget([...reached, fixup], reached.length);
+      return target ? [[fixup.sha, target.sha] as const] : [];
+    }),
+  );
+}
+
+// The autosquash groups, with the fixups that fold into one commit below the base joined into one
+// group.
+async function orderingGroups(
+  repoPath: string,
+  base: string,
+  listed: TodoCommit[],
+): Promise<TodoCommit[][]> {
+  const groups = autosquashGroups(listed);
+  const unplaced = groups.flatMap(([root]) =>
+    root && AUTOSQUASH_PREFIX.test(root.subject) ? [root] : [],
+  );
+  if (unplaced.length === 0) return groups;
+  const targetOf = await targetsBelow(repoPath, base, unplaced);
   const position = new Map(listed.map(({ sha }, at) => [sha, at]));
   const byTarget = new Map<string, TodoCommit[]>();
   const joined: TodoCommit[][] = [];
@@ -116,8 +158,7 @@ async function orderingGroups(repoPath: string, listed: TodoCommit[]): Promise<T
       joined.push(group);
       continue;
     }
-    const name = nameOf(root.subject);
-    const target = subjectOfSha.get(name) ?? name;
+    const target = targetOf.get(root.sha) ?? root.subject.replace(AUTOSQUASH_PREFIXES, '');
     const same = byTarget.get(target);
     if (same) {
       same.push(...group);
@@ -286,7 +327,7 @@ export async function rewriteHistory(
     '\n',
   );
   const lineWanted = request.order
-    ? lineInOrder(line, request.order, await orderingGroups(repoPath, listed))
+    ? lineInOrder(line, request.order, await orderingGroups(repoPath, request.base, listed))
     : null;
   if (request.order && lineWanted === null) {
     return { ok: false, reason: 'commit-failed', output: 'A commit left the line of the review.' };
