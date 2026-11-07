@@ -3493,11 +3493,11 @@ describe('App Component - Commits of the review', () => {
     expect(screen.queryByRole('button', { name: '메시지 고치기' })).toBeNull();
   });
 
-  it('lists no commits for a review of one commit or one that is not pinned', async () => {
+  it('lists the commit of a one-commit review and no commits of one that is not pinned', async () => {
     review = { ...REVIEW, commits: COMMITS.slice(1) };
     const { unmount } = renderApp();
     await screen.findByText('Look here');
-    expect(screen.queryByRole('region', { name: '리뷰 범위의 커밋' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '리뷰 범위의 커밋' })).toBeInTheDocument();
     unmount();
 
     review = undefined;
@@ -4248,13 +4248,13 @@ describe('App Component - Commits of the review', () => {
     });
   });
 
-  it('offers no commit drawer on a phone for a review of one commit', async () => {
+  it('offers the commit drawer on a phone for a review of one commit', async () => {
     vi.mocked(useViewport).mockReturnValue({ isMobile: true, isDesktop: false });
     review = { ...REVIEW, commits: COMMITS.slice(1) };
     renderApp();
     await screen.findByText('Look here');
 
-    expect(screen.queryByRole('button', { name: '커밋 목록' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '커밋 목록' })).toBeInTheDocument();
     vi.mocked(useViewport).mockReturnValue({ isMobile: false, isDesktop: true });
   });
 
