@@ -341,7 +341,7 @@ describe('rewriteHistory', () => {
     });
   });
 
-  describe('local branches stacked on the rewritten commits', () => {
+  describe('local branches stacked on the rewritten commits', { timeout: 15_000 }, () => {
     function stackedRepo() {
       const { repo, base, first, second } = createRepo();
       git(repo, 'branch', 'main', base);

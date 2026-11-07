@@ -52,7 +52,7 @@ describe('CommitCommentsSection', () => {
     const SECOND: ReviewCommit = { ...FIRST, sha: '2'.repeat(40), shortSha: '2222222' };
     const reword = {
       load: vi.fn(async () => 'first step'),
-      save: vi.fn(async () => null),
+      save: vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
     };
     const touchButton = (name: string) => screen.getByRole('button', { name });
     const expectTouchOnly = (button: HTMLElement) =>

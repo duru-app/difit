@@ -619,7 +619,7 @@ export interface RewordRequest {
   acknowledged?: RewriteWarning[];
 }
 
-export type RewriteWarning = 'default-branch';
+export type RewriteWarning = 'default-branch' | 'branch-elsewhere';
 
 // Stays on the old commits after the rewrite.
 export interface LeftBranch {
@@ -654,7 +654,13 @@ export type RewordResponse =
       decisions: ReviewDecision[];
       branches: { moved: string[]; left: LeftBranch[] };
     }
-  | { error: string; reason?: RewordRejection; output?: string; warnings?: RewriteWarning[] };
+  | {
+      error: string;
+      reason?: RewordRejection;
+      output?: string;
+      warnings?: RewriteWarning[];
+      warningBranches?: Partial<Record<RewriteWarning, string[]>>;
+    };
 
 // The message a commit of the review shows: the one its pending amend! commits leave, or its own.
 export interface CommitMessageResponse {

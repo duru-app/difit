@@ -44,17 +44,21 @@ async function gitText(repoPath: string, args: string[], options?: GitOptions): 
 export async function readRewriteState(
   repoPath: string,
   target: string,
-): Promise<Pick<RewriteState, 'branch' | 'targetInHead' | 'operationInProgress'>> {
-  const [branch, onHead, operationInProgress] = await Promise.all([
+  oldestReplaced: string,
+  defaultBranch: string | null,
+): Promise<Pick<RewriteState, 'branch' | 'targetInHead' | 'operationInProgress' | 'leftBranches'>> {
+  const [headBranch, onHead, operationInProgress] = await Promise.all([
     runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']),
     runGit(repoPath, ['merge-base', '--is-ancestor', target, 'HEAD']),
     hasOperationInProgress(repoPath),
   ]);
-  return {
-    branch: branch.code === 0 ? branch.stdout.toString('utf8').trim() : null,
-    targetInHead: onHead.code === 0,
-    operationInProgress,
-  };
+  const branch = headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null;
+  const { left } = await findStackedBranches(repoPath, {
+    oldest: oldestReplaced,
+    headBranch: branch,
+    defaultBranch,
+  });
+  return { branch, targetInHead: onHead.code === 0, operationInProgress, leftBranches: left };
 }
 
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -313,7 +317,7 @@ async function whatMoved(
 // The rebases run in a worktree of their own, so the reviewer's files, index and branches stay put
 // until the one ref transaction at the end, and giving up leaves nothing to undo.
 class Replay {
-  // Unchanged commits included, unlike rewritten.
+  // Old SHA to where it landed for every commit replayed so far, unchanged ones included.
   readonly landedAt = new Map<string, string>();
   readonly rewritten: Record<string, string> = {};
 
