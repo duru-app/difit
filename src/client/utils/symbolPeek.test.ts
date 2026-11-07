@@ -2,13 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SymbolSearchResponse } from '../../types/diff';
 
-import {
-  fetchLibrarySource,
-  fetchSymbol,
-  reselect,
-  shortRef,
-  symbolRequestFromTarget,
-} from './symbolPeek';
+import { fetchLibrarySource, fetchSymbol, reselect, symbolRequestFromTarget } from './symbolPeek';
 
 const refs = { base: 'aaa1111', target: 'bbb2222' };
 
@@ -124,21 +118,6 @@ describe('symbolRequestFromTarget', () => {
         refs,
       ),
     ).toEqual({ name: 'helper', ref: 'ccc3333', from: 'src/A.java' });
-  });
-});
-
-describe('shortRef', () => {
-  it.each([
-    ['0123456789abcdef0123456789abcdef01234567', '0123456'],
-    ['0123456789abcdef0123456789abcdef01234567^', '0123456^'],
-    ['HEAD', 'HEAD'],
-    ['abc1234', 'abc1234'],
-    [
-      'feature/0123456789abcdef0123456789abcdef01234567',
-      'feature/0123456789abcdef0123456789abcdef01234567',
-    ],
-  ])('shows %s as %s', (ref, shown) => {
-    expect(shortRef(ref)).toBe(shown);
   });
 });
 
