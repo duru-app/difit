@@ -3473,6 +3473,7 @@ describe('Server Integration Tests', () => {
         branch: 'feature',
         targetInHead: true,
         operationInProgress: false,
+        rewritesPushedCommit: false,
       };
       let port: number;
 

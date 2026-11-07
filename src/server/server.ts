@@ -2147,12 +2147,29 @@ export async function startServer(options: ServerOptions): Promise<{
     if (message === current) return refuseReword('no-change');
     if (message.length === 0) return refuseReword('empty-message');
 
-    const { blocks, warnings } = checkRewrite({
-      ...(await readRewriteState(repositoryPath, selection.targetCommitish)),
+    const { blocks, warnings, blockingThreads } = checkRewrite({
+      ...(await readRewriteState(repositoryPath, selection.targetCommitish, commit.sha)),
       defaultBranch: await parser.getDefaultBranch(),
       rewordsMerge: commit.isMerge === true,
+      commentSessions: await Promise.all(
+        [...commentSessions.values()]
+          .filter(({ threads }) => threads.length > 0)
+          .map(async (session) => ({
+            selection: session.selection,
+            review: pinnedReviews.find((pinned) =>
+              diffSelectionsEqual(pinned.selection, session.selection),
+            ),
+            threads: session.threads,
+            decisions: session.decisions,
+            fixupsByThread: await fixupsByThreadFor(session.selection),
+          })),
+      ),
     });
     const [blocked] = blocks;
+    if (blocked === 'agent-working') {
+      const refused = refuseReword(blocked);
+      return { ...refused, body: { ...refused.body, blockingThreads } };
+    }
     if (blocked) return refuseReword(blocked);
     const unseen = warnings.filter((warning) => !request.acknowledged?.includes(warning));
     if (unseen.length > 0) {

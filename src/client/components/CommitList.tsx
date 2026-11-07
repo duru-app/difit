@@ -173,7 +173,7 @@ export function CommitList({
   const guardedReword = useMemo<RewordControls | undefined>(
     () =>
       reword && {
-        load: reword.load,
+        ...reword,
         save: async (request) => {
           setIsSavingMessage(true);
           try {
@@ -647,6 +647,7 @@ export function CommitList({
                     <CommitMessageForm
                       sha={commit.sha}
                       controls={guardedReword}
+                      shownReview={review.requested}
                       onClose={() => setRewording(null)}
                     />
                   )}

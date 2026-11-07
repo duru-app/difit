@@ -32,15 +32,21 @@ async function gitText(repoPath: string, args: string[], options?: GitOptions): 
 export async function readRewriteState(
   repoPath: string,
   target: string,
-): Promise<Pick<RewriteState, 'branch' | 'targetInHead' | 'operationInProgress'>> {
-  const [branch, onHead, operationInProgress] = await Promise.all([
+  oldestReplaced: string,
+): Promise<
+  Pick<RewriteState, 'branch' | 'targetInHead' | 'operationInProgress' | 'rewritesPushedCommit'>
+> {
+  const [branch, onHead, onUpstream, operationInProgress] = await Promise.all([
     runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']),
     runGit(repoPath, ['merge-base', '--is-ancestor', target, 'HEAD']),
+    // Git fails this the same way when the branch has no upstream, which counts as not pushed.
+    runGit(repoPath, ['merge-base', '--is-ancestor', oldestReplaced, '@{upstream}']),
     hasOperationInProgress(repoPath),
   ]);
   return {
     branch: branch.code === 0 ? branch.stdout.toString('utf8').trim() : null,
     targetInHead: onHead.code === 0,
+    rewritesPushedCommit: onUpstream.code === 0,
     operationInProgress,
   };
 }
