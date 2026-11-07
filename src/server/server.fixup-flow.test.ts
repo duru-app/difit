@@ -1,10 +1,11 @@
 import { execFileSync } from 'child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { createServer } from 'net';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { fetch } from 'undici';
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer } from './server.js';
 import type { DiffResponse } from '../types/diff.js';
@@ -755,7 +756,7 @@ it("blocks rewording while a thread is the agent's, and not while the agent only
   const fixTypo = { commit: typo, original: 'add typpo', message: 'add typo' };
   const blocked = await reword(fixTypo);
   expect(blocked.status).toBe(409);
-  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await blocked.json()).toMatchObject({ reason: 'comments-waiting' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(movedTip);
 
   await comment({
@@ -768,7 +769,7 @@ it("blocks rewording while a thread is the agent's, and not while the agent only
   });
   const stillFixing = await reword(fixTypo);
   expect(stillFixing.status).toBe(409);
-  expect(await stillFixing.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await stillFixing.json()).toMatchObject({ reason: 'comments-waiting' });
 
   await comment({
     type: 'reply',
@@ -823,7 +824,7 @@ it("blocks rewording while a thread of another selection on the server is the ag
   });
 
   expect(response.status).toBe(409);
-  expect(await response.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await response.json()).toMatchObject({ reason: 'comments-waiting' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
 });
 
@@ -1435,7 +1436,7 @@ it('runs the same checks before a reorder as before a reword', async () => {
   });
   const blocked = await reorder({ acknowledged: ['default-branch', 'pushed-commit'] });
   expect(blocked.status).toBe(409);
-  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(await blocked.json()).toMatchObject({ reason: 'comments-waiting' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(second);
   await post(`/api/comments${query}`, { threads: [] });
 
@@ -1472,4 +1473,314 @@ it('keeps a merge in the range when a commit moves past it', async () => {
   const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
   expect(review!.commits.map(({ subject }) => subject)).toEqual(['before', 'after', 'merge side']);
   expect(review!.commits.at(-1)?.merged?.map(({ subject }) => subject)).toEqual(['on the side']);
+});
+
+function conflictingStack() {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const adds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const edits = commit(repo, 'edits', { 'b.js': '2\n' });
+  return { repo, base, adds, edits };
+}
+
+it('tells a conflict from the commit it stopped at, and whether anyone can take it', async () => {
+  const { repo, base, adds, edits } = conflictingStack();
+  const { api, post } = await startReview(repo, base, edits, 9285);
+  const reorder = () => post(`/api/reorder?base=${base}&target=${edits}`, { order: [edits, adds] });
+  const stopped = { commit: { sha: edits, subject: 'edits' } };
+
+  const alone = await reorder();
+  expect(alone.status).toBe(409);
+  expect(await alone.json()).toMatchObject({
+    reason: 'conflict',
+    conflict: { ...stopped, agentAttached: false },
+  });
+
+  const leaving = new AbortController();
+  const waiting = await fetch(api('/api/comments-wait'), { signal: leaving.signal });
+  const withWait = await reorder();
+  expect(await withWait.json()).toMatchObject({
+    conflict: { ...stopped, agentAttached: true },
+  });
+  leaving.abort();
+  await waiting.body?.cancel().catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const gone = await reorder();
+  expect(await gone.json()).toMatchObject({ conflict: { agentAttached: false } });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(edits);
+  expect(git(repo, ['status', '--porcelain'])).toBe('');
+});
+
+describe.skipIf(process.platform === 'win32')('a Claude Code session behind the socket', () => {
+  afterEach(() => {
+    delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  });
+
+  it('counts as attached only while the socket answers', async () => {
+    const { repo, base, adds, edits } = conflictingStack();
+    const { post } = await startReview(repo, base, edits, 9286);
+    const attached = async () => {
+      const response = await post(`/api/reorder?base=${base}&target=${edits}`, {
+        order: [edits, adds],
+      });
+      return ((await response.json()) as { conflict?: { agentAttached?: boolean } }).conflict
+        ?.agentAttached;
+    };
+    const path = join(repo, 'session.sock');
+    process.env.CLAUDE_CODE_MESSAGING_SOCKET = path;
+
+    expect(await attached()).toBe(false);
+
+    const received: string[] = [];
+    const session = createServer((socket) => {
+      socket.on('data', (data) => received.push(data.toString()));
+    });
+    await new Promise<void>((resolve) => session.listen(path, resolve));
+    cleanups.push(() => new Promise<void>((resolve) => session.close(() => resolve())));
+
+    expect(await attached()).toBe(true);
+    expect(received).toEqual([]);
+  });
+
+  it('names an agent at work only while the socket answers', async () => {
+    const { repo, base, adds, edits } = conflictingStack();
+    const { post } = await startReview(repo, base, edits, 9299);
+    const refusal = async () => {
+      const response = await post(`/api/reorder?base=${base}&target=${edits}`, {
+        order: [edits, adds],
+      });
+      return ((await response.json()) as { reason?: string }).reason;
+    };
+    const path = join(repo, 'session.sock');
+    process.env.CLAUDE_CODE_MESSAGING_SOCKET = path;
+    await post('/api/comment-imports', [
+      {
+        type: 'thread',
+        id: 't1',
+        author: 'User',
+        position: { scope: 'commit' },
+        fixupTarget: edits,
+        body: 'fix this',
+      },
+    ]);
+
+    expect(await refusal()).toBe('comments-waiting');
+
+    const session = createServer();
+    await new Promise<void>((resolve) => session.listen(path, resolve));
+    cleanups.push(() => new Promise<void>((resolve) => session.close(() => resolve())));
+
+    expect(await refusal()).toBe('agent-working');
+  });
+});
+
+it('hands a conflicting order over: the agent gets its turn, rebases, and difit follows', async () => {
+  const { repo, base, adds, edits } = conflictingStack();
+  const other = commit(repo, 'other', { 'o.js': '1\n' });
+  const { api, post } = await startReview(repo, base, other, 9287);
+  const texts = () => fetch(api('/api/comments-output')).then((response) => response.text());
+  const position = { scope: 'commit' };
+  const comment = (added: Record<string, unknown>) => post('/api/comment-imports', [added]);
+
+  const waiting = fetch(api('/api/comments-wait'));
+  const refused = await post(`/api/reorder?base=${base}&target=${other}`, {
+    order: [edits, adds, other],
+  });
+  expect(await refused.json()).toMatchObject({ conflict: { agentAttached: true } });
+
+  await post('/api/comments', {
+    threads: [
+      {
+        id: 'handed-over',
+        position,
+        fixupTarget: edits,
+        view: { baseCommitish: adds, targetCommitish: edits },
+        createdAt: '2026-11-07T00:00:00.000Z',
+        updatedAt: '2026-11-07T00:00:00.000Z',
+        messages: [
+          {
+            id: 'handed-over',
+            body: '순서를 바꾸다 충돌해 이력을 되돌렸습니다.',
+            author: 'User',
+            createdAt: '2026-11-07T00:00:00.000Z',
+            updatedAt: '2026-11-07T00:00:00.000Z',
+          },
+        ],
+      },
+    ],
+  });
+  const woken = await (await waiting).text();
+  expect(woken).toContain('"threadId":"handed-over"');
+  expect(woken).toContain(edits);
+  expect(await texts()).toContain(`커밋 ${edits.slice(0, 7)} edits [답변 대기]`);
+
+  const blocked = await post(`/api/reorder?base=${base}&target=${other}`, {
+    order: [adds, other, edits],
+  });
+  expect(await blocked.json()).toMatchObject({ reason: 'comments-waiting' });
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const newEdits = commit(repo, 'edits', { 'b.js': '2\n' });
+  const newAdds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const newOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const followed = await post(`/api/history-rewritten?base=${base}&target=${other}`, {
+    rewritten: { [edits]: newEdits, [adds]: newAdds, [other]: newOther },
+  });
+  expect(followed.status).toBe(200);
+  expect(await followed.json()).toMatchObject({
+    success: true,
+    threads: [{ id: 'handed-over', fixupTarget: newEdits }],
+  });
+
+  const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(review!.commits.map(({ sha }) => sha)).toEqual([newEdits, newAdds, newOther]);
+
+  await comment({
+    type: 'reply',
+    threadId: 'handed-over',
+    author: 'Agent',
+    position,
+    fixupTarget: edits,
+    body: '맡겨진 순서로 옮겼습니다.',
+  });
+  const output = await texts();
+  expect(output).toContain(`커밋 ${newEdits.slice(0, 7)} edits`);
+  expect(output).toContain('맡겨진 순서로 옮겼습니다.');
+  expect(output).toContain('[답변 완료]');
+});
+
+it('refuses to follow a rewrite the history does not show', async () => {
+  const { repo, base, adds, edits } = conflictingStack();
+  const { post } = await startReview(repo, base, edits, 9288);
+  const follow = async (body: unknown) => {
+    const response = await post(`/api/history-rewritten?base=${base}&target=${edits}`, body);
+    return [response.status, ((await response.json()) as { reason?: string }).reason];
+  };
+
+  expect(await follow({ rewritten: {} })).toEqual([400, undefined]);
+  expect(await follow({ rewritten: { [adds]: 'not-a-sha' } })).toEqual([400, undefined]);
+  expect(await follow({ rewritten: { [adds]: 'f'.repeat(40) } })).toEqual([409, 'stale-view']);
+  // The commit it names stands on HEAD, but `edits` then has no place in the review.
+  git(repo, ['reset', '-q', '--hard', adds]);
+  expect(await follow({ rewritten: { [adds]: adds } })).toEqual([409, 'stale-view']);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(adds);
+});
+
+it('refuses a report that moved a waiting fixup into the review, and keeps it waiting above', async () => {
+  const { repo, base, adds, edits } = conflictingStack();
+  const other = commit(repo, 'other', { 'o.js': '1\n' });
+  const fixup = commit(repo, `fixup! ${edits}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const { api, post } = await startReview(repo, base, other, 9290);
+  const query = `?base=${base}&target=${other}`;
+  const at = '2020-01-01T00:00:00Z';
+  await post(`/api/comments${query}`, {
+    threads: [
+      {
+        id: 't1',
+        position: { scope: 'commit' },
+        fixupTarget: edits,
+        view: { baseCommitish: adds, targetCommitish: edits },
+        createdAt: at,
+        updatedAt: at,
+        messages: [{ id: 't1-m', body: 'x', author: 'User', createdAt: at, updatedAt: at }],
+      },
+    ],
+  });
+  const waiting = async () => {
+    const response = await fetch(api('/api/fixups'));
+    const { fixups } = (await response.json()) as { fixups: Array<{ threadIds: string[] }> };
+    const output = await (await fetch(api('/api/comments-output'))).text();
+    return {
+      fixups: fixups.map(({ threadIds }) => threadIds),
+      pending: output.includes('[승인 대기]'),
+    };
+  };
+  expect(await waiting()).toEqual({ fixups: [['t1']], pending: true });
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const movedEdits = commit(repo, 'edits', { 'b.js': '2\n' });
+  const insideFixup = commit(repo, `fixup! ${movedEdits}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const movedAdds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const movedOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const refused = await post(`/api/history-rewritten${query}`, {
+    rewritten: {
+      [edits]: movedEdits,
+      [fixup]: insideFixup,
+      [adds]: movedAdds,
+      [other]: movedOther,
+    },
+  });
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ reason: 'stale-view' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(movedOther);
+  const stayed = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(stayed.review!.commits.map(({ sha }) => sha)).toEqual([adds, edits, other]);
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const newEdits = commit(repo, 'edits', { 'b.js': '2\n' });
+  const newAdds = commit(repo, 'adds', { 'b.js': '1\n' });
+  const newOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const aboveFixup = commit(repo, `fixup! ${newEdits}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const followed = await post(`/api/history-rewritten${query}`, {
+    rewritten: { [edits]: newEdits, [fixup]: aboveFixup, [adds]: newAdds, [other]: newOther },
+  });
+  expect(followed.status).toBe(200);
+  expect(await waiting()).toEqual({ fixups: [['t1']], pending: true });
+});
+
+it('follows a report that leaves a fixup inside the review where it already stood', async () => {
+  const { repo, base, adds } = conflictingStack();
+  git(repo, ['reset', '-q', '--hard', adds]);
+  const fixup = commit(repo, `fixup! ${adds}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const other = commit(repo, 'other', { 'o.js': '1\n' });
+  const { api, post } = await startReview(repo, base, other, 9291);
+
+  git(repo, ['reset', '-q', '--hard', base]);
+  const newAdds = commit(repo, 'adds', { 'b.js': '1\n', 'n.js': '1\n' });
+  const newFixup = commit(repo, `fixup! ${newAdds}\n\nReview-Thread: t1`, { 'b.js': '3\n' });
+  const newOther = commit(repo, 'other', { 'o.js': '1\n' });
+  const followed = await post(`/api/history-rewritten?base=${base}&target=${other}`, {
+    rewritten: { [adds]: newAdds, [fixup]: newFixup, [other]: newOther },
+  });
+
+  expect(followed.status).toBe(200);
+  const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  expect(review!.commits.map(({ sha }) => sha)).toEqual([newAdds, newOther]);
+});
+
+it('hands a reword over when rebuilding a merge conflicts', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n2\n3\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  git(repo, ['checkout', '-q', '-b', 'side']);
+  commit(repo, 'side edit', { 'a.js': '1\nside\n3\n' });
+  git(repo, ['checkout', '-q', 'feature']);
+  commit(repo, 'main edit', { 'a.js': '1\nmain\n3\n' });
+  expect(() => git(repo, ['merge', '-q', '--no-ff', '-m', 'merge side', 'side'])).toThrow();
+  const merge = commit(repo, 'merge side', { 'a.js': '1\nresolved\n3\n' });
+
+  const { api, post } = await startReview(repo, base, merge, 9289);
+  const leaving = new AbortController();
+  const waiting = await fetch(api('/api/comments-wait'), { signal: leaving.signal });
+  const response = await post(`/api/reword?base=${base}&target=${merge}`, {
+    commit: typo,
+    original: 'add typpo',
+    message: 'add typo',
+  });
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({
+    reason: 'conflict',
+    conflict: { commit: { sha: merge, subject: 'merge side' }, agentAttached: true },
+  });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(merge);
+  leaving.abort();
+  await waiting.body?.cancel().catch(() => undefined);
 });

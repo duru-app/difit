@@ -119,6 +119,12 @@ describe('rewordFailureMessage', () => {
   it('says the agent is at work', () => {
     expect(rewordFailureMessage('agent-working', '')).toContain('에이전트가 작업 중입니다.');
   });
+
+  it('does not name an agent at work when none is attached', () => {
+    const message = rewordFailureMessage('comments-waiting', '');
+    expect(message).toContain('답을 기다리는 지적이 있습니다.');
+    expect(message).not.toContain('작업 중');
+  });
 });
 
 describe('reorderFailureMessage', () => {

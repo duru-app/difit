@@ -626,6 +626,7 @@ export type RewordRejection =
   | 'operation-in-progress'
   | 'merge-commit'
   | 'agent-working'
+  | 'comments-waiting'
   | 'empty-message'
   | 'no-change'
   | 'needs-confirmation'
@@ -652,6 +653,12 @@ export interface ReorderRequest {
   acknowledged?: RewriteWarning[];
 }
 
+export interface RewriteConflict {
+  commit?: { sha: string; subject: string };
+  // A `difit comment wait` is open, or the Claude Code session that started the server still listens.
+  agentAttached: boolean;
+}
+
 export type RewordResponse =
   | {
       success: true;
@@ -660,7 +667,13 @@ export type RewordResponse =
       threads: DiffCommentThread[];
       decisions: ReviewDecision[];
     }
-  | { error: string; reason?: RewordRejection; output?: string; warnings?: RewriteWarning[] };
+  | {
+      error: string;
+      reason?: RewordRejection;
+      output?: string;
+      warnings?: RewriteWarning[];
+      conflict?: RewriteConflict;
+    };
 
 // The message a commit of the review shows: the one its pending amend! commits leave, or its own.
 export interface CommitMessageResponse {

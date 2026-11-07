@@ -3,7 +3,9 @@ import type {
   DirectEditRejection,
   ExpandedLine,
   LineNumber,
+  ReviewCommit,
   RewordRejection,
+  RewriteConflict,
   RewriteWarning,
 } from '../../types/diff';
 
@@ -151,6 +153,8 @@ const REWORD_FAILURE_MESSAGES: Record<RewordRejection, string> = {
   'merge-commit': '머지 커밋의 메시지는 고칠 수 없습니다.',
   'agent-working':
     '에이전트가 작업 중입니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 저장해 주세요.',
+  'comments-waiting':
+    '답을 기다리는 지적이 있습니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 저장해 주세요.',
   'empty-message': '메시지를 비울 수는 없습니다.',
   'no-change': '메시지가 바뀌지 않았습니다.',
   'needs-confirmation': '이력을 바꾸기 전에 확인이 필요합니다.',
@@ -170,6 +174,8 @@ const REORDER_FAILURE_MESSAGES: Partial<Record<RewordRejection, string>> = {
   'stale-view': '그사이 커밋 목록이 바뀌었습니다. 새로고침한 뒤 다시 옮겨 주세요.',
   'agent-working':
     '에이전트가 작업 중입니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 옮겨 주세요.',
+  'comments-waiting':
+    '답을 기다리는 지적이 있습니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 옮겨 주세요.',
   conflict:
     '순서를 바꾸면 충돌이 나서 옮기기 전 이력으로 되돌렸습니다. 같은 줄을 고친 커밋끼리는 순서를 바꿀 수 없고, 머지 때 손으로 푼 충돌도 다시 만들 수 없습니다. 아래 출력을 확인해 주세요.',
   'head-moved': '옮기는 동안 HEAD가 바뀌어 이력을 바꾸지 않았습니다. 다시 옮겨 주세요.',
@@ -195,4 +201,35 @@ export function rewordFailureMessage(
     return warnings.map((warning) => REWRITE_WARNING_MESSAGES[warning]).join(' ');
   }
   return reason ? REWORD_FAILURE_MESSAGES[reason] : error;
+}
+
+type HandoffCommit = Pick<ReviewCommit, 'sha' | 'shortSha' | 'subject'>;
+
+function conflictLine(conflict: RewriteConflict): string {
+  return conflict.commit
+    ? `\n\n충돌한 커밋: ${conflict.commit.sha.slice(0, 7)} ${conflict.commit.subject}`
+    : '';
+}
+
+export function reorderHandoffBody(
+  commits: readonly HandoffCommit[],
+  order: readonly string[],
+  conflict: RewriteConflict,
+): string {
+  const wanted = order.flatMap((sha, at) => {
+    const commit = commits.find((candidate) => candidate.sha === sha);
+    return commit ? [`${at + 1}. ${commit.shortSha} ${commit.subject}`] : [];
+  });
+  return `순서를 바꾸다 충돌해 이력을 되돌렸습니다. 아래 순서대로 rebase하고 충돌을 풀어 주세요.
+
+원하는 순서 (오래된 커밋부터):
+${wanted.join('\n')}${conflictLine(conflict)}`;
+}
+
+export function rewordHandoffBody(message: string, conflict: RewriteConflict): string {
+  return `메시지를 고치다 충돌해 이력을 되돌렸습니다. 이 커밋의 메시지를 아래처럼 고치고 충돌을 풀어 주세요.
+
+\`\`\`text
+${message}
+\`\`\`${conflictLine(conflict)}`;
 }
