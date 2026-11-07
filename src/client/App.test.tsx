@@ -3577,7 +3577,7 @@ describe('App Component - Commits of the review', () => {
     fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
       target: { value: 'Fix this here' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() =>
       expect(
@@ -3605,7 +3605,7 @@ describe('App Component - Commits of the review', () => {
     fireEvent.mouseEnter((await firstRow()).children[2]!);
     fireEvent.mouseDown(screen.getByRole('button', { name: 'Add a comment' }), { shiftKey: true });
     fireEvent.change(await screen.findByPlaceholderText(/comment/i), { target: { value: body } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
   };
   const addedThreads = () =>
     vi
@@ -3725,7 +3725,7 @@ describe('App Component - Commits of the review', () => {
     fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
       target: { value: 'Split this file' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() =>
       expect(addedThreads()).toEqual([
@@ -3776,7 +3776,7 @@ describe('App Component - Commits of the review', () => {
     fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
       target: { value: 'Split this commit' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() =>
       expect(addedThreads()).toEqual([
@@ -3808,7 +3808,7 @@ describe('App Component - Commits of the review', () => {
     fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
       target: { value: 'Reword this' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() =>
       expect(addedThreads()).toEqual([
@@ -3949,6 +3949,30 @@ describe('App Component - Commits of the review', () => {
 
     expect(await screen.findByText('Elsewhere')).toBeInTheDocument();
     expect(screen.queryByLabelText('Outdated comment')).not.toBeInTheDocument();
+  });
+
+  it('shows 응답 중 on the panel row as on the card once an agent has taken the comment', async () => {
+    mockComments = [
+      createMockThread({ id: 'c1', filePath: 'test.ts', line: 1, body: 'Look here' }),
+    ];
+    mockDecisions = [{ threadId: 'c1', kind: 'handed', fixupSha: '', at: '2026-01-01T00:00:00Z' }];
+    renderApp();
+    const card = await waitFor(() => {
+      const found = document.getElementById('comment-thread-c1');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(within(card).getByTestId('responding-chip')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Shift>}L{/Shift}');
+
+    const row = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-thread-id="c1"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(within(row).getByTestId('responding-chip')).toHaveTextContent('응답 중');
+    expect(row).not.toHaveTextContent('열림');
   });
 
   it('paints a run of commits shown on load and names its ends in the header', async () => {
@@ -4724,12 +4748,12 @@ describe('App Component - Commits of the review', () => {
       }
 
       fireEvent.mouseDown(cells[2]!, { button: 0, ...modifier });
-      expect(within(card).getByText('fffffff · test.ts · 수정 후 L1')).toBeInTheDocument();
+      expect(within(card).getByText('› fffffff · test.ts · 수정 후 L1')).toBeInTheDocument();
       fireEvent.mouseUp(cells[2]!, modifier);
       fireEvent.click(cells[2]!, modifier);
 
       expect(
-        await within(card).findByText(`fffffff · test.ts · 수정 후 ${picked}`),
+        await within(card).findByText(`› fffffff · test.ts · 수정 후 ${picked}`),
       ).toBeInTheDocument();
     },
   );
@@ -4914,7 +4938,7 @@ describe('App Component - Commits of the review', () => {
         fireEvent.change(await within(region).findByPlaceholderText(/comment/i), {
           target: { value: 'Name this case' },
         });
-        fireEvent.click(within(region).getByRole('button', { name: 'Submit' }));
+        fireEvent.click(within(region).getByRole('button', { name: '보내기' }));
 
         await waitFor(() =>
           expect(addedThreads()).toEqual([
@@ -4951,7 +4975,7 @@ describe('App Component - Commits of the review', () => {
       fireEvent.change(await within(region).findByPlaceholderText(/comment/i), {
         target: { value: 'Name this case' },
       });
-      fireEvent.click(within(region).getByRole('button', { name: 'Submit' }));
+      fireEvent.click(within(region).getByRole('button', { name: '보내기' }));
 
       await waitFor(() =>
         expect(addedThreads()).toEqual([
@@ -4984,7 +5008,7 @@ describe('App Component - Commits of the review', () => {
       fireEvent.change(await within(region).findByPlaceholderText(/comment/i), {
         target: { value: 'Name this case' },
       });
-      fireEvent.click(within(region).getByRole('button', { name: 'Submit' }));
+      fireEvent.click(within(region).getByRole('button', { name: '보내기' }));
 
       await waitFor(() =>
         expect(addedThreads()).toEqual([
@@ -5038,7 +5062,7 @@ describe('App Component - Commits of the review', () => {
       fireEvent.change(await within(sectionOf('src/kept.ts')).findByPlaceholderText(/comment/i), {
         target: { value: 'Why drop this' },
       });
-      fireEvent.click(within(sectionOf('src/kept.ts')).getByRole('button', { name: 'Submit' }));
+      fireEvent.click(within(sectionOf('src/kept.ts')).getByRole('button', { name: '보내기' }));
 
       await waitFor(() =>
         expect(addedThreads()).toEqual([
@@ -5174,7 +5198,7 @@ describe('App Component - Commits of the review', () => {
       fireEvent.change(await within(deletedFile).findByPlaceholderText(/comment/i), {
         target: { value: 'Why delete this' },
       });
-      fireEvent.click(within(deletedFile).getByRole('button', { name: 'Submit' }));
+      fireEvent.click(within(deletedFile).getByRole('button', { name: '보내기' }));
 
       await waitFor(() =>
         expect(addedThreads()).toEqual([
@@ -5623,7 +5647,7 @@ describe('App Component - Commits of the review', () => {
         fireEvent.change(await within(older).findByPlaceholderText(/comment/i), {
           target: { value: 'Name this' },
         });
-        fireEvent.click(within(older).getByRole('button', { name: 'Submit' }));
+        fireEvent.click(within(older).getByRole('button', { name: '보내기' }));
 
         await waitFor(() =>
           expect(addedThreads()).toEqual([

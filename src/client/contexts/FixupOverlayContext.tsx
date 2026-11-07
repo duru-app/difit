@@ -134,6 +134,10 @@ export interface ThreadReviewControls {
   onShowView: (view: DiffSelection) => void;
 }
 
+export const agentRespondsTo = (overlay: FixupOverlayState, thread: ShownThread): boolean =>
+  overlay.targetCommit !== null &&
+  isAgentResponding(thread, overlay.fixupsByThread, overlay.decisions);
+
 export function threadReviewControls(
   overlay: FixupOverlayState,
   thread: ShownThread,
@@ -150,7 +154,7 @@ export function threadReviewControls(
     pendingFixups: pending.map(toRef),
     revertibleFixups: reviewerEditFixups(thread, fixups, overlay.decisions).map(toRef),
     targetCommit: overlay.targetCommit,
-    responding: isAgentResponding(thread, overlay.fixupsByThread, overlay.decisions),
+    responding: agentRespondsTo(overlay, thread),
     onDecide: overlay.decideFixups,
     onUndoApproval: overlay.undoApproval,
     onOpenReviewAt: overlay.openReviewAt,

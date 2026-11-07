@@ -28,6 +28,7 @@ import { CommentBodyRenderer } from './CommentBodyRenderer';
 import { CommentForm } from './CommentForm';
 import { FixupLinesButton } from './FixupLineReply';
 import { ReplyChoices } from './ReplyChoices';
+import { RespondingChip } from './RespondingChip';
 import type { AppearanceSettings } from './SettingsModal';
 
 // Hidden until the message is hovered only where hovering is possible; touch screens keep it shown.
@@ -37,6 +38,7 @@ const REVEAL_ON_HOVER =
 interface ThreadMessageItemProps {
   message: DiffCommentMessage;
   threadId: string;
+  location: string;
   showAuthorBadge: boolean;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   filename?: string;
@@ -51,6 +53,7 @@ interface ThreadMessageItemProps {
 function ThreadMessageItem({
   message,
   threadId,
+  location,
   showAuthorBadge,
   syntaxTheme,
   filename,
@@ -221,8 +224,8 @@ function ThreadMessageItem({
           filename={filename}
           initialValue={message.body}
           embedded={true}
-          title="Edit comment"
-          submitLabel="Save"
+          location={location}
+          submitLabel="저장"
           placeholder="Edit your message..."
         />
       )}
@@ -234,8 +237,6 @@ const OUTDATED_REASON_TITLE: Record<AnchorStaleReason, string> = {
   missing: '지적한 줄이 지금 파일에 없어 수정을 겹쳐 그리지 않습니다',
   ambiguous: '같은 내용의 줄이 여러 곳이라 자리를 정할 수 없어 수정을 겹쳐 그리지 않습니다',
 };
-
-const RESPONDING_DOT_DELAYS_MS = [0, 150, 300];
 
 const runsOffTheTop = (card: HTMLElement | null) => {
   const visible = card && visibleTopOf(card);
@@ -337,6 +338,10 @@ export function CommentThreadCard({
 
   const rootMessage = thread.messages[0];
   if (!rootMessage) return null;
+  const location =
+    'file' in thread
+      ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
+      : commitLocationLabel(thread);
 
   return (
     <div
@@ -372,9 +377,7 @@ export function CommentThreadCard({
               color: 'var(--color-yellow-path-text)',
             }}
           >
-            {'file' in thread
-              ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
-              : commitLocationLabel(thread)}
+            {location}
           </span>
           {isResolved && (
             <span
@@ -400,24 +403,7 @@ export function CommentThreadCard({
                 {reviewStateLabel(reviewState)}
               </span>
             )}
-          {review?.responding && (
-            <span
-              data-testid="responding-chip"
-              className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-github-accent px-2 text-[10px] font-medium text-github-accent"
-            >
-              <span aria-hidden className="inline-flex items-center gap-0.5">
-                {RESPONDING_DOT_DELAYS_MS.map((delay) => (
-                  <span
-                    key={delay}
-                    data-testid="responding-dot"
-                    className="h-1 w-1 animate-responding-dot rounded-full bg-current motion-reduce:animate-none"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
-              </span>
-              응답 중
-            </span>
-          )}
+          {review?.responding && <RespondingChip />}
           {thread.isOutdated && (
             <span
               className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${
@@ -493,6 +479,7 @@ export function CommentThreadCard({
           <ThreadMessageItem
             message={rootMessage}
             threadId={thread.id}
+            location={location}
             showAuthorBadge={showAuthorBadges}
             syntaxTheme={syntaxTheme}
             filename={onFile?.file}
@@ -508,6 +495,7 @@ export function CommentThreadCard({
               <ThreadMessageItem
                 message={message}
                 threadId={thread.id}
+                location={location}
                 showAuthorBadge={showAuthorBadges}
                 syntaxTheme={syntaxTheme}
                 filename={onFile?.file}
@@ -628,8 +616,8 @@ export function CommentThreadCard({
                 syntaxTheme={syntaxTheme}
                 filename={onFile?.file}
                 embedded={true}
-                title="Reply to thread"
-                submitLabel={isResolved ? '답글 달고 다시 열기' : 'Reply'}
+                location={location}
+                submitLabel={isResolved ? '답글 달고 다시 열기' : '보내기'}
                 placeholder="Write a reply..."
               />
             ) : (

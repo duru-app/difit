@@ -92,6 +92,7 @@ describe('CommentThreadCard', () => {
 
     await user.click(screen.getAllByTitle('Edit message')[0]!);
     expect(screen.getByPlaceholderText('Edit your message...')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '저장' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /suggestion/i })).toBeNull();
   });
 
@@ -491,7 +492,7 @@ describe('CommentThreadCard', () => {
         await user.click(screen.getByRole('button', { name: 'Write a reply...' }));
 
         rerender(replyingCard(overlayWith([resolution('resolved', '2026-01-01T00:00:00Z')])));
-        await user.click(screen.getByRole('button', { name: 'Cancel' }));
+        await user.click(screen.getByRole('button', { name: '취소' }));
 
         expect(screen.queryByText('Reply comment')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Expand thread' })).toBeInTheDocument();
@@ -1315,7 +1316,7 @@ describe('CommentThreadCard', () => {
 
       await user.click(screen.getByRole('button', { name: 'Write a reply...' }));
       await user.type(screen.getByPlaceholderText('Write a reply...'), '둘 다 받으면 안 되나요?');
-      await user.click(screen.getByRole('button', { name: 'Reply' }));
+      await user.click(screen.getByRole('button', { name: '보내기' }));
       expect(onReplyToThread).toHaveBeenCalledWith('thread-1', '둘 다 받으면 안 되나요?');
       rerender(
         <CommentThreadCard
@@ -1390,9 +1391,12 @@ describe('CommentThreadCard', () => {
 
     const textarea = screen.getByPlaceholderText('Write a reply...');
     expect(textarea).toHaveFocus();
+    expect(
+      screen.getByText('› src/client/components/CommentThreadCard.tsx:80'),
+    ).toBeInTheDocument();
 
     await user.type(textarea, 'A new reply');
-    await user.click(screen.getByRole('button', { name: 'Reply' }));
+    await user.click(screen.getByRole('button', { name: '보내기' }));
 
     expect(onReplyToThread).toHaveBeenCalledWith('thread-1', 'A new reply');
     // Collapses back to the trigger after submitting
@@ -1413,7 +1417,7 @@ describe('CommentThreadCard', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Write a reply...' }));
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: '취소' }));
 
     expect(screen.queryByPlaceholderText('Write a reply...')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Write a reply...' })).toBeInTheDocument();

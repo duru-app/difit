@@ -628,7 +628,7 @@ describe.each(['unified', 'split'] as const)(
       expect(picked()).toEqual(['f10();', '// new 40', 'f40();']);
       expect(screen.getByTestId('picked-ranges')).toHaveTextContent('L11, L40-L41');
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Same mistake' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      fireEvent.click(screen.getByRole('button', { name: '보내기' }));
       await vi.waitFor(() =>
         expect(onAddComment).toHaveBeenCalledWith(
           [40, 41],
@@ -676,7 +676,7 @@ describe.each(['unified', 'split'] as const)(
       expect(screen.queryByRole('status')).toBeNull();
       expect(screen.getByTestId('picked-ranges')).toHaveTextContent('지운 줄 L40 · 수정 후 L11');
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Same mistake' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      fireEvent.click(screen.getByRole('button', { name: '보내기' }));
       await vi.waitFor(() =>
         expect(onAddComment).toHaveBeenCalledWith(40, 'Same mistake', '// old 40', 'old', {
           lines: [{ side: 'new', line: 11 }],
@@ -895,7 +895,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     const form = await screen.findByRole('textbox');
     expect(codeCell('new', 38).closest('table')).toContainElement(form);
     fireEvent.change(form, { target: { value: 'Why both?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -929,7 +929,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
       selectText([codeCell(side, 4), from], [codeCell(side, 38), 'sameOmega']);
       fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
       fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why both?' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
       await waitFor(() => {
         expect(onAddComment).toHaveBeenCalledWith(
@@ -1019,7 +1019,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     document.dispatchEvent(new Event('selectionchange'));
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Here' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -1063,7 +1063,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
 
       fireEvent.click(screen.getByRole('button', { name: BAR_BUTTON }));
       fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Here' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
       await waitFor(() => {
         expect(onAddComment).toHaveBeenCalledWith(
@@ -1110,7 +1110,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     document.dispatchEvent(new Event('selectionchange'));
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Here' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -1144,7 +1144,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -1164,12 +1164,12 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     await screen.findByRole('textbox');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
 
     selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalled();
@@ -1197,7 +1197,7 @@ describe('TextDiffViewer selection across collapsed lines', () => {
     selectText([codeCell('new', 4), 'nowAlpha'], [codeCell('new', 38), 'sameOmega']);
     fireEvent.click(await screen.findByRole('button', { name: BAR_BUTTON }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(

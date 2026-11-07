@@ -139,7 +139,7 @@ export function useFixupLineReply({
       <div className="font-sans">
         <CommentForm
           label="fixup 줄에 답글"
-          title={fixupLinesLabel({
+          location={fixupLinesLabel({
             fixupSha: fixup.sha,
             filePath: file.path,
             ranges,

@@ -102,6 +102,7 @@ import { SparkleAnimation } from './components/SparkleAnimation';
 import { SymbolPeekChip } from './components/SymbolPeekChip';
 import { SymbolPeekModal } from './components/SymbolPeekModal';
 import {
+  agentRespondsTo,
   type DirectEditControls,
   type DirectEditFailure,
   type FixupOverlayState,
@@ -2011,6 +2012,13 @@ function App() {
       revealFixupLines,
     ],
   );
+  const respondingThreadIds = useMemo(
+    () =>
+      new Set(
+        shownThreads.filter((thread) => agentRespondsTo(fixupOverlay, thread)).map(({ id }) => id),
+      ),
+    [shownThreads, fixupOverlay],
+  );
 
   // Must stay after useViewedFiles: its load effect reads the applied run before this one writes it.
   const cleanedRunRef = useRef<string | null>(null);
@@ -2621,6 +2629,7 @@ function App() {
       threads={shownThreads}
       statusById={commentPanelStatusById}
       resolvedThreadIds={resolvedThreadIds}
+      respondingThreadIds={respondingThreadIds}
       filter={commentsPanelFilter}
       onFilterChange={setCommentsPanelFilter}
       pickedThreadId={pickedThread?.id ?? null}

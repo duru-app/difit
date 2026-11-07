@@ -23,7 +23,7 @@ function serveSkills(skills: SkillSummary[] | null) {
 async function renderForm() {
   const onSubmit = vi.fn().mockResolvedValue(undefined);
   const onCancel = vi.fn();
-  render(<CommentForm onSubmit={onSubmit} onCancel={onCancel} />);
+  render(<CommentForm onSubmit={onSubmit} onCancel={onCancel} location="src/a.ts:12" />);
   await act(async () => {});
   const textarea = screen.getByRole<HTMLTextAreaElement>('textbox');
   return { onSubmit, onCancel, textarea };

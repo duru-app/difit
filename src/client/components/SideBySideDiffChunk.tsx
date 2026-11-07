@@ -17,7 +17,7 @@ import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { codeCellAttributes, quoteSelection } from '../utils/codeSelection';
-import { endOfLine } from '../../utils/commentPosition';
+import { endOfLine, locationLabel } from '../../utils/commentPosition';
 import { endsOnRow, pickHolds, threadHoldsLine } from '../utils/linePick';
 import {
   computeWordLevelDiff,
@@ -1050,6 +1050,12 @@ export function SideBySideDiffChunk({
                             <CommentForm
                               onSubmit={handleSubmitComment}
                               onCancel={handleCancelComment}
+                              location={locationLabel(
+                                filename ?? '',
+                                commentingLine.lineNumber,
+                                pickedRanges.slice(0, -1),
+                                commentingLine.side,
+                              )}
                               header={
                                 <PickControls
                                   store={linePick}
