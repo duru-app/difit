@@ -7,7 +7,7 @@ import { fetch } from 'undici';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 
 import { startServer } from './server.js';
-import type { DiffResponse } from '../types/diff.js';
+import type { DiffResponse, RewriteBlockingThread, RewordResponse } from '../types/diff.js';
 import { bindingForView, createDiffSelection } from '../utils/diffSelection.js';
 
 let home: string;
@@ -825,6 +825,80 @@ it("blocks rewording while a thread of another selection on the server is the ag
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ reason: 'agent-working' });
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
+});
+
+it('says where a comment of an earlier review holds a reword up after the review reopened', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const oldTip = commit(repo, 'add c', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, oldTip),
+    repoPath: repo,
+    preferredPort: 9281,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  await fetch(api('/api/comment-imports'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      {
+        type: 'thread',
+        id: 'earlier',
+        author: 'User',
+        filePath: 'c.js',
+        position: { side: 'new', line: 1 },
+        body: 'left on the earlier review',
+      },
+    ]),
+  });
+
+  const newTip = commit(repo, 'add d', { 'd.js': '1\n' });
+  await fetch(api(`/api/diff?base=${base}&target=${newTip}`));
+  const onNewReview = await fetch(api(`/api/comments-json?base=${base}&target=${newTip}`));
+  expect(((await onNewReview.json()) as { threads: unknown[] }).threads).toEqual([]);
+
+  const blocked = await fetch(api(`/api/reword?base=${base}&target=${newTip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo' }),
+  });
+
+  expect(blocked.status).toBe(409);
+  const refused = (await blocked.json()) as RewordResponse & {
+    blockingThreads: RewriteBlockingThread[];
+  };
+  expect(refused).toEqual({
+    error: 'Reword refused: agent-working',
+    reason: 'agent-working',
+    blockingThreads: [
+      {
+        threadId: 'earlier',
+        review: createDiffSelection(base, oldTip),
+        commit: { shortSha: oldTip.slice(0, 7), subject: 'add c' },
+        file: 'c.js',
+        line: 1,
+      },
+    ],
+  });
+
+  const { review } = refused.blockingThreads[0]!;
+  const opened = await fetch(
+    api(`/api/diff?base=${review.baseCommitish}&target=${review.targetCommitish}`),
+  );
+  const { selection } = ((await opened.json()) as DiffResponse).review!;
+  const comments = await fetch(
+    api(`/api/comments-json?base=${selection.baseCommitish}&target=${selection.targetCommitish}`),
+  );
+  const shown = (await comments.json()) as { threads: Array<{ id: string }> };
+  expect(shown.threads.map(({ id }) => id)).toEqual(['earlier']);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newTip);
 });
 
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {

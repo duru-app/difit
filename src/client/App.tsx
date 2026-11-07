@@ -37,6 +37,7 @@ import {
   type ReviewViewAction,
   type RewordRequest,
   type RewordResponse,
+  type RewriteBlockingThread,
   type ShownThread,
 } from '../types/diff';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
@@ -1893,6 +1894,7 @@ function App() {
           ),
           ...(payload.output ? { output: payload.output } : {}),
           ...(payload.warnings ? { warnings: payload.warnings } : {}),
+          ...(payload.blockingThreads ? { blockingThreads: payload.blockingThreads } : {}),
         };
       }
       await fetchDiffDataRef.current?.();
@@ -1900,12 +1902,23 @@ function App() {
     },
     [getCommentApiUrl],
   );
+  const showBlockingThreadRef = useRef<(thread: RewriteBlockingThread) => void>(() => {});
+  const showBlockingThread = useCallback(
+    (thread: RewriteBlockingThread) => showBlockingThreadRef.current(thread),
+    [],
+  );
   const reword = useMemo<RewordControls | undefined>(
     () =>
       diffData?.directEditAvailable && targetCommit
-        ? { load: loadCommitMessage, save: submitReword }
+        ? { load: loadCommitMessage, save: submitReword, showBlockingThread }
         : undefined,
-    [diffData?.directEditAvailable, targetCommit, loadCommitMessage, submitReword],
+    [
+      diffData?.directEditAvailable,
+      targetCommit,
+      loadCommitMessage,
+      submitReword,
+      showBlockingThread,
+    ],
   );
   const directEdit = useMemo<DirectEditControls | null>(() => {
     if (!diffData?.directEditAvailable || !targetCommit) return null;
@@ -2296,6 +2309,12 @@ function App() {
   pickThreadRef.current = (threadId) => {
     const thread = shownThreads.find(({ id }) => id === threadId);
     if (thread) pickComment(thread);
+  };
+  showBlockingThreadRef.current = ({ threadId, review: reviewOfThread }) => {
+    setIsCommitDrawerOpen(false);
+    const shown = shownThreads.find(({ id }) => id === threadId);
+    if (shown) pickComment(shown);
+    else showDiff(reviewOfThread, { kind: 'thread', threadId });
   };
   showThreadCardRef.current = (threadId) => {
     const thread = shownThreads.find(({ id }) => id === threadId);
