@@ -5,6 +5,7 @@ import { getFileElementId, stickyHeaderCover } from '../utils/domUtils';
 
 const INITIAL_RENDERED_FILE_COUNT = 2;
 const LAZY_RENDER_ROOT_MARGIN = '1200px 0px';
+const MAX_FILES_DRAWN_AT_ONCE = 4;
 const SIDEBAR_SCROLL_MAX_ATTEMPTS = 60;
 const SIDEBAR_SCROLL_CORRECTION_DELAY_MS = 180;
 // How long an element may take to be drawn after the scroll reached its file.
@@ -194,16 +195,26 @@ export function useLazyDiffRendering({
 
     const observer = new IntersectionObserver(
       (entries) => {
+        const distanceFromTop = (entry: IntersectionObserverEntry) =>
+          Math.abs(entry.boundingClientRect.top - (entry.rootBounds?.top ?? 0));
+        const near = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => distanceFromTop(a) - distanceFromTop(b));
+        const drawn = near.slice(0, MAX_FILES_DRAWN_AT_ONCE);
+        drawn.forEach((entry) => observer.unobserve(entry.target));
+        near.slice(MAX_FILES_DRAWN_AT_ONCE).forEach((entry) => {
+          observer.unobserve(entry.target);
+          observer.observe(entry.target);
+        });
+
         setRenderedFilePaths((prev) => {
           let changed = false;
           const next = new Set(prev);
 
-          entries.forEach((entry) => {
-            if (!entry.isIntersecting) return;
+          drawn.forEach((entry) => {
             const path = (entry.target as HTMLElement).dataset.filePath;
             if (!path || next.has(path)) return;
             next.add(path);
-            observer.unobserve(entry.target);
             changed = true;
           });
 

@@ -568,6 +568,74 @@ describe('useLazyDiffRendering', () => {
       expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
     });
 
+    it('draws a few files nearest the screen at a time and looks at the rest again', () => {
+      type Callback = (entries: IntersectionObserverEntry[]) => void;
+      let notify: Callback = () => {};
+      const reobserved: Array<string | undefined> = [];
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          constructor(callback: Callback) {
+            notify = callback;
+          }
+          observe(node: HTMLElement) {
+            reobserved.push(node.dataset.filePath);
+          }
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const container = document.createElement('div');
+      const paths = Array.from({ length: 12 }, (_, index) => `f${index}.ts`);
+      const nodes = paths.map((path) => {
+        const node = document.createElement('div');
+        node.dataset.filePath = path;
+        return node;
+      });
+      const diffData = selection('one', paths);
+      const scrollRef = { current: container };
+      const { result } = renderHook(() =>
+        useLazyDiffRendering({
+          diffData,
+          diffScrollContainerRef: scrollRef,
+          setDiffData: () => {},
+        }),
+      );
+      act(() => {
+        nodes.forEach((node, index) =>
+          result.current.registerLazyFileContainer(paths[index]!, node),
+        );
+      });
+      const entries = nodes
+        .slice(2)
+        .reverse()
+        .map(
+          (target, index, all) =>
+            ({
+              isIntersecting: true,
+              target,
+              rootBounds: { top: 0 },
+              boundingClientRect: { top: (all.length - index) * 100 },
+            }) as unknown as IntersectionObserverEntry,
+        );
+      reobserved.length = 0;
+
+      act(() => notify(entries));
+
+      expect([...result.current.renderedFilePaths]).toEqual([
+        'f0.ts',
+        'f1.ts',
+        'f2.ts',
+        'f3.ts',
+        'f4.ts',
+        'f5.ts',
+      ]);
+      expect(new Set(reobserved)).toEqual(
+        new Set(['f6.ts', 'f7.ts', 'f8.ts', 'f9.ts', 'f10.ts', 'f11.ts']),
+      );
+      vi.unstubAllGlobals();
+    });
+
     it("leaves its files to its own observer, not the previous selection's", () => {
       const observed: Array<{ observer: number; path: string | undefined }> = [];
       let created = 0;
