@@ -130,10 +130,17 @@ export function parseLineChanges(diff: string): LineChanges | null {
   };
 }
 
-export async function lineChangesBetween(
+export function lineChangesBetween(
   repoPath: string,
   older: string,
   newer: string,
+): Promise<LineChanges | null> {
+  return lineChangesOfDiff(repoPath, [older, newer]);
+}
+
+export async function lineChangesOfDiff(
+  repoPath: string,
+  diffArgs: string[],
 ): Promise<LineChanges | null> {
   const run = await runGit(repoPath, [
     '-c',
@@ -146,8 +153,7 @@ export async function lineChangesBetween(
     '--no-textconv',
     '--src-prefix=a/',
     '--dst-prefix=b/',
-    older,
-    newer,
+    ...diffArgs,
   ]);
   return run.code === 0 ? parseLineChanges(run.stdout.toString('utf8')) : null;
 }

@@ -1120,6 +1120,49 @@ it('names the commit of a committed line in a review of the working tree', async
   ]);
 });
 
+it('names a commit for a line a commit deleted in a review of the working tree', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const main = commit(repo, 'base', { 'a.js': '1\n2\n3\n' });
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const typo = commit(repo, 'add typpo', { 'b.js': 'one\n' });
+  const tip = commit(repo, 'drop 2', { 'a.js': '1\n3\n' });
+  writeFileSync(join(repo, 'a.js'), '1\n');
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(main, tip),
+    repoPath: repo,
+    preferredPort: 9284,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const working = `base=${main.slice(0, 7)}&target=.&baseMode=merge-base`;
+  await fetch(api(`/api/diff?${working}`));
+  const onOldSide = (id: string, line: number) => ({
+    ...agentsTurn(id, 'a.js', line),
+    position: { side: 'old', line },
+  });
+  await fetch(api(`/api/comment-imports?${working}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([onOldSide('deleted-by-commit', 2), onOldSide('deleted-uncommitted', 3)]),
+  });
+
+  const blocking = await blockingThreadsOfReword(
+    api,
+    { base: main, tip },
+    { commit: typo, original: 'add typpo', message: 'add typo' },
+  );
+
+  expect(blocking.map(({ threadId, commit }) => ({ threadId, commit }))).toEqual([
+    { threadId: 'deleted-by-commit', commit: { shortSha: tip.slice(0, 7), subject: 'drop 2' } },
+    { threadId: 'deleted-uncommitted' },
+  ]);
+});
+
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));

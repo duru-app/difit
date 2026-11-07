@@ -324,7 +324,7 @@ describe('chooseCommitOfUncommittedView', () => {
     await expect(choose('discount.test.js', atLines(2))).resolves.toBeNull();
     await expect(choose('discount.test.js', atLines(1, 2))).resolves.toBeNull();
     await expect(choose('discount.js', atLines(2))).resolves.toBe(fix);
-    await expect(choose('discount.js', atLines(1))).resolves.toBeNull();
+    await expect(choose('discount.js', atLines(1))).resolves.toBe(fix);
     changed(repo, 'new.js', lines('new'));
     await expect(choose('new.js', atLines(1))).resolves.toBeNull();
     await expect(
@@ -334,7 +334,39 @@ describe('chooseCommitOfUncommittedView', () => {
         side: 'old',
         ...atLines(2),
       }),
-    ).resolves.toBeNull();
+    ).resolves.toBe(fix);
+  });
+
+  it('names the last commit for a deleted line unless the deletion is not committed', async () => {
+    const { repo, base, fix } = pinThenFix();
+    const tip = commit(repo, 'drop the closing brace', {
+      'discount.js': lines(
+        'export function discount(price) {',
+        '  return Math.floor(price * 0.1);',
+      ),
+    });
+    changed(repo, 'discount.js', lines('  return Math.floor(price * 0.1);'));
+    const view = { base, filePath: 'discount.js' };
+    const onOldSide = (at: ReturnType<typeof atLines>, newSide: 'working-tree' | 'index') =>
+      chooseCommitOfUncommittedView(repo, { ...view, newSide, side: 'old', ...at });
+
+    await expect(onOldSide(atLines(3), 'working-tree')).resolves.toBe(tip);
+    await expect(onOldSide(atLines(2), 'working-tree')).resolves.toBe(tip);
+    await expect(onOldSide(atLines(1), 'working-tree')).resolves.toBeNull();
+    await expect(onOldSide(atLines(1, 3), 'working-tree')).resolves.toBeNull();
+    await expect(
+      chooseCommitOfUncommittedView(repo, {
+        ...view,
+        newSide: 'working-tree',
+        side: 'new',
+        ...atLines(1),
+        extraRanges: [{ start: 3, end: 3, side: 'old' }],
+      }),
+    ).resolves.toBe(fix);
+    git(repo, 'add', 'discount.js');
+    changed(repo, 'discount.js', lines('export function discount(price) {'));
+    await expect(onOldSide(atLines(1), 'index')).resolves.toBeNull();
+    await expect(onOldSide(atLines(1), 'working-tree')).resolves.toBe(tip);
   });
 
   it('reads the lines of a view of staged changes from the index', async () => {
@@ -361,13 +393,16 @@ describe('chooseCommitOfUncommittedView', () => {
   });
 
   it('names the last commit that changed a whole file with nothing uncommitted', async () => {
-    const { repo, base, fix } = pinThenFix();
+    const { repo, base, pin, fix } = pinThenFix();
     changed(repo, 'discount.test.js', lines('changed'));
     const view = { base, newSide: 'working-tree' as const, side: 'new' as const };
 
     await expect(
       chooseCommitOfUncommittedView(repo, { ...view, filePath: 'discount.js' }),
     ).resolves.toBe(fix);
+    await expect(
+      chooseCommitOfUncommittedView(repo, { ...view, filePath: 'discount.js', commits: [pin] }),
+    ).resolves.toBe(pin);
     await expect(
       chooseCommitOfUncommittedView(repo, { ...view, filePath: 'discount.test.js' }),
     ).resolves.toBeNull();

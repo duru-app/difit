@@ -5,6 +5,7 @@ import { join } from 'path';
 import type { DiffCommentPosition, DiffSide } from '../types/diff.js';
 import { endOfLine, sideOfRange, startOfLine } from '../utils/commentPosition.js';
 
+import { lineChangesOfDiff } from './line-changes.js';
 import { literalPathspec, runGit } from './run-git.js';
 
 export interface FixupTargetQuery {
@@ -68,7 +69,7 @@ export async function chooseFixupTarget(
     if (!commits) return touched[0] || last;
     return [...commits].reverse().find((sha) => touched.includes(sha)) ?? last;
   }
-  const newRanges = onNewSide(startLine, endLine, extraRanges, side);
+  const newRanges = onSide('new', startLine, endLine, extraRanges, side);
   if (newRanges.length === 0) return last;
   const inRange = await revList(repoPath, `${base}..${target}`);
   const listed = commits ?? inRange;
@@ -96,10 +97,10 @@ interface UncommittedViewQuery {
   commits?: readonly string[];
 }
 
-// For a view whose new side is the working tree or the index, the commit of base..HEAD that last
-// changed the lines on the new side, as chooseFixupTarget picks it; null when one of them is not
-// committed, and where chooseFixupTarget would pick the view's last commit. For the whole file, the
-// last commit that changed it, or null when it has an uncommitted change.
+// For a view whose new side is the working tree or the index, the commit of base..HEAD that
+// chooseFixupTarget would pick on a view of base..HEAD; null when a line on the new side is not
+// committed, when a line on the old side is in HEAD but gone from the new side, and when there is no
+// commit. For the whole file, null when it has an uncommitted change.
 export async function chooseCommitOfUncommittedView(
   repoPath: string,
   {
@@ -115,21 +116,26 @@ export async function chooseCommitOfUncommittedView(
 ): Promise<string | null> {
   const inRange = await revList(repoPath, `${base}..HEAD`);
   const listed = commits ?? inRange;
+  const lastOf = (authors: readonly string[]) =>
+    [...listed].reverse().find((sha) => authors.includes(sha)) ?? listed.at(-1) ?? null;
+  const sinceHead = [...(newSide === 'index' ? ['--cached'] : []), 'HEAD'];
   if (startLine === undefined || endLine === undefined) {
     const unchanged = await runGit(repoPath, [
       'diff',
       '--quiet',
-      ...(newSide === 'index' ? ['--cached'] : []),
-      'HEAD',
+      ...sinceHead,
       '--',
       literalPathspec(filePath),
     ]);
     if (unchanged.code !== 0) return null;
-    const touched = await revList(repoPath, `${base}..HEAD`, filePath);
-    return [...listed].reverse().find((sha) => touched.includes(sha)) ?? null;
+    return lastOf(await revList(repoPath, `${base}..HEAD`, filePath));
   }
-  const newRanges = onNewSide(startLine, endLine, extraRanges, side);
-  if (newRanges.length === 0) return null;
+  const oldRanges = onSide('old', startLine, endLine, extraRanges, side);
+  if (await removesLineOfHead(repoPath, { base, sinceHead, filePath, ranges: oldRanges })) {
+    return null;
+  }
+  const newRanges = onSide('new', startLine, endLine, extraRanges, side);
+  if (newRanges.length === 0) return lastOf([]);
   const inHead = await runGit(repoPath, ['cat-file', '-e', `HEAD:${filePath}`]);
   if (inHead.code !== 0) return null;
   const contents =
@@ -145,19 +151,47 @@ export async function chooseCommitOfUncommittedView(
     contents,
   });
   if ([...authors].some((sha) => /^0+$/.test(sha))) return null;
-  return [...listed].reverse().find((sha) => authors.has(sha)) ?? null;
+  return lastOf([...authors]);
+}
+
+// Whether a line of base in `ranges` is still in HEAD and gone from the new side of the view.
+async function removesLineOfHead(
+  repoPath: string,
+  {
+    base,
+    sinceHead,
+    filePath,
+    ranges,
+  }: { base: string; sinceHead: string[]; filePath: string; ranges: readonly LineRange[] },
+): Promise<boolean> {
+  if (ranges.length === 0) return false;
+  const pathspec = ['--', literalPathspec(filePath)];
+  const [committed, uncommitted] = await Promise.all([
+    lineChangesOfDiff(repoPath, [base, 'HEAD', ...pathspec]),
+    lineChangesOfDiff(repoPath, [...sinceHead, ...pathspec]),
+  ]);
+  if (!committed || !uncommitted) throw new Error(`could not read the changes of ${filePath}`);
+  return ranges.some(({ start, end }) =>
+    Array.from({ length: end - start + 1 }, (_, offset) => start + offset).some((line) => {
+      const inHead = committed.toNewer(filePath, line);
+      if (inHead === null || !('line' in inHead)) return false;
+      const afterHead = uncommitted.toNewer(inHead.path, inHead.line);
+      return afterHead === null || !('line' in afterHead);
+    }),
+  );
 }
 
 type LineRange = { start: number; end: number; side?: DiffSide };
 
-function onNewSide(
+function onSide(
+  wanted: DiffSide,
   startLine: number,
   endLine: number,
   extraRanges: readonly LineRange[],
   side: DiffSide,
 ): LineRange[] {
   return [...extraRanges, { start: startLine, end: endLine, side }].filter(
-    (range) => (range.side ?? side) === 'new',
+    (range) => (range.side ?? side) === wanted,
   );
 }
 
