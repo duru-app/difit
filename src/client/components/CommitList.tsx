@@ -14,6 +14,7 @@ import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
 import { useCopyCommitHash } from '../hooks/useCopyCommitHash';
 import { useGuardedReword } from '../hooks/useGuardedReword';
+import { movedBranchesNotice } from '../utils/directEdit';
 
 import { CommentCount } from './CommentCount';
 import { CommentForm } from './CommentForm';
@@ -171,7 +172,12 @@ export function CommitList({
   const [isOpen, setIsOpen] = useState(true);
   const [rewording, setRewording] = useState<string | null>(null);
   const [commenting, setCommenting] = useState<string | null>(null);
-  const { reword: guardedReword, isSaving: isSavingMessage } = useGuardedReword(reword);
+  const {
+    reword: guardedReword,
+    isSaving: isSavingMessage,
+    movedBranches,
+    dismissMovedBranches,
+  } = useGuardedReword(reword);
   const [drag, setDrag] = useState<Drag | null>(null);
   const isDragging = drag !== null;
   const listRef = useRef<HTMLUListElement>(null);
@@ -424,6 +430,21 @@ export function CommitList({
           onKeep={hoverCard.keep}
           onLeave={hoverCard.leave}
         />
+      )}
+      {movedBranches.length > 0 && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-1 text-xs bg-github-bg-tertiary border-t border-github-border">
+          <p role="status" className="min-w-0 flex-1 text-github-text-secondary">
+            {movedBranchesNotice(movedBranches)}
+          </p>
+          <button
+            type="button"
+            aria-label="알림 닫기"
+            onClick={dismissMovedBranches}
+            className="shrink-0 p-0.5 text-github-text-muted hover:text-github-text-primary"
+          >
+            <X size={12} />
+          </button>
+        </div>
       )}
       {isListShown && (
         <ul

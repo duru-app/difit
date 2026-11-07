@@ -160,17 +160,28 @@ const REWORD_FAILURE_MESSAGES: Record<RewordRejection, string> = {
     '이력을 다시 쓰지 못해 저장 전 이력 그대로 두었습니다. 아래 출력을 확인해 주세요.',
 };
 
-const REWRITE_WARNING_MESSAGES: Record<RewriteWarning, string> = {
-  'default-branch': '기본 브랜치의 이력이 바뀝니다.',
+const REWRITE_WARNING_MESSAGES: Record<RewriteWarning, (branches: string) => string> = {
+  'default-branch': () => '기본 브랜치의 이력이 바뀝니다.',
+  'branch-elsewhere': (branches) =>
+    `다른 작업 폴더에서 쓰는 브랜치 ${branches}는 옮기지 않습니다. 옛 커밋에 남습니다.`,
 };
 
 export function rewordFailureMessage(
   reason: RewordRejection | undefined,
   error: string,
   warnings?: readonly RewriteWarning[],
+  warningBranches?: Partial<Record<RewriteWarning, string[]>>,
 ): string {
   if (warnings && warnings.length > 0) {
-    return warnings.map((warning) => REWRITE_WARNING_MESSAGES[warning]).join(' ');
+    return warnings
+      .map((warning) =>
+        REWRITE_WARNING_MESSAGES[warning]((warningBranches?.[warning] ?? []).join(', ')),
+      )
+      .join(' ');
   }
   return reason ? REWORD_FAILURE_MESSAGES[reason] : error;
+}
+
+export function movedBranchesNotice(branches: readonly string[]): string {
+  return `브랜치 ${branches.join(', ')}도 함께 옮겼습니다.`;
 }

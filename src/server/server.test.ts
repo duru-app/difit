@@ -3473,6 +3473,7 @@ describe('Server Integration Tests', () => {
         branch: 'feature',
         targetInHead: true,
         operationInProgress: false,
+        leftBranches: [],
       };
       let port: number;
 
@@ -3562,6 +3563,34 @@ describe('Server Integration Tests', () => {
         expect(rewriteHistory).not.toHaveBeenCalled();
 
         const confirmed = await reword({ acknowledged: ['default-branch'] });
+
+        expect(confirmed.status).toBe(200);
+        expect(rewriteHistory).toHaveBeenCalledTimes(1);
+      });
+
+      it('names the branches it leaves in another worktree, and goes ahead once acknowledged', async () => {
+        readRewriteState.mockResolvedValue({
+          ...FEATURE_BRANCH,
+          leftBranches: [{ name: 'work2', why: 'worktree' }],
+        });
+
+        const warned = await reword({});
+
+        expect(warned.status).toBe(409);
+        expect(await warned.json()).toMatchObject({
+          reason: 'needs-confirmation',
+          warnings: ['branch-elsewhere'],
+          warningBranches: { 'branch-elsewhere': ['work2'] },
+        });
+        expect(readRewriteState).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.any(String),
+          SECOND_SHA,
+          null,
+        );
+        expect(rewriteHistory).not.toHaveBeenCalled();
+
+        const confirmed = await reword({ acknowledged: ['branch-elsewhere'] });
 
         expect(confirmed.status).toBe(200);
         expect(rewriteHistory).toHaveBeenCalledTimes(1);

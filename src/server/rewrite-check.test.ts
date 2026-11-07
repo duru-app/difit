@@ -8,17 +8,19 @@ const FEATURE_BRANCH: RewriteState = {
   targetInHead: true,
   operationInProgress: false,
   rewordsMerge: false,
+  leftBranches: [],
 };
 
 describe('checkRewrite', () => {
   it('lets a feature branch through with nothing to say', () => {
-    expect(checkRewrite(FEATURE_BRANCH)).toEqual({ blocks: [], warnings: [] });
+    expect(checkRewrite(FEATURE_BRANCH)).toEqual({ blocks: [], warnings: [], warningBranches: {} });
   });
 
   it('warns on the default branch without blocking', () => {
     expect(checkRewrite({ ...FEATURE_BRANCH, branch: 'main' })).toEqual({
       blocks: [],
       warnings: ['default-branch'],
+      warningBranches: {},
     });
   });
 
@@ -52,6 +54,23 @@ describe('checkRewrite', () => {
     expect(checkRewrite({ ...FEATURE_BRANCH, branch: 'main', operationInProgress: true })).toEqual({
       blocks: ['operation-in-progress'],
       warnings: ['default-branch'],
+      warningBranches: {},
+    });
+  });
+
+  it('warns about the branches the rewrite leaves behind, by name', () => {
+    expect(
+      checkRewrite({
+        ...FEATURE_BRANCH,
+        leftBranches: [
+          { name: 'work2', why: 'worktree' },
+          { name: 'rebasing', why: 'operation' },
+        ],
+      }),
+    ).toEqual({
+      blocks: [],
+      warnings: ['branch-elsewhere'],
+      warningBranches: { 'branch-elsewhere': ['work2', 'rebasing'] },
     });
   });
 });

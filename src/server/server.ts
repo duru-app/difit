@@ -2148,8 +2148,13 @@ export async function startServer(options: ServerOptions): Promise<{
     if (message.length === 0) return refuseReword('empty-message');
 
     const defaultBranch = await parser.getDefaultBranch();
-    const { blocks, warnings } = checkRewrite({
-      ...(await readRewriteState(repositoryPath, selection.targetCommitish)),
+    const { blocks, warnings, warningBranches } = checkRewrite({
+      ...(await readRewriteState(
+        repositoryPath,
+        selection.targetCommitish,
+        commit.sha,
+        defaultBranch,
+      )),
       defaultBranch,
       rewordsMerge: commit.isMerge === true,
     });
@@ -2158,7 +2163,19 @@ export async function startServer(options: ServerOptions): Promise<{
     const unseen = warnings.filter((warning) => !request.acknowledged?.includes(warning));
     if (unseen.length > 0) {
       const refused = refuseReword('needs-confirmation');
-      return { ...refused, body: { ...refused.body, warnings: unseen } };
+      const named = Object.fromEntries(
+        Object.entries(warningBranches).filter(([warning]) =>
+          unseen.includes(warning as RewriteWarning),
+        ),
+      );
+      return {
+        ...refused,
+        body: {
+          ...refused.body,
+          warnings: unseen,
+          ...(Object.keys(named).length > 0 ? { warningBranches: named } : {}),
+        },
+      };
     }
 
     const result = await rewriteHistory(repositoryPath, {

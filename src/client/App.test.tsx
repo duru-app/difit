@@ -3545,6 +3545,58 @@ describe('App Component - Commits of the review', () => {
     expect(bodies.at(-1)).toMatchObject({ acknowledged: ['default-branch'] });
   });
 
+  it('names the branches a save leaves behind, and the ones it moved once confirmed', async () => {
+    directEditAvailable = true;
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/commit-message')) {
+        return { ok: true, json: async () => ({ message: 'first step' }) } as Response;
+      }
+      if (url.startsWith('/api/reword')) {
+        const body = JSON.parse(String(init?.body)) as { acknowledged?: string[] };
+        return body.acknowledged
+          ? ({
+              ok: true,
+              json: async () => ({
+                success: true,
+                rewritten: {},
+                version: 1,
+                threads: [],
+                decisions: [],
+                branches: { moved: ['work3'], left: [{ name: 'work2', why: 'worktree' }] },
+              }),
+            } as Response)
+          : ({
+              ok: false,
+              status: 409,
+              json: async () => ({
+                error: 'Reword refused: needs-confirmation',
+                reason: 'needs-confirmation',
+                warnings: ['branch-elsewhere'],
+                warningBranches: { 'branch-elsewhere': ['work2'] },
+              }),
+            } as Response);
+      }
+      return answer(input, init);
+    });
+
+    renderApp();
+    const row = (await waitFor(() => commitButton(/1111111/))).closest('li')!;
+    fireEvent.click(within(row).getByRole('button', { name: '메시지 고치기' }));
+    fireEvent.change(await within(row).findByRole('textbox', { name: '커밋 메시지' }), {
+      target: { value: 'first step, renamed' },
+    });
+    fireEvent.click(within(row).getByRole('button', { name: '저장' }));
+
+    expect(await within(row).findByRole('alert')).toHaveTextContent(
+      '다른 작업 폴더에서 쓰는 브랜치 work2는 옮기지 않습니다. 옛 커밋에 남습니다.',
+    );
+    fireEvent.click(within(row).getByRole('button', { name: '그래도 저장' }));
+
+    expect(await screen.findByText('브랜치 work3도 함께 옮겼습니다.')).toBeInTheDocument();
+  });
+
   it('offers no rewording where direct edits are off', async () => {
     renderApp();
 

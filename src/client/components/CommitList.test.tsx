@@ -293,7 +293,7 @@ describe('CommitList', () => {
 
     function renderRewordable({
       load = vi.fn(async () => MESSAGE),
-      save = vi.fn(async () => null),
+      save = vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
       inDrawer = false,
     }: {
       load?: (sha: string) => Promise<string | null>;
@@ -353,6 +353,27 @@ describe('CommitList', () => {
         message: 'change the behavior on purpose',
       });
       expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).not.toBeInTheDocument();
+    });
+
+    it('says which other branches the save moved, until dismissed', async () => {
+      renderRewordable({
+        save: vi.fn(async () => ({ saved: true as const, movedBranches: ['up', 'up2'] })),
+      });
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      fireEvent.click(editButtonOf(/2222222/));
+      const editor = await screen.findByRole('textbox', { name: '커밋 메시지' });
+
+      fireEvent.change(editor, { target: { value: 'better' } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '저장' }));
+      });
+
+      expect(screen.getByText('브랜치 up, up2도 함께 옮겼습니다.')).toHaveAttribute(
+        'role',
+        'status',
+      );
+      fireEvent.click(screen.getByRole('button', { name: '알림 닫기' }));
+      expect(screen.queryByText(/함께 옮겼습니다/)).not.toBeInTheDocument();
     });
 
     it('keeps the editor open with the reason when saving fails', async () => {
@@ -421,7 +442,7 @@ describe('CommitList', () => {
     it('saves again with the warnings acknowledged when told to go ahead', async () => {
       const save = vi.fn<RewordControls['save']>(async (request) =>
         request.acknowledged
-          ? null
+          ? { saved: true as const, movedBranches: [] }
           : { message: '기본 브랜치의 이력이 바뀝니다.', warnings: ['default-branch' as const] },
       );
       renderRewordable({ save });
@@ -524,7 +545,10 @@ describe('CommitList', () => {
           review={{ ...REVIEW, commits: [COMMITS[0]!, merge] }}
           shown={{ kind: 'all' }}
           onSelect={vi.fn()}
-          reword={{ load: vi.fn(async () => ''), save: vi.fn(async () => null) }}
+          reword={{
+            load: vi.fn(async () => ''),
+            save: vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
+          }}
         />,
       );
 

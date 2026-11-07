@@ -89,7 +89,11 @@ import { FileChips } from './components/FileChips';
 import { FilePathText } from './components/FilePathText';
 import { CommitCommentsSection } from './components/CommitCommentsSection';
 import { CommitList, ShownCommits } from './components/CommitList';
-import { type RewordControls, type RewordFailure } from './components/CommitMessageForm';
+import {
+  type RewordControls,
+  type RewordFailure,
+  type RewordSaved,
+} from './components/CommitMessageForm';
 import { FileList, type FileListHandle } from './components/FileList';
 import { FixupOnlySections } from './components/FixupOnlySections';
 import { GitHubIcon } from './components/GitHubIcon';
@@ -1871,7 +1875,7 @@ function App() {
     [getCommentApiUrl],
   );
   const submitReword = useCallback(
-    async (request: RewordRequest): Promise<RewordFailure | null> => {
+    async (request: RewordRequest): Promise<RewordFailure | RewordSaved> => {
       let response: Response;
       try {
         response = await fetch(getCommentApiUrl('/api/reword'), {
@@ -1892,13 +1896,14 @@ function App() {
             payload.reason,
             payload.error ?? `${response.status} ${response.statusText}`,
             payload.warnings,
+            payload.warningBranches,
           ),
           ...(payload.output ? { output: payload.output } : {}),
           ...(payload.warnings ? { warnings: payload.warnings } : {}),
         };
       }
       await fetchDiffDataRef.current?.();
-      return null;
+      return { saved: true, movedBranches: payload.branches?.moved ?? [] };
     },
     [getCommentApiUrl],
   );

@@ -652,6 +652,66 @@ it('warns before rewording on the default branch and rewrites once the warning i
   expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
 });
 
+it(
+  'moves the branches stacked on the reworded commit, and warns by name about one open elsewhere',
+  { timeout: 15_000 },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const repo = join(dir, 'repo');
+    git(dir, ['init', '-q', '-b', 'main', repo]);
+    const base = commit(repo, 'base', { 'a.js': '1\n' });
+    git(repo, ['checkout', '-q', '-b', 'feature']);
+    const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+    const tip = commit(repo, 'tip', { 'c.js': '1\n' });
+    git(repo, ['checkout', '-q', '-b', 'up']);
+    commit(repo, 'up work', { 'd.js': '1\n' });
+    git(repo, ['checkout', '-q', '-b', 'work2', tip]);
+    const elsewhere = commit(repo, 'work2 work', { 'e.js': '1\n' });
+    git(repo, ['checkout', '-q', 'feature']);
+    git(repo, ['worktree', 'add', '-q', join(dir, 'other'), 'work2']);
+
+    const { port, server } = await startServer({
+      selection: createDiffSelection(base, tip),
+      repoPath: repo,
+      preferredPort: 9279,
+    });
+    cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+    const api = (path: string) => `http://localhost:${port}${path}`;
+    await fetch(api('/api/diff'));
+    const reword = (extra: object) =>
+      fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commit: typo,
+          original: 'add typpo',
+          message: 'add typo',
+          ...extra,
+        }),
+      });
+
+    const warned = await reword({});
+    expect(warned.status).toBe(409);
+    expect(await warned.json()).toMatchObject({
+      reason: 'needs-confirmation',
+      warnings: ['branch-elsewhere'],
+      warningBranches: { 'branch-elsewhere': ['work2'] },
+    });
+    expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
+
+    const confirmed = await reword({ acknowledged: ['branch-elsewhere'] });
+    expect(confirmed.status).toBe(200);
+    expect(((await confirmed.json()) as { branches: unknown }).branches).toEqual({
+      moved: ['up'],
+      left: [{ name: 'work2', why: 'worktree' }],
+    });
+    expect(git(repo, ['rev-parse', 'up~1'])).toBe(git(repo, ['rev-parse', 'HEAD']));
+    expect(git(repo, ['log', '-1', '--format=%s', 'up~2'])).toBe('add typo');
+    expect(git(repo, ['rev-parse', 'work2'])).toBe(elsewhere);
+  },
+);
+
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));

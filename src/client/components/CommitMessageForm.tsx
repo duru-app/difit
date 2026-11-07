@@ -10,10 +10,16 @@ export interface RewordFailure extends DirectEditFailure {
   warnings?: RewriteWarning[];
 }
 
+export interface RewordSaved {
+  saved: true;
+  // Local branches other than HEAD's that the rewrite moved onto the new commits.
+  movedBranches: string[];
+}
+
 export interface RewordControls {
   // The message the review shows for the commit; null when it could not be read.
   load: (sha: string) => Promise<string | null>;
-  save: (request: RewordRequest) => Promise<RewordFailure | null>;
+  save: (request: RewordRequest) => Promise<RewordFailure | RewordSaved>;
 }
 
 interface CommitMessageFormProps {
@@ -63,7 +69,7 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
       ...(acknowledged ? { acknowledged } : {}),
     });
     setIsSaving(false);
-    if (result) {
+    if (!('saved' in result)) {
       setFailure(result);
       return;
     }
