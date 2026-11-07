@@ -12,6 +12,7 @@ import {
 
 import { CommentForm } from './CommentForm';
 import { CommentThreadCard } from './CommentThreadCard';
+import { CommitMessageBody, type LoadCommitMessage } from './CommitMessageBody';
 import { FixupOverlayBlock } from './FixupOverlayCard';
 import type { AppearanceSettings } from './SettingsModal';
 
@@ -26,6 +27,8 @@ interface CommitCommentsSectionProps {
   onReplyToThread: (threadId: string, body: string, fields?: ReviewerReplyFields) => Promise<void>;
   onRemoveMessage: (threadId: string, messageId: string) => void;
   onUpdateMessage: (threadId: string, messageId: string, newBody: string) => void;
+  loadMessage?: LoadCommitMessage | undefined;
+  amendedMessages?: ReadonlyMap<string, string> | undefined;
 }
 
 export function CommitCommentsSection({
@@ -39,9 +42,12 @@ export function CommitCommentsSection({
   onReplyToThread,
   onRemoveMessage,
   onUpdateMessage,
+  loadMessage,
+  amendedMessages,
 }: CommitCommentsSectionProps) {
   const [addingTo, setAddingTo] = useState<string | null>(null);
-  const addTo = onAddComment && commits.length === 1 ? commits[0] : undefined;
+  const only = commits.length === 1 ? commits[0] : undefined;
+  const addTo = onAddComment ? only : undefined;
   const listed = commits.map((commit) => ({
     commit: commit.sha,
     label: commitLocationLabel({
@@ -49,6 +55,7 @@ export function CommitCommentsSection({
       fixupCommit: { shortSha: commit.shortSha, subject: commit.subject },
     }),
     addable: commit === addTo,
+    showsBody: loadMessage !== undefined && commit === only,
     threads: threads.filter((thread) => isSameCommit(thread.commit, commit.sha)),
   }));
   const offList = new Map<string, CommitThreadView[]>();
@@ -60,10 +67,11 @@ export function CommitCommentsSection({
     commit,
     label: commitLocationLabel({ commit, fixupCommit: own[0]?.fixupCommit }),
     addable: false,
+    showsBody: false,
     threads: own,
   }));
   const groups = [...listed, ...unlisted].filter(
-    ({ addable, threads: own }) => own.length > 0 || addable,
+    ({ addable, showsBody, threads: own }) => own.length > 0 || addable || showsBody,
   );
   if (groups.length === 0) return null;
 
@@ -73,7 +81,7 @@ export function CommitCommentsSection({
         aria-label="커밋 지적"
         className="mb-6 space-y-3 rounded-md border border-github-border bg-github-bg-secondary px-4 py-2"
       >
-        {groups.map(({ commit, label, addable, threads: own }) => (
+        {groups.map(({ commit, label, addable, showsBody, threads: own }) => (
           <div key={commit} className="space-y-2">
             <div className="flex items-center justify-between gap-3">
               <span className="min-w-0 truncate font-mono text-sm text-github-text-primary">
@@ -92,6 +100,14 @@ export function CommitCommentsSection({
                 </button>
               )}
             </div>
+            {showsBody && loadMessage && (
+              <CommitMessageBody
+                sha={commit}
+                load={loadMessage}
+                amendedMessage={amendedMessages?.get(commit)}
+                className="max-h-[40vh] overflow-y-auto"
+              />
+            )}
             {own.map((thread) => (
               <div key={thread.id} className="space-y-1">
                 <FixupOverlayBlock thread={thread} filePath={undefined} syntaxTheme={syntaxTheme} />

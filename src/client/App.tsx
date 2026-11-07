@@ -110,6 +110,7 @@ import { DiffLineLinkProvider, type DiffLineLinks } from './contexts/DiffLineLin
 import { PickedThreadProvider } from './contexts/PickedThreadContext';
 import { WordHighlightProvider } from './contexts/WordHighlightContext';
 import { useAppearanceSettings } from './hooks/useAppearanceSettings';
+import { useCanHover } from './hooks/useCanHover';
 import { useDiffComments } from './hooks/useDiffComments';
 import { rangesAroundNewLines, useExpandedLines, type MergedChunk } from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
@@ -538,6 +539,7 @@ function App() {
 
   const { settings, updateSettings } = useAppearanceSettings();
   const { isMobile, isDesktop } = useViewport();
+  const canHover = useCanHover();
   const isFileTreeShown = isMobile ? isFileDrawerOpen : isFileTreeOpen;
   const setFileTreeShown = isMobile ? setIsFileDrawerOpen : setIsFileTreeOpen;
   useHotkeys('escape', () => setIsFileDrawerOpen(false), {
@@ -550,7 +552,8 @@ function App() {
     scopes: 'navigation',
     enabled: isMobile && isCommentsDrawerOpen,
   });
-  const hasCommitList = review !== undefined && review.commits.length > 1;
+  const commitCount = review?.commits.length ?? 0;
+  const hasCommitList = review !== undefined && commitCount > 0;
   const showsCommitList = !isMobile && hasCommitList;
   const reservedPanelWidth =
     (isFileTreeOpen ? SIDEBAR_MIN_WIDTH + RESIZE_HANDLE_WIDTH : 0) +
@@ -1317,10 +1320,11 @@ function App() {
       onRefresh: () => {
         reload();
       },
-      ...(showsCommitList && {
-        onPreviousCommit: () => selectView({ kind: 'previous' }),
-        onNextCommit: () => selectView({ kind: 'next' }),
-      }),
+      ...(showsCommitList &&
+        commitCount > 1 && {
+          onPreviousCommit: () => selectView({ kind: 'previous' }),
+          onNextCommit: () => selectView({ kind: 'next' }),
+        }),
       onJump: (to) => {
         const line = linePlaceAt(to, navigableFiles);
         if (line) jumpWithinReview({ kind: 'line', ...line, cursor: true });
@@ -3116,6 +3120,7 @@ function App() {
                   onAddCommitComment={handleAddCommitComment}
                   height={commitListHeight}
                   onResize={handleCommitListResize}
+                  loadMessage={loadCommitMessage}
                 />
               )}
               {!isMobile && (
@@ -3179,6 +3184,8 @@ function App() {
                     onReplyToThread={handleReplyToThread}
                     onRemoveMessage={removeMessage}
                     onUpdateMessage={updateMessage}
+                    loadMessage={isMobile || !canHover ? loadCommitMessage : undefined}
+                    amendedMessages={amendedMessages}
                   />
                 )}
                 {diffData.files.map((file, fileIndex) => {

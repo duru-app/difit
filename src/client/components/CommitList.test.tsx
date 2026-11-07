@@ -73,6 +73,28 @@ const previewed = () =>
     .map((item) => item.textContent?.slice(0, 7));
 
 describe('CommitList', () => {
+  describe('with one commit', () => {
+    const ONLY = COMMITS.slice(0, 1);
+
+    it('marks its row as shown, offers no 전체 and selects nothing on a click or long press', () => {
+      vi.useFakeTimers();
+      try {
+        const { onSelect } = renderList({ kind: 'all' }, { commits: ONLY });
+        expect(painted()).toEqual([expect.stringContaining(ONLY[0]!.subject)]);
+        expect(within(list()).queryByRole('button', { name: '전체' })).not.toBeInTheDocument();
+        const only = row(new RegExp(ONLY[0]!.subject));
+        fireEvent.click(only);
+        fireEvent.touchStart(only, { touches: [{ clientX: 0, clientY: 0 }] });
+        act(() => {
+          vi.advanceTimersByTime(2000);
+        });
+        expect(onSelect).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('lists the whole review first and then the commits oldest first', () => {
     renderList();
 
@@ -240,20 +262,20 @@ describe('CommitList', () => {
 
       const amended = row(/2222222/);
       expect(within(amended).getByText('change the behavior').tagName).not.toBe('DEL');
-      expect(within(amended).getByText('본문만 바뀜')).toBeInTheDocument();
+      expect(within(amended).getByText('본문 변경됨')).toBeInTheDocument();
     });
 
     it('reads the subject as git does, joining the lines of the first paragraph', () => {
       renderAmended('change the  \nbehavior\n\nwith a new body');
 
-      expect(within(row(/2222222/)).getByText('본문만 바뀜')).toBeInTheDocument();
+      expect(within(row(/2222222/)).getByText('본문 변경됨')).toBeInTheDocument();
     });
 
     it('counts leading spaces as part of the subject, as git does', () => {
       renderAmended('  change the behavior');
 
       expect(row(/2222222/).querySelector('del')).toHaveTextContent('change the behavior');
-      expect(within(row(/2222222/)).queryByText('본문만 바뀜')).not.toBeInTheDocument();
+      expect(within(row(/2222222/)).queryByText('본문 변경됨')).not.toBeInTheDocument();
     });
 
     it('shows the subject it will get in the phone drawer too', () => {
@@ -646,7 +668,286 @@ describe('CommitList', () => {
     it('keeps it on screen in the phone drawer', () => {
       renderCommentable({ kind: 'all' }, { inDrawer: true });
 
-      expect(commentButtonOf('2222222').className).not.toContain('opacity-0');
+      expect(commentButtonOf('2222222').parentElement!.className).not.toContain('opacity-0');
+    });
+  });
+
+  describe('message card', () => {
+    const MESSAGE = 'change the behavior\n\nThe old one dropped data.\nKeep it.';
+
+    function renderWithCard({
+      inDrawer = false,
+      amendedMessages,
+      loadMessage = vi.fn(async (sha: string) => (sha === COMMITS[1]!.sha ? MESSAGE : 'tidy up')),
+    }: {
+      inDrawer?: boolean;
+      amendedMessages?: ReadonlyMap<string, string>;
+      loadMessage?: (sha: string) => Promise<string | null>;
+    } = {}) {
+      const onSelect = vi.fn();
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={onSelect}
+          inDrawer={inDrawer}
+          amendedMessages={amendedMessages}
+          loadMessage={loadMessage}
+        />,
+      );
+      return { onSelect, loadMessage };
+    }
+
+    const card = () => screen.queryByRole('tooltip');
+    const rest = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('shows the hash, the subject and the whole body once the pointer rests on a row', async () => {
+      const { onSelect } = renderWithCard();
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(349);
+      expect(card()).toBeNull();
+      await rest(1);
+
+      expect(card()).toHaveTextContent('2222222');
+      expect(card()).toHaveTextContent('change the behavior');
+      expect(card()!.textContent).toContain('The old one dropped data.\nKeep it.');
+      expect(row(/2222222/)).toHaveAttribute('aria-describedby', card()!.id);
+      expect(row(/2222222/)).not.toHaveAttribute('title');
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('switches to the next row at once while it is open', async () => {
+      renderWithCard();
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      fireEvent.mouseLeave(row(/2222222/));
+      fireEvent.mouseEnter(row(/3333333/));
+      await rest(0);
+
+      expect(card()).toHaveTextContent('3333333');
+      expect(card()).toHaveTextContent('본문 없음');
+    });
+
+    it('stays while the pointer crosses the row buttons on its way to the card', async () => {
+      renderWithCard();
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      const copy = within(row(/2222222/).parentElement!).getByRole('button', { name: /복사/ });
+      fireEvent.mouseOut(row(/2222222/), { relatedTarget: copy });
+      await rest(1000);
+
+      expect(card()).toHaveTextContent('2222222');
+    });
+
+    it('stays while the pointer is on it and goes once the pointer leaves both', async () => {
+      renderWithCard();
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      fireEvent.mouseLeave(row(/2222222/));
+      fireEvent.mouseEnter(card()!);
+      await rest(1000);
+      expect(card()).toHaveTextContent('2222222');
+
+      fireEvent.mouseLeave(card()!);
+      await rest(199);
+      expect(card()).not.toBeNull();
+      await rest(1);
+      expect(card()).toBeNull();
+    });
+
+    it('shows for a row reached by keyboard and goes on Escape or when focus moves on', async () => {
+      renderWithCard();
+
+      fireEvent.focus(row(/2222222/));
+      await rest(350);
+      expect(card()).toHaveTextContent('The old one dropped data.');
+
+      fireEvent.keyDown(row(/2222222/), { key: 'Escape' });
+      expect(card()).toBeNull();
+
+      fireEvent.focus(row(/3333333/));
+      await rest(350);
+      expect(card()).toHaveTextContent('3333333');
+      fireEvent.blur(row(/3333333/));
+      await rest(200);
+      expect(card()).toBeNull();
+    });
+
+    it('never shows when the pointer only passes over a row', async () => {
+      const { loadMessage } = renderWithCard();
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(100);
+      fireEvent.mouseLeave(row(/2222222/));
+      await rest(1000);
+
+      expect(card()).toBeNull();
+      expect(loadMessage).not.toHaveBeenCalled();
+    });
+
+    it('reads each message once', async () => {
+      const { loadMessage } = renderWithCard();
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+      fireEvent.mouseLeave(row(/2222222/));
+      await rest(200);
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      expect(loadMessage).toHaveBeenCalledExactlyOnceWith(COMMITS[1]!.sha);
+    });
+
+    it('says so when the message cannot be read', async () => {
+      renderWithCard({ loadMessage: vi.fn(async () => null) });
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      expect(card()).toHaveTextContent('메시지를 읽지 못했습니다.');
+    });
+
+    it('shows the message an amend! will leave without reading the commit', async () => {
+      const { loadMessage } = renderWithCard({
+        amendedMessages: new Map([[COMMITS[1]!.sha, 'change the behavior on purpose\n\nWhy.']]),
+      });
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(350);
+
+      expect(card()).toHaveTextContent('바뀔 메시지');
+      expect(card()!.textContent).toContain('change the behavior on purpose\n\nWhy.');
+      expect(loadMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps the subject as a tooltip and shows no card in the phone drawer', async () => {
+      const { loadMessage } = renderWithCard({ inDrawer: true });
+
+      fireEvent.mouseEnter(row(/2222222/));
+      await rest(1000);
+
+      expect(card()).toBeNull();
+      expect(loadMessage).not.toHaveBeenCalled();
+      expect(row(/2222222/)).toHaveAttribute('title', 'change the behavior');
+    });
+  });
+
+  describe('row buttons', () => {
+    const actionsOf = (name: RegExp) =>
+      within(row(name).closest('li')!).getByRole('button', { name: COPY_NAME }).parentElement!;
+    const isHidden = (element: HTMLElement) => element.className.split(' ').includes('opacity-0');
+
+    function renderWithButtons({ inDrawer = false } = {}) {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          inDrawer={inDrawer}
+          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          onAddCommitComment={vi.fn(async () => {})}
+        />,
+      );
+    }
+
+    it('lays them over the end of the subject, hidden until the row is hovered or focused', () => {
+      renderWithButtons();
+
+      const actions = actionsOf(/2222222/);
+      expect(actions.className).toContain('absolute');
+      expect(isHidden(actions)).toBe(true);
+      expect(actions.className).toContain('group-hover:opacity-100');
+      expect(actions.className).toContain('group-has-[:focus-visible]:opacity-100');
+      expect(within(actions).getAllByRole('button')).toHaveLength(3);
+    });
+
+    it('turns the open count into the comment button, beside the other buttons rather than under them', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      expect(comment).toHaveTextContent('2');
+      expect(comment).toHaveAttribute('title', '열린 지적 2개 · 이 커밋 전체에 지적 달기');
+      expect(within(row(/2222222/)).queryByText('2')).toBeNull();
+      const actions = actionsOf(/2222222/);
+      expect(actions.contains(comment)).toBe(false);
+      expect(isHidden(actions)).toBe(true);
+      expect(isHidden(comment.parentElement!)).toBe(false);
+      expect(actions.className).toContain('right-full');
+      expect(within(actions).getAllByRole('button')).toHaveLength(2);
+
+      fireEvent.click(comment);
+      expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
+    });
+
+    it('keeps them in line and on screen in the phone drawer', () => {
+      renderWithButtons({ inDrawer: true });
+
+      expect(actionsOf(/2222222/).className).toBe('contents');
+    });
+
+    it('keeps them on screen while the message editor or the comment form of that row is open', async () => {
+      renderWithButtons();
+
+      fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: '메시지 고치기' }));
+      await screen.findByRole('textbox');
+      expect(isHidden(actionsOf(/2222222/))).toBe(false);
+      expect(isHidden(actionsOf(/3333333/))).toBe(true);
+
+      fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: '메시지 고치기' }));
+      expect(isHidden(actionsOf(/2222222/))).toBe(true);
+
+      fireEvent.click(
+        within(actionsOf(/3333333/)).getByRole('button', { name: '커밋에 지적 달기' }),
+      );
+      expect(isHidden(actionsOf(/3333333/))).toBe(false);
+    });
+
+    it('keeps them on screen while the hash reads as copied', async () => {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn().mockResolvedValue(undefined) },
+        configurable: true,
+      });
+      vi.useFakeTimers();
+      try {
+        renderWithButtons();
+
+        await act(async () => {
+          fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: COPY_NAME }));
+        });
+        expect(isHidden(actionsOf(/2222222/))).toBe(false);
+
+        act(() => vi.advanceTimersByTime(2000));
+        expect(isHidden(actionsOf(/2222222/))).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
