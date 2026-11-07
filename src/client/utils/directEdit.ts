@@ -155,6 +155,7 @@ const REWORD_FAILURE_MESSAGES: Record<RewordRejection, string> = {
   conflict:
     '다시 쌓다가 충돌해 저장 전 이력으로 되돌렸습니다. 머지 때 손으로 푼 충돌이나 머지 안에서 고친 내용은 다시 만들 수 없습니다. 아래 출력을 확인해 주세요.',
   'head-moved': '저장하는 동안 HEAD가 바뀌어 이력을 바꾸지 않았습니다. 다시 저장해 주세요.',
+  'branch-moved': '저장하는 동안 브랜치가 바뀌어 이력을 바꾸지 않았습니다. 다시 저장해 주세요.',
   'commit-failed':
     '이력을 다시 쓰지 못해 저장 전 이력 그대로 두었습니다. 아래 출력을 확인해 주세요.',
 };
