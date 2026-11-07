@@ -654,6 +654,7 @@ describe('CommitList', () => {
     const actionsOf = (name: RegExp) =>
       within(row(name).closest('li')!).getByRole('button', { name: COPY_NAME }).parentElement!;
     const isHidden = (element: HTMLElement) => element.className.split(' ').includes('opacity-0');
+    const TOUCH_HIDDEN = '[@media(hover:none)]:hidden';
 
     function renderWithButtons({ inDrawer = false } = {}) {
       render(
@@ -696,7 +697,6 @@ describe('CommitList', () => {
       });
       expect(comment).toHaveTextContent('2');
       expect(comment).toHaveAttribute('title', '열린 지적 2개 · 이 커밋 전체에 지적 달기');
-      expect(within(row(/2222222/)).queryByText('2')).toBeNull();
       const actions = actionsOf(/2222222/);
       expect(actions.contains(comment)).toBe(false);
       expect(isHidden(actions)).toBe(true);
@@ -708,10 +708,60 @@ describe('CommitList', () => {
       expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
     });
 
-    it('keeps them in line and on screen in the phone drawer', () => {
+    it('keeps them in line in the phone drawer of a device with hover', () => {
       renderWithButtons({ inDrawer: true });
 
-      expect(actionsOf(/2222222/).className).toBe('contents');
+      expect(actionsOf(/2222222/).className.split(' ')).toContain('contents');
+    });
+
+    it.each([
+      ['in the side list', false],
+      ['in the drawer', true],
+    ])('takes them out of the row on touch devices %s', (_where, inDrawer) => {
+      renderWithButtons({ inDrawer });
+
+      expect(actionsOf(/2222222/).className.split(' ')).toContain(TOUCH_HIDDEN);
+    });
+
+    it('takes the open count button out of the row on touch devices too', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      expect(comment.parentElement!.className.split(' ')).toContain(TOUCH_HIDDEN);
+    });
+
+    it('shows the open count inside the row on touch devices only, where tapping it opens the commit', () => {
+      const onSelect = vi.fn();
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={onSelect}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const count = within(row(/2222222/)).getByTitle('열린 지적 2개');
+      expect(count).toHaveTextContent('2');
+      expect(count.className).toContain('fixup-review:text-github-text-secondary');
+      expect(count.parentElement!.className.split(' ')).toEqual(
+        expect.arrayContaining(['hidden', '[@media(hover:none)]:contents']),
+      );
+
+      fireEvent.click(count);
+      expect(onSelect).toHaveBeenCalledWith({ kind: 'click', sha: COMMITS[1]!.sha });
+      expect(screen.queryByPlaceholderText(/comment/i)).toBeNull();
     });
 
     it('keeps them on screen while the message editor or the comment form of that row is open', async () => {

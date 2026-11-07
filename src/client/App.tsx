@@ -3172,6 +3172,7 @@ function App() {
                     commits={viewCommits}
                     threads={drawnCommitThreads}
                     onAddComment={takesComments ? handleAddCommitComment : undefined}
+                    reword={reword}
                     fixupOverlay={fixupOverlay}
                     showAuthorBadges={showAuthorBadges}
                     syntaxTheme={settings.syntaxTheme}

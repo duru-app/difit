@@ -3371,23 +3371,22 @@ describe('App Component - Commits of the review', () => {
         <App />
       </HotkeysProvider>
     );
-    const countOn = (name: RegExp) =>
-      within(commitButton(name).closest('li')!).queryByTitle(/^열린 지적/);
+    const countOn = (name: RegExp) => within(commitButton(name)).queryByTitle(/^열린 지적/);
 
     const { rerender } = renderApp();
-    await waitFor(() => expect(countOn(/1111111/)).toHaveTextContent('1'));
-    expect(countOn(/abc1234/)).toHaveTextContent('1');
+    await waitFor(() => expect(countOn(/1111111/)).toHaveAttribute('title', '열린 지적 1개'));
+    expect(countOn(/abc1234/)).toHaveAttribute('title', '열린 지적 1개');
 
     mockComments = [...mockComments, onFirstStep('c3')];
     rerender(app());
-    expect(countOn(/1111111/)).toHaveTextContent('2');
+    expect(countOn(/1111111/)).toHaveAttribute('title', '열린 지적 2개');
 
     mockDecisions = [
       { threadId: 'c1', kind: 'resolved', fixupSha: '', at: '2026-01-01T00:00:00Z' },
     ];
     rerender(app());
     expect(countOn(/abc1234/)).not.toBeInTheDocument();
-    expect(countOn(/1111111/)).toHaveTextContent('2');
+    expect(countOn(/1111111/)).toHaveAttribute('title', '열린 지적 2개');
   });
 
   it('shows on a commit the subject an amend! will give it until the amend! is rejected', async () => {

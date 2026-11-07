@@ -2,7 +2,6 @@ import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil, X } 
 import {
   Fragment,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -12,7 +11,8 @@ import {
 import type { ReviewCommit, ReviewScope, ReviewView, ReviewViewAction } from '../../types/diff';
 import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
-import { copyTextToClipboard } from '../utils/clipboard';
+import { useCopyCommitHash } from '../hooks/useCopyCommitHash';
+import { useGuardedReword } from '../hooks/useGuardedReword';
 
 import { CommentCount } from './CommentCount';
 import { CommentForm } from './CommentForm';
@@ -48,8 +48,6 @@ interface Press {
 }
 
 const LONG_PRESS_MS = 500;
-const COPIED_MS = 2000;
-const COPIED_SHA_LENGTH = 10;
 const TAP_SLOP_PX = 10;
 const DEFAULT_MAX_HEIGHT = '40%';
 const MIN_HEIGHT_PX = 80;
@@ -63,8 +61,7 @@ const CURRENT_COMMIT_CLASS = `${CURRENT_CLASS} shadow-[inset_2px_0_0_var(--color
 const PREVIEW_CLASS = 'outline-1 outline-dashed -outline-offset-1 outline-github-text-secondary';
 const ROW_ACTIONS_HIDDEN_CLASS =
   'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:pointer-events-auto';
-const ROW_ACTIONS_WITHOUT_HOVER_CLASS =
-  '[@media(hover:none)]:static [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:bg-transparent';
+const ROW_ACTIONS_OFF_ON_TOUCH_CLASS = '[@media(hover:none)]:hidden';
 const MERGED_CLASS = 'flex items-center gap-2 px-4 text-sm text-github-text-muted';
 const CURRENT_MERGED_CLASS =
   'bg-github-bg-tertiary text-github-text-secondary shadow-[inset_2px_0_0_var(--color-github-accent)]';
@@ -75,6 +72,8 @@ const commitUnder = (x: number, y: number) =>
 
 const AMEND_BADGE_CLASS =
   'inline-flex h-4 shrink-0 items-center rounded-full border border-github-accent px-1.5 text-[10px] font-medium text-github-accent';
+
+const AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS = '[@media(hover:none)]:overflow-hidden';
 
 // Like git's %s: the first paragraph with its lines joined by spaces.
 const subjectOf = (message: string) =>
@@ -87,14 +86,16 @@ function AmendedSubject({ subject, message }: { subject: string; message: string
   const amendedSubject = subjectOf(message);
   if (amendedSubject === subject) {
     return (
-      <span className="min-w-0 flex items-center gap-1.5">
+      <span
+        className={`min-w-0 flex items-center gap-1.5 ${AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS}`}
+      >
         <span className="min-w-0 truncate">{subject}</span>
         <span className={AMEND_BADGE_CLASS}>본문만 바뀜</span>
       </span>
     );
   }
   return (
-    <span className="min-w-0 flex flex-col">
+    <span className={`min-w-0 flex flex-col ${AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS}`}>
       <del className="min-w-0 truncate text-github-text-muted">{subject}</del>
       <span className="min-w-0 flex items-center gap-1.5">
         <span className={AMEND_BADGE_CLASS}>바뀔 메시지</span>
@@ -157,43 +158,15 @@ export function CommitList({
   const [isOpen, setIsOpen] = useState(true);
   const [rewording, setRewording] = useState<string | null>(null);
   const [commenting, setCommenting] = useState<string | null>(null);
-  const [isSavingMessage, setIsSavingMessage] = useState(false);
-  const guardedReword = useMemo<RewordControls | undefined>(
-    () =>
-      reword && {
-        load: reword.load,
-        save: async (request) => {
-          setIsSavingMessage(true);
-          try {
-            return await reword.save(request);
-          } finally {
-            setIsSavingMessage(false);
-          }
-        },
-      },
-    [reword],
-  );
+  const { reword: guardedReword, isSaving: isSavingMessage } = useGuardedReword(reword);
   const [drag, setDrag] = useState<Drag | null>(null);
   const isDragging = drag !== null;
   const listRef = useRef<HTMLUListElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const pressRef = useRef<Press | null>(null);
-  const [copied, setCopied] = useState<{ sha: string } | null>(null);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(null), COPIED_MS);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  const copyHash = async (sha: string) => {
-    try {
-      await copyTextToClipboard(sha.slice(0, COPIED_SHA_LENGTH));
-      setCopied({ sha });
-    } catch (error) {
-      console.error('Failed to copy commit hash:', error);
-    }
-  };
+  const { copiedSha, copyHash } = useCopyCommitHash();
   const copyButtonOf = (sha: string, placement = '') => {
-    const isCopied = copied?.sha === sha;
+    const isCopied = copiedSha === sha;
     const label = isCopied ? '복사됨' : '해시 복사';
     return (
       <button
@@ -448,7 +421,7 @@ export function CommitList({
             const isPreviewed = index >= previewStart && index <= previewEnd;
             const amendedMessage = amendedMessages?.get(commit.sha);
             const isActionPinned =
-              rewording === commit.sha || commenting === commit.sha || copied?.sha === commit.sha;
+              rewording === commit.sha || commenting === commit.sha || copiedSha === commit.sha;
             const openCount = openCounts?.get(commit.sha) ?? 0;
             const hoverButtons = (
               <>
@@ -489,23 +462,27 @@ export function CommitList({
                 {openCount > 0 && openCount}
               </button>
             );
-            const hoverClass = `bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS} ${ROW_ACTIONS_WITHOUT_HOVER_CLASS}`;
+            const hoverClass = `bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS}`;
             // With an open count the comment button stays in line, so the subject stops before
             // it and the other buttons open over the subject to its left.
             const rowActions = inDrawer ? (
-              <div className="contents">
+              <div className={`contents ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}>
                 {hoverButtons}
                 {commentButton}
               </div>
             ) : openCount > 0 && commentButton ? (
-              <div className="relative flex shrink-0 items-stretch">
+              <div
+                className={`relative flex shrink-0 items-stretch ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}
+              >
                 <div className={`absolute inset-y-0 right-full flex items-stretch ${hoverClass}`}>
                   {hoverButtons}
                 </div>
                 {commentButton}
               </div>
             ) : (
-              <div className={`absolute inset-y-0 right-0 flex items-stretch ${hoverClass}`}>
+              <div
+                className={`absolute inset-y-0 right-0 flex items-stretch ${hoverClass} ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}
+              >
                 {hoverButtons}
                 {commentButton}
               </div>
@@ -527,7 +504,7 @@ export function CommitList({
                         {openCountOf(entry.commit.sha)}
                         {copyButtonOf(
                           entry.commit.sha,
-                          `ml-auto -mr-4 ${graphBleed} focus:opacity-100 ${inDrawer || copied?.sha === entry.commit.sha ? '' : 'opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'}`,
+                          `ml-auto -mr-4 ${graphBleed} focus:opacity-100 ${inDrawer || copiedSha === entry.commit.sha ? '' : 'opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'}`,
                         )}
                       </>
                     ) : (
@@ -583,7 +560,13 @@ export function CommitList({
                       ) : (
                         <AmendedSubject subject={commit.subject} message={amendedMessage} />
                       )}
-                      {!onAddCommitComment && openCountOf(commit.sha)}
+                      <span
+                        className={
+                          onAddCommitComment ? 'hidden [@media(hover:none)]:contents' : 'contents'
+                        }
+                      >
+                        {openCountOf(commit.sha)}
+                      </span>
                     </button>
                     {rowActions}
                   </div>
