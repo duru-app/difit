@@ -120,7 +120,7 @@ Once a thread reaches you either way, its card shows `응답 중` until you repl
 
 The user can also edit code in the viewer. difit then commits a `fixup! <target SHA>` commit with a `Review-Thread` trailer on top of HEAD and records it as approved. Its author is `reviewer-edit`.
 
-The user can also reword a commit from the commit list. difit then rewrites the history on the spot: no `amend!` commit appears, and that commit and the ones after it get new SHAs. Unfolded `fixup!` and `amend!` commits stay as commits with subjects naming the new SHAs, and difit moves each thread's `fixupTarget` and `view` and the decision records too. It needs nothing from you, but take SHAs from `comment get` and `wait` rather than ones you noted earlier. An `amend!` that was waiting on the reworded commit gets the saved message as its body, so folding it leaves that message.
+The user can also reword a commit from the commit list. difit then rewrites the history on the spot: no `amend!` commit appears, and that commit and the ones after it get new SHAs. Unfolded `fixup!` and `amend!` commits stay as commits with subjects naming the new SHAs, and difit moves each thread's `fixupTarget` and `view` and the decision records too. It needs nothing from you, but take SHAs from `comment get` and `wait` rather than ones you noted earlier. Other local branches holding that commit move to the new commits too, except a branch checked out in another worktree or under a rebase or bisect there, which stays on the old commits. An `amend!` that was waiting on the reworded commit gets the saved message as its body, so folding it leaves that message.
 
 ### Naming the thread a reply answers
 

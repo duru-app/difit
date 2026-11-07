@@ -7,7 +7,8 @@ The reviewer changes a commit's message from the commit list. difit rewrites the
 - `POST /api/reword`, which rewrites the history and returns the old-to-new map
 - `GET /api/commit-message`, which fills the edit form
 - The warning on the default branch, passed with `acknowledged`
-- Refusals: a git operation in progress, HEAD moved, a merge that conflicts when rebuilt
+- Other local branches holding the reworded commit move with HEAD; one open in another worktree stays and is named in the warning `branch-elsewhere`
+- Refusals: a git operation in progress, HEAD or a moving branch moved, a merge that conflicts when rebuilt, in HEAD's history or in a moving branch
 - `/api/diff`, `/api/fixups`, `/api/comments-json` and `difit comment get` on the new SHAs
 
 ## How to get to it (user POV)
@@ -52,6 +53,19 @@ On the default branch, the same POST without `acknowledged` answers 409 `{"reaso
 A merge kept in the range: before `start`, make a side branch and merge it with `--no-ff` on top of the commit to reword. After the POST, `git log --merges` still lists the merge and `git rev-parse HEAD^{tree}` is unchanged. Resolve a conflict by hand in that merge instead and the POST answers 409 `{"reason":"conflict"}` with the git output, and `HEAD` and the working tree stay as they were.
 
 A stopped rebase: `git rebase -i` with an `edit` before the POST answers 409 `{"reason":"operation-in-progress"}`.
+
+Stacked branches: before `start`, stack `work2` on the reviewed branch and `work3` on `work2`, and open `work3` in another worktree:
+
+```bash
+( . "$S/env.sh"; cd "$REPO"
+  git checkout -q -b work2 && git commit -q --allow-empty -m 'stacked work'
+  git checkout -q -b work3 && git commit -q --allow-empty -m 'opened elsewhere'
+  git checkout -q feature
+  git worktree add -q "$S/other" work3
+)
+```
+
+The POST without `acknowledged` answers 409 with `"warnings":["branch-elsewhere"]` and `"warningBranches":{"branch-elsewhere":["work3"]}`, and no ref moves. With `"acknowledged":["branch-elsewhere"]` it answers 200 with `"branches":{"moved":["work2"],"left":[{"name":"work3","why":"worktree"}]}`. Then `git log --format=%s feature..work2` is `stacked work` on the new HEAD (`git rev-parse work2~1` equals `git rev-parse HEAD`), `git reflog -1 work2` says `difit: rewrite history`, `work3` is where it was, and `git -C "$S/other" status --porcelain` stays empty. A branch under `git rebase -i` or `git bisect` in the other worktree stays too, with `"why":"operation"`.
 
 ## Gotchas
 
