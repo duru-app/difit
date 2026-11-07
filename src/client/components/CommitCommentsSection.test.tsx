@@ -34,6 +34,7 @@ const section = (props: Partial<Parameters<typeof CommitCommentsSection>[0]>) =>
   <CommitCommentsSection
     commits={[FIRST]}
     threads={[]}
+    shownReview={{ baseCommitish: FIRST.parentSha, targetCommitish: FIRST.sha }}
     fixupOverlay={EMPTY_FIXUP_OVERLAY}
     showAuthorBadges={false}
     onResolveThread={vi.fn()}
@@ -53,6 +54,7 @@ describe('CommitCommentsSection', () => {
     const reword = {
       load: vi.fn(async () => 'first step'),
       save: vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
+      showBlockingThread: vi.fn(),
     };
     const touchButton = (name: string) => screen.getByRole('button', { name });
     const expectTouchOnly = (button: HTMLElement) =>
@@ -103,7 +105,7 @@ describe('CommitCommentsSection', () => {
       renderSection({
         onAddComment: vi.fn(async () => {}),
         reword: {
-          load: vi.fn(async () => 'first step'),
+          ...reword,
           save: vi.fn(async () => ({ saved: true as const, movedBranches: ['stack'] })),
         },
       });

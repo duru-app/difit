@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { checkRewrite, type RewriteState } from './rewrite-check.js';
-import type { DiffCommentMessage, ReviewDecision, ThreadFixup } from '../types/diff.js';
+import type {
+  DiffCommentMessage,
+  DiffCommentThread,
+  ReviewDecision,
+  ThreadFixup,
+} from '../types/diff.js';
 
 const FEATURE_BRANCH: RewriteState = {
   branch: 'feature',
@@ -23,6 +28,43 @@ const said = (author: string, extra: Partial<DiffCommentMessage> = {}): DiffComm
   ...extra,
 });
 
+const thread = (id: string, messages: DiffCommentMessage[]): DiffCommentThread => ({
+  id,
+  createdAt: '2026-11-07T00:00:00Z',
+  updatedAt: '2026-11-07T00:00:00Z',
+  messages,
+  filePath: 'src/c.js',
+  position: { side: 'new', line: 4 },
+});
+
+const OLD_REVIEW = { baseCommitish: 'aaaaaaa', targetCommitish: 'bbbbbbb' };
+const OLD_REQUESTED = { baseCommitish: 'a'.repeat(40), targetCommitish: 'b'.repeat(40) };
+const OLD_COMMITS = [
+  {
+    sha: 'c'.repeat(40),
+    shortSha: 'ccccccc',
+    parentSha: 'a'.repeat(40),
+    subject: 'feat: first',
+  },
+  {
+    sha: 'b'.repeat(40),
+    shortSha: 'bbbbbbb',
+    parentSha: 'c'.repeat(40),
+    subject: 'feat: second',
+  },
+];
+
+const pinnedSession = (threads: DiffCommentThread[], decisions: ReviewDecision[] = []) => ({
+  selection: OLD_REVIEW,
+  review: { requested: OLD_REQUESTED, commits: OLD_COMMITS },
+  threads,
+  decisions,
+  fixupsByThread: new Map<string, ThreadFixup[]>(),
+});
+
+const blockingThreadsOf = (session: ReturnType<typeof pinnedSession>) =>
+  checkRewrite({ ...FEATURE_BRANCH, commentSessions: [session] }).blockingThreads;
+
 const blocksWith = (
   messages: DiffCommentMessage[],
   decisions: ReviewDecision[] = [],
@@ -32,7 +74,9 @@ const blocksWith = (
     ...FEATURE_BRANCH,
     commentSessions: [
       {
-        threads: [{ id: 't1', messages }],
+        selection: OLD_REVIEW,
+        review: undefined,
+        threads: [thread('t1', messages)],
         decisions,
         fixupsByThread: new Map([['t1', fixups]]),
       },
@@ -41,7 +85,12 @@ const blocksWith = (
 
 describe('checkRewrite', () => {
   it('lets a feature branch through with nothing to say', () => {
-    expect(checkRewrite(FEATURE_BRANCH)).toEqual({ blocks: [], warnings: [], warningBranches: {} });
+    expect(checkRewrite(FEATURE_BRANCH)).toEqual({
+      blocks: [],
+      warnings: [],
+      warningBranches: {},
+      blockingThreads: [],
+    });
   });
 
   it('warns on the default branch without blocking', () => {
@@ -49,6 +98,7 @@ describe('checkRewrite', () => {
       blocks: [],
       warnings: ['default-branch'],
       warningBranches: {},
+      blockingThreads: [],
     });
   });
 
@@ -83,6 +133,7 @@ describe('checkRewrite', () => {
       blocks: [],
       warnings: ['pushed-commit'],
       warningBranches: {},
+      blockingThreads: [],
     });
   });
 
@@ -103,12 +154,14 @@ describe('checkRewrite', () => {
   });
 
   it("blocks on the agent's turn in any session of the server", () => {
-    const empty = { threads: [], decisions: [], fixupsByThread: undefined };
-    const waiting = {
-      threads: [{ id: 't2', messages: [said('User')] }],
+    const empty = {
+      selection: OLD_REVIEW,
+      review: undefined,
+      threads: [],
       decisions: [],
       fixupsByThread: undefined,
     };
+    const waiting = { ...empty, threads: [thread('t2', [said('User')])] };
     expect(checkRewrite({ ...FEATURE_BRANCH, commentSessions: [empty, waiting] }).blocks).toEqual([
       'agent-working',
     ]);
@@ -157,6 +210,7 @@ describe('checkRewrite', () => {
       blocks: ['operation-in-progress'],
       warnings: ['default-branch'],
       warningBranches: {},
+      blockingThreads: [],
     });
   });
 
@@ -173,6 +227,7 @@ describe('checkRewrite', () => {
       blocks: [],
       warnings: ['branch-elsewhere'],
       warningBranches: { 'branch-elsewhere': ['work2', 'rebasing'] },
+      blockingThreads: [],
     });
   });
 
@@ -189,6 +244,96 @@ describe('checkRewrite', () => {
       blocks: [],
       warnings: ['default-branch-left', 'branch-elsewhere'],
       warningBranches: { 'default-branch-left': ['main'], 'branch-elsewhere': ['work2'] },
+      blockingThreads: [],
+    });
+  });
+
+  describe('where the blocking comments are', () => {
+    it('names the review target when the comment was made on the whole review', () => {
+      expect(blockingThreadsOf(pinnedSession([thread('t1', [said('User')])]))).toEqual([
+        {
+          threadId: 't1',
+          review: OLD_REQUESTED,
+          commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+          file: 'src/c.js',
+          line: 4,
+        },
+      ]);
+    });
+
+    it('names the commit a comment will be fixed up into', () => {
+      const onFirst = { ...thread('t1', [said('User')]), fixupTarget: 'c'.repeat(40) };
+      expect(blockingThreadsOf(pinnedSession([onFirst]))[0]?.commit).toEqual({
+        shortSha: 'ccccccc',
+        subject: 'feat: first',
+      });
+    });
+
+    it('names no file for a comment on a whole commit', () => {
+      const onCommit: DiffCommentThread = {
+        id: 't1',
+        createdAt: '2026-11-07T00:00:00Z',
+        updatedAt: '2026-11-07T00:00:00Z',
+        messages: [said('User')],
+        position: { scope: 'commit' },
+        fixupTarget: 'c'.repeat(40),
+      };
+      expect(blockingThreadsOf(pinnedSession([onCommit]))).toEqual([
+        {
+          threadId: 't1',
+          review: OLD_REQUESTED,
+          commit: { shortSha: 'ccccccc', subject: 'feat: first' },
+        },
+      ]);
+    });
+
+    it('names no commit for a comment on uncommitted changes', () => {
+      const selection = { baseCommitish: 'HEAD', targetCommitish: '.' };
+      expect(
+        checkRewrite({
+          ...FEATURE_BRANCH,
+          commentSessions: [
+            {
+              selection,
+              review: undefined,
+              threads: [thread('t1', [said('User')])],
+              decisions: [],
+              fixupsByThread: undefined,
+            },
+          ],
+        }).blockingThreads,
+      ).toEqual([{ threadId: 't1', review: selection, file: 'src/c.js', line: 4 }]);
+    });
+
+    it('marks a deleted comment whose fixup is still in the range', () => {
+      const fixup: ThreadFixup = {
+        sha: 'f'.repeat(40),
+        shortSha: 'fffffff',
+        patchId: 'patch',
+        authoredAt: '2026-11-07T00:00:01Z',
+        subject: 'fixup! feature',
+        threadIds: ['t1'],
+        files: [],
+      };
+      const deleted: ReviewDecision = {
+        threadId: 't1',
+        kind: 'deleted',
+        fixupSha: '',
+        at: '2026-11-07T00:00:02Z',
+      };
+      const session = {
+        ...pinnedSession([thread('t1', [said('User')])], [deleted]),
+        fixupsByThread: new Map([['t1', [fixup]]]),
+      };
+      expect(blockingThreadsOf(session)[0]).toMatchObject({ threadId: 't1', deleted: true });
+    });
+
+    it('leaves out the comments that do not block', () => {
+      const answered = thread('t1', [said('User'), said('Agent')]);
+      const waiting = thread('t2', [said('User')]);
+      expect(
+        blockingThreadsOf(pinnedSession([answered, waiting])).map(({ threadId }) => threadId),
+      ).toEqual(['t2']);
     });
   });
 });

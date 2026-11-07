@@ -55,7 +55,7 @@ On the default branch, the same POST without `acknowledged` answers 409 `{"reaso
 
 A pushed commit: before `start`, make a bare repository with `git init -q --bare "$S/remote.git"`, then in `$REPO` run `git remote add origin "$S/remote.git"` and `git push -q -u origin feature`. The POST answers 409 `{"reason":"needs-confirmation","warnings":["pushed-commit"]}` and `HEAD` does not move. With `"acknowledged":["pushed-commit"]` it rewrites, and `git -C "$S/remote.git" rev-parse feature` is what it was. A commit added after the push rewrites with no warning.
 
-The agent at work: a thread added with `"author":"User"` makes the POST answer 409 `{"reason":"agent-working"}`, and a reply with `"fixPending":true` keeps it so. A later reply without the mark lets the POST through. `difit comment wait` running in the background with no such thread changes nothing.
+The agent at work: a thread added with `"author":"User"` makes the POST answer 409 `{"reason":"agent-working","blockingThreads":[…]}`, where each entry names the thread, its commit, its file and line, and the review to open to see it. A reply with `"fixPending":true` keeps it so. A later reply without the mark lets the POST through. `difit comment wait` running in the background with no such thread changes nothing.
 
 A merge kept in the range: before `start`, make a side branch and merge it with `--no-ff` on top of the commit to reword. After the POST, `git log --merges` still lists the merge and `git rev-parse HEAD^{tree}` is unchanged. Resolve a conflict by hand in that merge instead and the POST answers 409 `{"reason":"conflict"}` with the git output, and `HEAD` and the working tree stay as they were.
 
