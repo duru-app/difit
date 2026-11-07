@@ -2,24 +2,36 @@ import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
-import type { RewrittenShas } from '../types/diff.js';
+import type { LeftBranch, RewrittenShas } from '../types/diff.js';
 import { threadIdsOf, withThreadTrailer } from '../utils/commitMessage.js';
 
 import { autosquashGroups, squashTarget, type TodoCommit } from './autosquash.js';
 import { hasOperationInProgress } from './direct-edit.js';
 import type { RewriteState } from './rewrite-check.js';
 import { type GitOptions, runGit } from './run-git.js';
+import { findStackedBranches } from './stacked-branches.js';
 
 export interface HistoryRewrite {
   // Where the reviewed range starts; autosquash targets are read from here on.
   base: string;
   // Whole new messages by full SHA, cleaned up as they should stand.
   messages: ReadonlyMap<string, string>;
+  // Stays where it is even when it holds a replaced commit.
+  defaultBranch: string | null;
 }
 
 export type HistoryRewriteResult =
-  | { ok: true; head: string; rewritten: RewrittenShas }
-  | { ok: false; reason: 'conflict' | 'head-moved' | 'commit-failed'; output?: string };
+  | {
+      ok: true;
+      head: string;
+      rewritten: RewrittenShas;
+      branches: { moved: string[]; left: LeftBranch[] };
+    }
+  | {
+      ok: false;
+      reason: 'conflict' | 'head-moved' | 'branch-moved' | 'commit-failed';
+      output?: string;
+    };
 
 type Failure = Extract<HistoryRewriteResult, { ok: false }>;
 
@@ -47,20 +59,37 @@ export async function readRewriteState(
 
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
-// git's todo with a stop after each commit, and the commits in the order the stops come.
+// git's todo with a stop after each commit still to replay, and those commits in the order the stops
+// come; a commit already replayed is not picked again but reset to where it landed.
 async function plannedTodo(
   dir: string,
   generated: string,
+  landedAt: ReadonlyMap<string, string>,
 ): Promise<{ todo: string; commits: string[] }> {
   const lines = generated.split('\n');
   const abbreviated = lines.flatMap((line) => {
     const [, sha] = /^(?:pick|merge -C) ([0-9a-f]+)/.exec(line) ?? [];
     return sha === undefined ? [] : [sha];
   });
-  const commits = (await gitText(dir, ['rev-parse', ...abbreviated])).split('\n');
-  const todo = lines.flatMap((line) =>
-    /^(?:pick|merge -C) /.test(line) ? [line, 'break'] : [line],
-  );
+  const full = (await gitText(dir, ['rev-parse', ...abbreviated])).split('\n');
+  const todo: string[] = [];
+  const commits: string[] = [];
+  let next = 0;
+  for (const line of lines) {
+    if (!/^(?:pick|merge -C) /.test(line)) {
+      todo.push(line);
+      continue;
+    }
+    const commit = full[next++] ?? '';
+    const landed = landedAt.get(commit);
+    if (landed === undefined) {
+      todo.push(line, 'break');
+      commits.push(commit);
+      continue;
+    }
+    if (todo.at(-1)?.startsWith('reset ')) todo.pop();
+    todo.push(`reset ${landed}`);
+  }
   return { todo: todo.join('\n'), commits };
 }
 
@@ -133,17 +162,8 @@ const rewriteConfig = (hooks: string) => [
   'i18n.commitEncoding=UTF-8',
 ];
 
-export async function rewriteHistory(
-  repoPath: string,
-  request: HistoryRewrite,
-): Promise<HistoryRewriteResult> {
-  const head = await gitText(repoPath, ['rev-parse', '--verify', 'HEAD^{commit}']);
-  const range = `${request.base}..${head}`;
-  const oldest = (await gitText(repoPath, ['rev-list', '--topo-order', '--reverse', range]))
-    .split('\n')
-    .find((commit) => request.messages.has(commit));
-  if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
-  const listed = (
+async function listCommits(repoPath: string, range: string): Promise<TodoCommit[]> {
+  return (
     await gitText(repoPath, [
       'log',
       '--reverse',
@@ -160,7 +180,33 @@ export async function rewriteHistory(
       const [sha = '', subject = ''] = line.split('\0');
       return { sha, subject };
     });
-  const plan = messagePlanner(listed, request.messages);
+}
+
+const OBJECT_NAME = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+export async function rewriteHistory(
+  repoPath: string,
+  request: HistoryRewrite,
+): Promise<HistoryRewriteResult> {
+  const head = await gitText(repoPath, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  const range = `${request.base}..${head}`;
+  const oldest = (await gitText(repoPath, ['rev-list', '--topo-order', '--reverse', range]))
+    .split('\n')
+    .find((commit) => request.messages.has(commit));
+  if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
+  const headBranch = await runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']);
+  const stack = await findStackedBranches(repoPath, {
+    oldest,
+    headBranch: headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null,
+    defaultBranch: request.defaultBranch,
+  });
+  const byLength = await Promise.all(
+    stack.moving.map(async (branch) => ({
+      ...branch,
+      length: Number(await gitText(repoPath, ['rev-list', '--count', `${oldest}^..${branch.tip}`])),
+    })),
+  );
+  byLength.sort((a, b) => b.length - a.length);
 
   const dir = await fs.mkdtemp(join(tmpdir(), 'difit-history-rewrite-'));
   const hooks = join(dir, 'no-hooks');
@@ -178,11 +224,69 @@ export async function rewriteHistory(
       head,
     ]);
     if (added.code !== 0) return { ok: false, reason: 'commit-failed', output: added.output };
-    return await rewriteInWorktree(repoPath, worktree, dir, config, {
-      head,
-      upstream: `${oldest}^`,
-      plan,
+    const replay = new Replay(repoPath, worktree, dir, config, `${oldest}^`);
+    const replayed = await replay.run(
+      messagePlanner(await listCommits(repoPath, range), request.messages),
+    );
+    if (!replayed.ok) return replayed;
+    for (const { name, tip } of byLength) {
+      if (replay.landedAt.has(tip)) continue;
+      const moved =
+        (await replay.checkout(tip)) ??
+        (await replay.run(
+          messagePlanner(await listCommits(repoPath, `${request.base}..${tip}`), request.messages),
+        ));
+      if (!moved.ok) return { ...moved, output: `Moving branch ${name}: ${moved.output ?? ''}` };
+    }
+
+    const newHead = replay.landedAt.get(head) ?? head;
+    const moves = stack.moving.flatMap(({ name, tip }) => {
+      const landed = replay.landedAt.get(tip);
+      return landed === undefined || landed === tip ? [] : [{ name, tip, landed }];
     });
+    // Only messages change, so every tip keeps its files.
+    for (const { name, tip, landed } of [{ name: 'HEAD', tip: head, landed: newHead }, ...moves]) {
+      const [oldTree, newTree] = await Promise.all(
+        [tip, landed].map((commit) => gitText(worktree, ['rev-parse', `${commit}^{tree}`])),
+      );
+      if (oldTree !== newTree) {
+        return {
+          ok: false,
+          reason: 'conflict',
+          output: `${name === 'HEAD' ? '' : `Moving branch ${name}: `}The rewritten history ends in tree ${newTree}, not ${oldTree}: a merge held changes that rebuilding it dropped.`,
+        };
+      }
+    }
+
+    const updates = [
+      `update HEAD ${newHead} ${head}`,
+      ...moves.map(({ name, tip, landed }) => `update refs/heads/${name} ${landed} ${tip}`),
+    ];
+    // An empty new value would delete the branch.
+    if (
+      !updates.every((line) =>
+        line
+          .split(' ')
+          .slice(2)
+          .every((sha) => OBJECT_NAME.test(sha)),
+      )
+    ) {
+      return { ok: false, reason: 'commit-failed', output: updates.join('\n') };
+    }
+    const written = await runGit(
+      repoPath,
+      ['-c', `core.hooksPath=${hooks}`, 'update-ref', '-m', 'difit: rewrite history', '--stdin'],
+      { input: Buffer.from(['start', ...updates, 'prepare', 'commit', ''].join('\n'), 'utf8') },
+    );
+    if (written.code === 0) {
+      return {
+        ok: true,
+        head: newHead,
+        rewritten: replay.rewritten,
+        branches: { moved: moves.map(({ name }) => name), left: stack.left },
+      };
+    }
+    return { ok: false, reason: await whatMoved(repoPath, head, moves), output: written.output };
   } finally {
     const removed = await runGit(repoPath, ['worktree', 'remove', '--force', worktree]);
     await fs.rm(dir, { recursive: true, force: true });
@@ -190,104 +294,116 @@ export async function rewriteHistory(
   }
 }
 
-interface Replay {
-  head: string;
-  upstream: string;
-  plan: ReturnType<typeof messagePlanner>;
+async function whatMoved(
+  repoPath: string,
+  head: string,
+  moves: { name: string; tip: string }[],
+): Promise<'head-moved' | 'branch-moved' | 'commit-failed'> {
+  const headNow = await gitText(repoPath, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (headNow !== head) return 'head-moved';
+  const tipsNow = await Promise.all(
+    moves.map(({ name }) => runGit(repoPath, ['rev-parse', '--verify', `refs/heads/${name}`])),
+  );
+  const branchMoved = tipsNow.some(
+    (run, index) => run.code !== 0 || run.stdout.toString('utf8').trim() !== moves[index]?.tip,
+  );
+  return branchMoved ? 'branch-moved' : 'commit-failed';
 }
 
-// The rebase runs in a worktree of its own, so the reviewer's files, index and branch stay put until
-// the one ref update at the end, and giving up leaves nothing to undo.
-async function rewriteInWorktree(
-  repoPath: string,
-  worktree: string,
-  dir: string,
-  config: string[],
-  { head, upstream, plan }: Replay,
-): Promise<HistoryRewriteResult> {
-  const generatedPath = join(dir, 'generated-todo');
-  const todoPath = join(dir, 'todo');
-  const rebase = (args: string[], sequenceEditor: string) =>
-    runGit(worktree, [...config, 'rebase', ...args], {
-      env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: sequenceEditor },
-    });
-  const start = ['--interactive', '--rebase-merges', '--no-autostash', '--no-gpg-sign', upstream];
+// The rebases run in a worktree of their own, so the reviewer's files, index and branches stay put
+// until the one ref transaction at the end, and giving up leaves nothing to undo.
+class Replay {
+  // Unchanged commits included, unlike rewritten.
+  readonly landedAt = new Map<string, string>();
+  readonly rewritten: Record<string, string> = {};
 
-  // Git adds the todo's path as the editor's last argument; failing here ends this first rebase.
-  const listing = await rebase(
-    start,
-    `f() { cp "$1" ${shellQuoted(generatedPath)}; return 1; }; f`,
-  );
-  const generated = await fs.readFile(generatedPath, 'utf8').catch(() => null);
-  if (generated === null) return { ok: false, reason: 'commit-failed', output: listing.output };
-  const { todo, commits } = await plannedTodo(worktree, generated);
-  await fs.writeFile(todoPath, todo);
-  const current = await readMessages(repoPath, commits);
+  constructor(
+    private readonly repoPath: string,
+    private readonly worktree: string,
+    private readonly dir: string,
+    private readonly config: string[],
+    private readonly upstream: string,
+  ) {}
 
-  const stuck = async (output: string): Promise<Failure> => {
-    const state = await gitText(worktree, ['rev-parse', '--git-path', 'rebase-merge']);
-    return {
-      ok: false,
-      reason: existsSync(resolve(worktree, state)) ? 'conflict' : 'commit-failed',
-      output,
+  async checkout(tip: string): Promise<Failure | null> {
+    const run = await runGit(this.worktree, [
+      ...this.config,
+      'checkout',
+      '--quiet',
+      '--detach',
+      tip,
+    ]);
+    return run.code === 0 ? null : { ok: false, reason: 'commit-failed', output: run.output };
+  }
+
+  async run(plan: ReturnType<typeof messagePlanner>): Promise<{ ok: true } | Failure> {
+    const { worktree, config } = this;
+    const generatedPath = join(this.dir, 'generated-todo');
+    const todoPath = join(this.dir, 'todo');
+    await fs.rm(generatedPath, { force: true });
+    const rebase = (args: string[], sequenceEditor: string) =>
+      runGit(worktree, [...config, 'rebase', ...args], {
+        env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: sequenceEditor },
+      });
+    const start = [
+      '--interactive',
+      '--rebase-merges',
+      '--no-autostash',
+      '--no-gpg-sign',
+      this.upstream,
+    ];
+
+    // Git adds the todo's path as the editor's last argument; failing here ends this first rebase.
+    const listing = await rebase(
+      start,
+      `f() { cp "$1" ${shellQuoted(generatedPath)}; return 1; }; f`,
+    );
+    const generated = await fs.readFile(generatedPath, 'utf8').catch(() => null);
+    if (generated === null) return { ok: false, reason: 'commit-failed', output: listing.output };
+    const { todo, commits } = await plannedTodo(worktree, generated, this.landedAt);
+    await fs.writeFile(todoPath, todo);
+    const current = await readMessages(this.repoPath, commits);
+
+    const stuck = async (output: string): Promise<Failure> => {
+      const state = await gitText(worktree, ['rev-parse', '--git-path', 'rebase-merge']);
+      return {
+        ok: false,
+        reason: existsSync(resolve(worktree, state)) ? 'conflict' : 'commit-failed',
+        output,
+      };
     };
-  };
 
-  let run = await rebase(start, `cp ${shellQuoted(todoPath)}`);
-  if (run.code !== 0) return stuck(run.output);
-  const rewritten: Record<string, string> = {};
-  for (const commit of commits) {
-    const message = current.get(commit) ?? '';
-    const planned = plan(commit, message, rewritten);
-    if (planned !== message) {
-      const amended = await runGit(
-        worktree,
-        [
-          ...config,
-          'commit',
-          '--quiet',
-          '--amend',
-          '--allow-empty',
-          '--no-verify',
-          '--no-gpg-sign',
-          '--cleanup=verbatim',
-          '--file=-',
-        ],
-        { input: Buffer.from(`${planned}\n`, 'utf8') },
-      );
-      if (amended.code !== 0) return { ok: false, reason: 'commit-failed', output: amended.output };
-    }
-    const landed = await gitText(worktree, ['rev-parse', 'HEAD']);
-    if (landed !== commit) rewritten[commit] = landed;
-    run = await rebase(['--continue'], 'true');
+    let run = await rebase(start, `cp ${shellQuoted(todoPath)}`);
     if (run.code !== 0) return stuck(run.output);
+    for (const commit of commits) {
+      const message = current.get(commit) ?? '';
+      const planned = plan(commit, message, this.rewritten);
+      if (planned !== message) {
+        const amended = await runGit(
+          worktree,
+          [
+            ...config,
+            'commit',
+            '--quiet',
+            '--amend',
+            '--allow-empty',
+            '--no-verify',
+            '--no-gpg-sign',
+            '--cleanup=verbatim',
+            '--file=-',
+          ],
+          { input: Buffer.from(`${planned}\n`, 'utf8') },
+        );
+        if (amended.code !== 0) {
+          return { ok: false, reason: 'commit-failed', output: amended.output };
+        }
+      }
+      const landed = await gitText(worktree, ['rev-parse', 'HEAD']);
+      this.landedAt.set(commit, landed);
+      if (landed !== commit) this.rewritten[commit] = landed;
+      run = await rebase(['--continue'], 'true');
+      if (run.code !== 0) return stuck(run.output);
+    }
+    return { ok: true };
   }
-
-  const newHead = await gitText(worktree, ['rev-parse', 'HEAD']);
-  const [oldTree, newTree] = await Promise.all(
-    [head, newHead].map((commit) => gitText(worktree, ['rev-parse', `${commit}^{tree}`])),
-  );
-  if (oldTree !== newTree) {
-    return {
-      ok: false,
-      reason: 'conflict',
-      output: `The rewritten history ends in tree ${newTree ?? ''}, not ${oldTree ?? ''}: a merge held changes that rebuilding it dropped.`,
-    };
-  }
-
-  const moved = await runGit(repoPath, [
-    'update-ref',
-    '-m',
-    'difit: rewrite history',
-    'HEAD',
-    newHead,
-    head,
-  ]);
-  if (moved.code === 0) return { ok: true, head: newHead, rewritten };
-  const headNow = await gitText(repoPath, ['rev-parse', '--verify', 'HEAD^{commit}']);
-  return {
-    ok: false,
-    reason: headNow === head ? 'commit-failed' : 'head-moved',
-    output: moved.output,
-  };
 }

@@ -618,6 +618,13 @@ export interface RewordRequest {
 
 export type RewriteWarning = 'default-branch';
 
+// A local branch holding a replaced commit that the rewrite leaves on the old commits.
+export interface LeftBranch {
+  name: string;
+  // Checked out in another worktree, or under a rebase or bisect there.
+  why: 'worktree' | 'operation';
+}
+
 export type RewordRejection =
   | 'stale-view'
   | 'target-not-in-head'
@@ -629,6 +636,7 @@ export type RewordRejection =
   | 'needs-confirmation'
   | 'conflict'
   | 'head-moved'
+  | 'branch-moved'
   | 'commit-failed';
 
 // Keyed by the old full SHA; only commits the rewrite actually replaced.
@@ -641,6 +649,7 @@ export type RewordResponse =
       version: number;
       threads: DiffCommentThread[];
       decisions: ReviewDecision[];
+      branches: { moved: string[]; left: LeftBranch[] };
     }
   | { error: string; reason?: RewordRejection; output?: string; warnings?: RewriteWarning[] };
 
