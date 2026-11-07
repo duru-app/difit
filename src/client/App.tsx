@@ -552,7 +552,8 @@ function App() {
     scopes: 'navigation',
     enabled: isMobile && isCommentsDrawerOpen,
   });
-  const hasCommitList = review !== undefined && review.commits.length > 1;
+  const commitCount = review?.commits.length ?? 0;
+  const hasCommitList = review !== undefined && commitCount > 0;
   const showsCommitList = !isMobile && hasCommitList;
   const reservedPanelWidth =
     (isFileTreeOpen ? SIDEBAR_MIN_WIDTH + RESIZE_HANDLE_WIDTH : 0) +
@@ -1319,10 +1320,11 @@ function App() {
       onRefresh: () => {
         reload();
       },
-      ...(showsCommitList && {
-        onPreviousCommit: () => selectView({ kind: 'previous' }),
-        onNextCommit: () => selectView({ kind: 'next' }),
-      }),
+      ...(showsCommitList &&
+        commitCount > 1 && {
+          onPreviousCommit: () => selectView({ kind: 'previous' }),
+          onNextCommit: () => selectView({ kind: 'next' }),
+        }),
       onJump: (to) => {
         const line = linePlaceAt(to, navigableFiles);
         if (line) jumpWithinReview({ kind: 'line', ...line, cursor: true });

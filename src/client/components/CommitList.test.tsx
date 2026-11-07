@@ -73,6 +73,28 @@ const previewed = () =>
     .map((item) => item.textContent?.slice(0, 7));
 
 describe('CommitList', () => {
+  describe('with one commit', () => {
+    const ONLY = COMMITS.slice(0, 1);
+
+    it('marks its row as shown, offers no 전체 and selects nothing on a click or long press', () => {
+      vi.useFakeTimers();
+      try {
+        const { onSelect } = renderList({ kind: 'all' }, { commits: ONLY });
+        expect(painted()).toEqual([expect.stringContaining(ONLY[0]!.subject)]);
+        expect(within(list()).queryByRole('button', { name: '전체' })).not.toBeInTheDocument();
+        const only = row(new RegExp(ONLY[0]!.subject));
+        fireEvent.click(only);
+        fireEvent.touchStart(only, { touches: [{ clientX: 0, clientY: 0 }] });
+        act(() => {
+          vi.advanceTimersByTime(2000);
+        });
+        expect(onSelect).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('lists the whole review first and then the commits oldest first', () => {
     renderList();
 

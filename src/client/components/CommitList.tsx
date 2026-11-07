@@ -164,6 +164,7 @@ export function CommitList({
   loadMessage,
 }: CommitListProps) {
   const { commits } = review;
+  const isOnlyCommit = commits.length === 1;
   const cardId = useId();
   const loadCardMessage = useCachedMessageLoader(inDrawer ? undefined : loadMessage);
   const hoverCard = useCommitHoverCard();
@@ -232,6 +233,7 @@ export function CommitList({
   );
 
   const startPress = (sha: string, event: TouchEvent) => {
+    if (isOnlyCommit) return;
     const touch = event.touches[0];
     const previous = pressRef.current?.timer;
     if (previous != null) clearTimeout(previous);
@@ -330,9 +332,11 @@ export function CommitList({
       <span className="shrink-0 font-semibold text-github-text-primary">
         커밋 {commits.length}개
       </span>
-      <span className="min-w-0 truncate text-github-text-secondary">
-        <ShownCommits commits={commits} shown={shown} />
-      </span>
+      {!isOnlyCommit && (
+        <span className="min-w-0 truncate text-github-text-secondary">
+          <ShownCommits commits={commits} shown={shown} />
+        </span>
+      )}
     </>
   );
 
@@ -427,19 +431,21 @@ export function CommitList({
           onContextMenu={(event) => event.preventDefault()}
           className={`flex-1 min-h-0 overflow-y-auto py-1 m-0 list-none p-0 select-none [-webkit-touch-callout:none]`}
         >
-          <li>
-            <button
-              type="button"
-              onClick={() => onSelect({ kind: 'all' })}
-              aria-current={shown.kind === 'all' ? true : undefined}
-              className={`${itemClass} ${shown.kind === 'all' ? CURRENT_CLASS : 'text-github-text-secondary'}`}
-            >
-              <span className="w-[32px] shrink-0" />
-              전체
-            </button>
-          </li>
+          {!isOnlyCommit && (
+            <li>
+              <button
+                type="button"
+                onClick={() => onSelect({ kind: 'all' })}
+                aria-current={shown.kind === 'all' ? true : undefined}
+                className={`${itemClass} ${shown.kind === 'all' ? CURRENT_CLASS : 'text-github-text-secondary'}`}
+              >
+                <span className="w-[32px] shrink-0" />
+                전체
+              </button>
+            </li>
+          )}
           {graph.map(({ commit, cell, merged }, index) => {
-            const isCurrent = index >= shownStart && index <= shownEnd;
+            const isCurrent = isOnlyCommit || (index >= shownStart && index <= shownEnd);
             const isPreviewed = index >= previewStart && index <= previewEnd;
             const amendedMessage = amendedMessages?.get(commit.sha);
             const isActionPinned =
@@ -573,12 +579,13 @@ export function CommitList({
                       onTouchStart={(event) => startPress(commit.sha, event)}
                       onTouchEnd={endPress}
                       onTouchCancel={cancelPress}
-                      onClick={(event) =>
+                      onClick={(event) => {
+                        if (isOnlyCommit) return;
                         onSelect({
                           kind: event.shiftKey ? 'shift-click' : 'click',
                           sha: commit.sha,
-                        })
-                      }
+                        });
+                      }}
                       aria-current={isCurrent ? true : undefined}
                       data-drag-preview={isPreviewed ? '' : undefined}
                       title={
