@@ -2,7 +2,6 @@ import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil, X } 
 import {
   Fragment,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -12,7 +11,8 @@ import {
 import type { ReviewCommit, ReviewScope, ReviewView, ReviewViewAction } from '../../types/diff';
 import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
-import { copyTextToClipboard } from '../utils/clipboard';
+import { useCopyCommitHash } from '../hooks/useCopyCommitHash';
+import { useGuardedReword } from '../hooks/useGuardedReword';
 
 import { CommentCount } from './CommentCount';
 import { CommentForm } from './CommentForm';
@@ -48,8 +48,6 @@ interface Press {
 }
 
 const LONG_PRESS_MS = 500;
-const COPIED_MS = 2000;
-const COPIED_SHA_LENGTH = 10;
 const TAP_SLOP_PX = 10;
 const DEFAULT_MAX_HEIGHT = '40%';
 const MIN_HEIGHT_PX = 80;
@@ -61,6 +59,9 @@ const ITEM_CLASS =
 const CURRENT_CLASS = 'bg-github-bg-tertiary text-github-text-primary font-medium';
 const CURRENT_COMMIT_CLASS = `${CURRENT_CLASS} shadow-[inset_2px_0_0_var(--color-github-accent)]`;
 const PREVIEW_CLASS = 'outline-1 outline-dashed -outline-offset-1 outline-github-text-secondary';
+const ROW_ACTIONS_HIDDEN_CLASS =
+  'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:pointer-events-auto';
+const ROW_ACTIONS_OFF_ON_TOUCH_CLASS = '[@media(hover:none)]:hidden';
 const MERGED_CLASS = 'flex items-center gap-2 px-4 text-sm text-github-text-muted';
 const CURRENT_MERGED_CLASS =
   'bg-github-bg-tertiary text-github-text-secondary shadow-[inset_2px_0_0_var(--color-github-accent)]';
@@ -71,6 +72,8 @@ const commitUnder = (x: number, y: number) =>
 
 const AMEND_BADGE_CLASS =
   'inline-flex h-4 shrink-0 items-center rounded-full border border-github-accent px-1.5 text-[10px] font-medium text-github-accent';
+
+const AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS = '[@media(hover:none)]:overflow-hidden';
 
 // Like git's %s: the first paragraph with its lines joined by spaces.
 const subjectOf = (message: string) =>
@@ -83,14 +86,16 @@ function AmendedSubject({ subject, message }: { subject: string; message: string
   const amendedSubject = subjectOf(message);
   if (amendedSubject === subject) {
     return (
-      <span className="min-w-0 flex items-center gap-1.5">
+      <span
+        className={`min-w-0 flex items-center gap-1.5 ${AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS}`}
+      >
         <span className="min-w-0 truncate">{subject}</span>
         <span className={AMEND_BADGE_CLASS}>본문만 바뀜</span>
       </span>
     );
   }
   return (
-    <span className="min-w-0 flex flex-col">
+    <span className={`min-w-0 flex flex-col ${AMENDED_SUBJECT_CLIPPED_ON_TOUCH_CLASS}`}>
       <del className="min-w-0 truncate text-github-text-muted">{subject}</del>
       <span className="min-w-0 flex items-center gap-1.5">
         <span className={AMEND_BADGE_CLASS}>바뀔 메시지</span>
@@ -153,43 +158,15 @@ export function CommitList({
   const [isOpen, setIsOpen] = useState(true);
   const [rewording, setRewording] = useState<string | null>(null);
   const [commenting, setCommenting] = useState<string | null>(null);
-  const [isSavingMessage, setIsSavingMessage] = useState(false);
-  const guardedReword = useMemo<RewordControls | undefined>(
-    () =>
-      reword && {
-        load: reword.load,
-        save: async (request) => {
-          setIsSavingMessage(true);
-          try {
-            return await reword.save(request);
-          } finally {
-            setIsSavingMessage(false);
-          }
-        },
-      },
-    [reword],
-  );
+  const { reword: guardedReword, isSaving: isSavingMessage } = useGuardedReword(reword);
   const [drag, setDrag] = useState<Drag | null>(null);
   const isDragging = drag !== null;
   const listRef = useRef<HTMLUListElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const pressRef = useRef<Press | null>(null);
-  const [copied, setCopied] = useState<{ sha: string } | null>(null);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(null), COPIED_MS);
-    return () => clearTimeout(timer);
-  }, [copied]);
-  const copyHash = async (sha: string) => {
-    try {
-      await copyTextToClipboard(sha.slice(0, COPIED_SHA_LENGTH));
-      setCopied({ sha });
-    } catch (error) {
-      console.error('Failed to copy commit hash:', error);
-    }
-  };
+  const { copiedSha, copyHash } = useCopyCommitHash();
   const copyButtonOf = (sha: string, placement = '') => {
-    const isCopied = copied?.sha === sha;
+    const isCopied = copiedSha === sha;
     const label = isCopied ? '복사됨' : '해시 복사';
     return (
       <button
@@ -197,7 +174,7 @@ export function CommitList({
         aria-label={label}
         title={label}
         onClick={() => void copyHash(sha)}
-        className={`shrink-0 self-stretch px-2 ${placement} text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-tertiary focus:opacity-100 ${inDrawer || isCopied ? '' : 'opacity-0 group-hover:opacity-100'}`}
+        className={`shrink-0 self-stretch px-2 ${placement} text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-primary`}
       >
         {isCopied ? <Check size={12} /> : <Copy size={12} />}
       </button>
@@ -443,6 +420,73 @@ export function CommitList({
             const isCurrent = index >= shownStart && index <= shownEnd;
             const isPreviewed = index >= previewStart && index <= previewEnd;
             const amendedMessage = amendedMessages?.get(commit.sha);
+            const isActionPinned =
+              rewording === commit.sha || commenting === commit.sha || copiedSha === commit.sha;
+            const openCount = openCounts?.get(commit.sha) ?? 0;
+            const hoverButtons = (
+              <>
+                {copyButtonOf(commit.sha)}
+                {guardedReword && !commit.isMerge && (
+                  <button
+                    type="button"
+                    aria-label="메시지 고치기"
+                    title="메시지 고치기"
+                    aria-expanded={rewording === commit.sha}
+                    disabled={isSavingMessage}
+                    onClick={() =>
+                      setRewording((current) => (current === commit.sha ? null : commit.sha))
+                    }
+                    className="shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-primary disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <Pencil size={12} />
+                  </button>
+                )}
+              </>
+            );
+            const commentButton = onAddCommitComment && (
+              <button
+                type="button"
+                aria-label="커밋에 지적 달기"
+                title={
+                  openCount > 0
+                    ? `열린 지적 ${openCount}개 · 이 커밋 전체에 지적 달기`
+                    : '이 커밋 전체에 지적 달기'
+                }
+                aria-expanded={commenting === commit.sha}
+                onClick={() =>
+                  setCommenting((current) => (current === commit.sha ? null : commit.sha))
+                }
+                className={`shrink-0 flex items-center gap-1 px-2 hover:bg-github-bg-primary ${openCount > 0 ? 'text-sm font-medium text-github-warning fixup-review:text-github-text-secondary' : 'text-github-text-muted hover:text-github-text-primary'}`}
+              >
+                <MessageSquarePlus size={openCount > 0 ? 14 : 12} />
+                {openCount > 0 && openCount}
+              </button>
+            );
+            const hoverClass = `bg-github-bg-tertiary ${isActionPinned ? '' : ROW_ACTIONS_HIDDEN_CLASS}`;
+            // With an open count the comment button stays in line, so the subject stops before
+            // it and the other buttons open over the subject to its left.
+            const rowActions = inDrawer ? (
+              <div className={`contents ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}>
+                {hoverButtons}
+                {commentButton}
+              </div>
+            ) : openCount > 0 && commentButton ? (
+              <div
+                className={`relative flex shrink-0 items-stretch ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}
+              >
+                <div className={`absolute inset-y-0 right-full flex items-stretch ${hoverClass}`}>
+                  {hoverButtons}
+                </div>
+                {commentButton}
+              </div>
+            ) : (
+              <div
+                className={`absolute inset-y-0 right-0 flex items-stretch ${hoverClass} ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}
+              >
+                {hoverButtons}
+                {commentButton}
+              </div>
+            );
             return (
               <Fragment key={commit.sha}>
                 {merged.map((entry) => (
@@ -458,7 +502,10 @@ export function CommitList({
                         <code className="shrink-0 font-mono text-xs">{entry.commit.shortSha}</code>
                         <span className="min-w-0 truncate">{entry.commit.subject}</span>
                         {openCountOf(entry.commit.sha)}
-                        {copyButtonOf(entry.commit.sha, `ml-auto -mr-4 ${graphBleed}`)}
+                        {copyButtonOf(
+                          entry.commit.sha,
+                          `ml-auto -mr-4 ${graphBleed} focus:opacity-100 ${inDrawer || copiedSha === entry.commit.sha ? '' : 'opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'}`,
+                        )}
                       </>
                     ) : (
                       <span>커밋 {entry.count}개 더</span>
@@ -466,7 +513,7 @@ export function CommitList({
                   </li>
                 ))}
                 <li className="group">
-                  <div className="flex items-stretch">
+                  <div className="relative flex items-stretch">
                     <button
                       type="button"
                       data-commit-sha={commit.sha}
@@ -504,7 +551,7 @@ export function CommitList({
                           ? commit.subject
                           : `${commit.subject}\n\n바뀔 메시지:\n${amendedMessage}`
                       }
-                      className={`${itemClass} min-w-0 flex-1 ${isCurrent ? CURRENT_COMMIT_CLASS : 'text-github-text-secondary'} ${isPreviewed ? PREVIEW_CLASS : ''}`}
+                      className={`${itemClass} min-w-0 flex-1 group-hover:bg-github-bg-tertiary ${isCurrent ? CURRENT_COMMIT_CLASS : 'text-github-text-secondary'} ${isPreviewed ? PREVIEW_CLASS : ''} ${isActionPinned && !inDrawer ? 'bg-github-bg-tertiary' : ''}`}
                     >
                       <CommitGraph cell={cell} bleed={graphBleed} />
                       <code className="shrink-0 font-mono text-xs">{commit.shortSha}</code>
@@ -513,38 +560,15 @@ export function CommitList({
                       ) : (
                         <AmendedSubject subject={commit.subject} message={amendedMessage} />
                       )}
-                      {openCountOf(commit.sha)}
+                      <span
+                        className={
+                          onAddCommitComment ? 'hidden [@media(hover:none)]:contents' : 'contents'
+                        }
+                      >
+                        {openCountOf(commit.sha)}
+                      </span>
                     </button>
-                    {copyButtonOf(commit.sha)}
-                    {guardedReword && !commit.isMerge && (
-                      <button
-                        type="button"
-                        aria-label="메시지 고치기"
-                        title="메시지 고치기"
-                        aria-expanded={rewording === commit.sha}
-                        disabled={isSavingMessage}
-                        onClick={() =>
-                          setRewording((current) => (current === commit.sha ? null : commit.sha))
-                        }
-                        className={`shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-tertiary focus:opacity-100 disabled:pointer-events-none disabled:opacity-50 ${inDrawer || rewording === commit.sha ? '' : 'opacity-0 group-hover:opacity-100'}`}
-                      >
-                        <Pencil size={12} />
-                      </button>
-                    )}
-                    {onAddCommitComment && (
-                      <button
-                        type="button"
-                        aria-label="커밋에 지적 달기"
-                        title="이 커밋 전체에 지적 달기"
-                        aria-expanded={commenting === commit.sha}
-                        onClick={() =>
-                          setCommenting((current) => (current === commit.sha ? null : commit.sha))
-                        }
-                        className={`shrink-0 px-2 text-github-text-muted hover:text-github-text-primary hover:bg-github-bg-tertiary focus:opacity-100 ${inDrawer || commenting === commit.sha ? '' : 'opacity-0 group-hover:opacity-100'}`}
-                      >
-                        <MessageSquarePlus size={12} />
-                      </button>
-                    )}
+                    {rowActions}
                   </div>
                   {onAddCommitComment && commenting === commit.sha && (
                     <div
