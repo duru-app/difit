@@ -13,7 +13,7 @@ interface CommentFormProps {
   filename?: string;
   initialValue?: string;
   embedded?: boolean;
-  title?: string;
+  location: string;
   submitLabel?: string;
   placeholder?: string;
   header?: ReactNode;
@@ -33,8 +33,8 @@ export function CommentForm({
   filename,
   initialValue = '',
   embedded = false,
-  title = 'Add a comment',
-  submitLabel = 'Submit',
+  location,
+  submitLabel = '보내기',
   placeholder = 'Leave a comment...',
   header,
   label,
@@ -77,19 +77,17 @@ export function CommentForm({
 
   return (
     <form
-      className={
-        embedded
-          ? 'bg-transparent'
-          : 'm-2 mx-3 rounded-md border border-yellow-600/50 border-l-4 border-l-yellow-400 fixup-review:border-github-border fixup-review:border-l-github-text-muted bg-github-bg-tertiary p-3'
-      }
+      className={`rounded-[16px] bg-composer-bg px-[16px] py-[12px] text-composer-text shadow-[var(--composer-shadow)] ${
+        embedded ? '' : 'm-2 mx-3'
+      }`}
       aria-label={label}
       onSubmit={handleSubmit}
       onClick={(e) => e.stopPropagation()}
       data-empty={!body.trim()}
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium" style={{ color: 'var(--color-yellow-path-text)' }}>
-          {title}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="min-w-0 text-[12px] italic text-composer-muted [overflow-wrap:anywhere]">
+          › {location}
         </span>
         {hasSuggestion && (
           <div className="flex items-center border border-github-border rounded-md overflow-hidden">
@@ -131,7 +129,7 @@ export function CommentForm({
       )}
 
       {hasSuggestion && effectiveMode === 'preview' ? (
-        <div className="min-h-[60px] mb-2 bg-github-bg-secondary border border-github-border rounded px-3 py-2">
+        <div className="mb-2 min-h-[60px] rounded-[8px] border border-composer-line bg-composer-field px-3 py-2">
           <CommentBodyRenderer
             body={body}
             originalCode={selectedCode}
@@ -141,7 +139,7 @@ export function CommentForm({
         </div>
       ) : (
         <SkillTextarea
-          className="min-h-[60px] resize-y border border-github-border rounded px-3 py-2 text-github-text-primary text-sm leading-6 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/30 focus:min-h-[80px] disabled:opacity-50"
+          className="min-h-[60px] resize-y rounded-[8px] border border-composer-line px-3 py-2 text-sm leading-6 text-composer-text placeholder:text-composer-muted focus:min-h-[80px] focus:border-composer-focus focus:outline-none disabled:opacity-50"
           value={body}
           onValueChange={setBody}
           onKeyDown={handleKeyDown}
@@ -157,30 +155,17 @@ export function CommentForm({
           type="button"
           data-comment-cancel="true"
           onClick={onCancel}
-          className="text-xs px-3 py-1.5 bg-github-bg-tertiary text-github-text-primary border border-github-border rounded hover:opacity-80 transition-all disabled:opacity-50"
+          className="rounded border border-transparent bg-transparent px-3 py-1.5 text-xs text-composer-muted transition-colors hover:text-composer-text disabled:opacity-50"
           disabled={isSubmitting}
         >
-          Cancel
+          취소
         </button>
         <button
           type="submit"
-          className="text-xs px-3 py-1.5 rounded transition-all disabled:opacity-50"
-          style={{
-            backgroundColor: 'var(--color-yellow-btn-bg)',
-            color: 'var(--color-yellow-btn-text)',
-            border: '1px solid var(--color-yellow-btn-border)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'var(--color-yellow-btn-hover-bg)';
-            e.currentTarget.style.borderColor = 'var(--color-yellow-btn-hover-border)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'var(--color-yellow-btn-bg)';
-            e.currentTarget.style.borderColor = 'var(--color-yellow-btn-border)';
-          }}
+          className="rounded border border-github-accent bg-github-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
           disabled={!body.trim() || isSubmitting}
         >
-          {isSubmitting ? 'Submitting...' : submitLabel}
+          {isSubmitting ? '보내는 중…' : submitLabel}
         </button>
       </div>
     </form>

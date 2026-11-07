@@ -15,6 +15,8 @@ import { commitLocationLabel, locationLabel } from '../../utils/commentPosition'
 import type { CommentPanelStatus } from '../../utils/reviewDecisions';
 import { keyByPosition } from '../utils/keyByPosition';
 
+import { RespondingChip } from './RespondingChip';
+
 export type CommentsPanelFilter = 'remaining' | 'all';
 
 export interface CommentsPanelHandle {
@@ -28,6 +30,7 @@ interface CommentsPanelProps {
   // A thread missing here is not listed.
   statusById: ReadonlyMap<string, CommentPanelStatus>;
   resolvedThreadIds: ReadonlySet<string>;
+  respondingThreadIds: ReadonlySet<string>;
   filter: CommentsPanelFilter;
   onFilterChange: (filter: CommentsPanelFilter) => void;
   pickedThreadId: string | null;
@@ -73,6 +76,7 @@ export function CommentsPanel({
   threads,
   statusById,
   resolvedThreadIds,
+  respondingThreadIds,
   filter,
   onFilterChange,
   pickedThreadId,
@@ -230,6 +234,7 @@ export function CommentsPanel({
             const status = statusById.get(thread.id) ?? 'resolved';
             const chip = STATUS_CHIP[status];
             const isPicked = thread.id === pickedThreadId;
+            const responding = respondingThreadIds.has(thread.id);
             return (
               <button
                 key={thread.id}
@@ -263,11 +268,14 @@ export function CommentsPanel({
                         )
                       : commitLocationLabel(thread)}
                   </span>
-                  <span
-                    className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${chip.className}`}
-                  >
-                    {chip.label}
-                  </span>
+                  {(status === 'resolved' || !responding) && (
+                    <span
+                      className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${chip.className}`}
+                    >
+                      {chip.label}
+                    </span>
+                  )}
+                  {responding && <RespondingChip />}
                 </span>
                 <span className="line-clamp-2 text-xs leading-[18px] text-github-text-primary">
                   {thread.messages[0]?.body}

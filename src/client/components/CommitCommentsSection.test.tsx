@@ -59,6 +59,7 @@ describe('CommitCommentsSection', () => {
     const { rerender } = renderSection({ onAddComment });
     fireEvent.click(screen.getByRole('button', { name: '이 커밋 전체에 지적 달기' }));
     expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
+    expect(screen.getByText(`› 커밋 ${FIRST.shortSha}`)).toBeInTheDocument();
 
     const next = { ...FIRST, sha: '2'.repeat(40), shortSha: '2222222' };
     rerender(section({ onAddComment, commits: [next] }));

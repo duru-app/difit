@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import type { ReviewCommit, ReviewScope, ReviewView, ReviewViewAction } from '../../types/diff';
+import { commitLocationLabel } from '../../utils/commentPosition';
 import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
 import { copyTextToClipboard } from '../utils/clipboard';
@@ -557,6 +558,7 @@ export function CommitList({
                           setCommenting(null);
                         }}
                         onCancel={() => setCommenting(null)}
+                        location={commitLocationLabel({ commit: commit.sha })}
                       />
                     </div>
                   )}

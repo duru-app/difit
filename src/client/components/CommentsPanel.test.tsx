@@ -70,6 +70,7 @@ function Harness({ initialFilter = 'remaining', navigationOff = false, ...props 
         threads={THREADS}
         statusById={STATUSES}
         resolvedThreadIds={new Set(['a20-late'])}
+        respondingThreadIds={new Set()}
         filter={filter}
         onFilterChange={setFilter}
         pickedThreadId={null}
@@ -131,6 +132,25 @@ describe('CommentsPanel', () => {
     const row = screen.getByRole('button', { name: /b\.ts:5/ });
     expect(row).toHaveTextContent('수정 중');
     expect(row).not.toHaveTextContent('열림');
+  });
+
+  it('shows that the agent is responding in place of the status chip', () => {
+    render(<Harness respondingThreadIds={new Set(['b5'])} />);
+
+    const row = screen.getByRole('button', { name: /b\.ts:5/ });
+    expect(within(row).getByTestId('responding-chip')).toHaveTextContent('응답 중');
+    expect(within(row).getAllByTestId('responding-dot')).toHaveLength(3);
+    expect(row).not.toHaveTextContent('열림');
+    const other = screen.getByRole('button', { name: /a\.ts:3-8/ });
+    expect(within(other).queryByTestId('responding-chip')).not.toBeInTheDocument();
+  });
+
+  it('keeps the resolved chip beside 응답 중, as the card does', () => {
+    render(<Harness initialFilter="all" respondingThreadIds={new Set(['a20-late'])} />);
+
+    const row = screen.getByRole('button', { name: /On a twenty, later/ });
+    expect(row).toHaveTextContent('해결');
+    expect(within(row).getByTestId('responding-chip')).toBeInTheDocument();
   });
 
   it('shows no pick count when nothing waits for a pick', () => {
