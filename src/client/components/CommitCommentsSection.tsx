@@ -1,7 +1,12 @@
 import { Check, Copy, MessageSquarePlus, Pencil } from 'lucide-react';
 import { useState } from 'react';
 
-import type { CommitThreadView, ReviewCommit, ReviewerReplyFields } from '../../types/diff';
+import type {
+  CommitThreadView,
+  DiffSelection,
+  ReviewCommit,
+  ReviewerReplyFields,
+} from '../../types/diff';
 import { commitLocationLabel } from '../../utils/commentPosition';
 import { isSameCommit } from '../../utils/diffSelection';
 import {
@@ -29,6 +34,7 @@ interface CommitCommentsSectionProps {
   threads: readonly CommitThreadView[];
   onAddComment?: (sha: string, body: string) => Promise<void>;
   reword?: RewordControls | undefined;
+  shownReview: DiffSelection;
   fixupOverlay: FixupOverlayState;
   showAuthorBadges: boolean;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
@@ -45,6 +51,7 @@ export function CommitCommentsSection({
   threads,
   onAddComment,
   reword,
+  shownReview,
   fixupOverlay,
   showAuthorBadges,
   syntaxTheme,
@@ -149,6 +156,7 @@ export function CommitCommentsSection({
               <CommitMessageForm
                 sha={commit}
                 controls={guardedReword}
+                shownReview={shownReview}
                 onClose={() => setRewording(null)}
               />
             )}

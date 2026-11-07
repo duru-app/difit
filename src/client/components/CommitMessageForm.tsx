@@ -1,13 +1,20 @@
 import React, { useEffect, useState } from 'react';
 
-import type { RewordRequest, RewriteWarning } from '../../types/diff';
+import type {
+  DiffSelection,
+  RewordRequest,
+  RewriteBlockingThread,
+  RewriteWarning,
+} from '../../types/diff';
 import { withoutThreadTrailers } from '../../utils/commitMessage';
+import { diffSelectionsEqual } from '../../utils/diffSelection';
 import type { DirectEditFailure } from '../contexts/FixupOverlayContext';
 import { rewordFailureMessage } from '../utils/directEdit';
 
 export interface RewordFailure extends DirectEditFailure {
   // Saving again with these acknowledged goes ahead.
   warnings?: RewriteWarning[];
+  blockingThreads?: RewriteBlockingThread[];
 }
 
 export interface RewordSaved {
@@ -20,15 +27,78 @@ export interface RewordControls {
   // The message the review shows for the commit; null when it could not be read.
   load: (sha: string) => Promise<string | null>;
   save: (request: RewordRequest) => Promise<RewordFailure | RewordSaved>;
+  showBlockingThread: (thread: RewriteBlockingThread) => void;
+}
+
+const MAX_BLOCKING_THREADS_SHOWN = 3;
+
+function locationOf({ commit, file, line }: RewriteBlockingThread, shownFile = file): string {
+  const lines = Array.isArray(line) ? line.join('-') : line;
+  const place = lines === undefined ? shownFile : `${shownFile}:${lines}`;
+  return [commit?.shortSha ?? '커밋하지 않은 변경', place, commit?.subject]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function BlockingThreads({
+  threads,
+  shownReview,
+  onShow,
+}: {
+  threads: RewriteBlockingThread[];
+  shownReview: DiffSelection;
+  onShow: (thread: RewriteBlockingThread) => void;
+}) {
+  const hiddenCount = threads.length - MAX_BLOCKING_THREADS_SHOWN;
+  return (
+    <div className="mt-1">
+      <p className="text-github-text-secondary">막고 있는 지적</p>
+      <ul className="m-0 list-none p-0">
+        {threads.slice(0, MAX_BLOCKING_THREADS_SHOWN).map((thread) => {
+          const inShownReview = diffSelectionsEqual(thread.review, shownReview);
+          const note = thread.deleted ? '지운 지적' : inShownReview ? null : '다른 리뷰';
+          const label = (
+            <>
+              <span className="min-w-0 truncate">
+                {locationOf(thread, thread.file?.split('/').at(-1))}
+              </span>
+              {note && <span className="shrink-0">{` · ${note}`}</span>}
+            </>
+          );
+          const rowClass = 'flex w-full items-baseline gap-1 text-left';
+          return (
+            <li key={`${thread.review.targetCommitish}:${thread.threadId}`}>
+              {thread.deleted && inShownReview ? (
+                <span className={rowClass} title={locationOf(thread)}>
+                  {label}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onShow(thread)}
+                  className={`${rowClass} text-sky-400 hover:text-sky-300 hover:underline`}
+                  title={locationOf(thread)}
+                >
+                  {label}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {hiddenCount > 0 && <p className="text-github-text-secondary">외 {hiddenCount}개</p>}
+    </div>
+  );
 }
 
 interface CommitMessageFormProps {
   sha: string;
   controls: RewordControls;
+  shownReview: DiffSelection;
   onClose: () => void;
 }
 
-export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormProps) {
+export function CommitMessageForm({ sha, controls, shownReview, onClose }: CommitMessageFormProps) {
   const [original, setOriginal] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [text, setText] = useState('');
@@ -128,6 +198,13 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
           className="mb-2 rounded border border-github-danger bg-github-danger/10 px-2 py-1.5 text-xs text-github-text-primary"
         >
           <p>{failure.message}</p>
+          {failure.blockingThreads && (
+            <BlockingThreads
+              threads={failure.blockingThreads}
+              shownReview={shownReview}
+              onShow={controls.showBlockingThread}
+            />
+          )}
           {failure.output && (
             <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-github-text-secondary">
               {failure.output}
