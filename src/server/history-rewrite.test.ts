@@ -940,6 +940,40 @@ describe('rewriteHistory with a new order', () => {
         'third',
       ]);
     });
+
+    describe.each([
+      ['its subject', (_: string) => 'below', (_: string) => 'below'],
+      ['its SHA', (sha: string) => sha, (sha: string) => sha],
+      ['its subject and its short SHA', (_: string) => 'below', (sha: string) => sha.slice(0, 7)],
+    ])('of a commit below the review base, named by %s', (_, firstName, secondName) => {
+      it('keeps them in order when the commits they follow swap', async () => {
+        const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+        repos.push(repo);
+        git(repo, 'init', '-q');
+        git(repo, 'checkout', '-q', '-b', 'feature');
+        commit(repo, 'base', { 'below.ts': '1\n2\n3\n' });
+        const below = commit(repo, 'below', { 'below.ts': '1\nX\n3\n' });
+        const second = commit(repo, 'second', { 'second.ts': '2\n' });
+        const firstFixup = `fixup! ${firstName(below)}`;
+        commit(repo, firstFixup, { 'below.ts': '1\nx1\n3\n' });
+        const third = commit(repo, 'third', { 'third.ts': '3\n' });
+        const secondFixup = `fixup! ${secondName(below)}`;
+        commit(repo, secondFixup, { 'below.ts': '1\nx2\n3\n' });
+        const fourth = commit(repo, 'fourth', { 'fourth.ts': '4\n' });
+        const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+
+        expectOk(await reorder(repo, below, [third, second, fourth]));
+
+        expect(subjects(repo, `${below}..HEAD`)).toEqual([
+          'third',
+          'second',
+          firstFixup,
+          secondFixup,
+          'fourth',
+        ]);
+        expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+      });
+    });
   });
 
   it('gives up on a conflict and leaves HEAD and the working tree', async () => {
