@@ -33,6 +33,7 @@ import {
   type FileCommentThread,
   type RevisionsResponse,
   type ReviewScope,
+  type ReorderRequest,
   type ReviewView,
   type ReviewViewAction,
   type RewordRequest,
@@ -40,7 +41,7 @@ import {
   type ShownThread,
 } from '../types/diff';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
-import { movedSelection } from '../utils/rewrittenShas';
+import { selectionAfterMoves } from '../utils/rewrittenShas';
 import {
   inStoredOrder,
   isOnCommit,
@@ -151,7 +152,11 @@ import {
   buildMergedChunksState,
   getMergedChunksForVersion,
 } from './utils/mergedChunks';
-import { directEditFailureMessage, rewordFailureMessage } from './utils/directEdit';
+import {
+  directEditFailureMessage,
+  reorderFailureMessage,
+  rewordFailureMessage,
+} from './utils/directEdit';
 import {
   type AnsweredThread,
   fixupFileKey,
@@ -1448,8 +1453,9 @@ function App() {
         }
         // Before the new SHAs reach the state: the comment and viewed hooks read the moved records.
         if (data.rewritten) {
-          storageService.moveRewrittenRecords(data.rewritten, data.repositoryId);
-          const moved = movedSelection(selectedRevisionRef.current, data.rewritten);
+          const moves = data.historyMoves ?? [{ rewritten: data.rewritten }];
+          storageService.moveRewrittenRecords(data.rewritten, data.repositoryId, moves);
+          const moved = selectionAfterMoves(selectedRevisionRef.current, moves);
           if (!diffSelectionsEqual(moved, selectedRevisionRef.current)) {
             selectedRevisionRef.current = moved;
             setSelectedRevision(moved);
@@ -1868,11 +1874,15 @@ function App() {
     },
     [getCommentApiUrl],
   );
-  const submitReword = useCallback(
-    async (request: RewordRequest): Promise<RewordFailure | null> => {
+  const postHistoryRewrite = useCallback(
+    async (
+      path: string,
+      request: RewordRequest | ReorderRequest,
+      messageOf: typeof rewordFailureMessage,
+    ): Promise<RewordFailure | null> => {
       let response: Response;
       try {
-        response = await fetch(getCommentApiUrl('/api/reword'), {
+        response = await fetch(getCommentApiUrl(path), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(request),
@@ -1886,7 +1896,7 @@ function App() {
         Partial<Extract<RewordResponse, { success: true }>>;
       if (!response.ok || !payload.success) {
         return {
-          message: rewordFailureMessage(
+          message: messageOf(
             payload.reason,
             payload.error ?? `${response.status} ${response.statusText}`,
             payload.warnings,
@@ -1900,6 +1910,14 @@ function App() {
     },
     [getCommentApiUrl],
   );
+  const submitReword = useCallback(
+    (request: RewordRequest) => postHistoryRewrite('/api/reword', request, rewordFailureMessage),
+    [postHistoryRewrite],
+  );
+  const submitOrder = useCallback(
+    (request: ReorderRequest) => postHistoryRewrite('/api/reorder', request, reorderFailureMessage),
+    [postHistoryRewrite],
+  );
   const reword = useMemo<RewordControls | undefined>(
     () =>
       diffData?.directEditAvailable && targetCommit
@@ -1907,6 +1925,7 @@ function App() {
         : undefined,
     [diffData?.directEditAvailable, targetCommit, loadCommitMessage, submitReword],
   );
+  const saveOrder = diffData?.directEditAvailable && targetCommit ? submitOrder : undefined;
   const directEdit = useMemo<DirectEditControls | null>(() => {
     if (!diffData?.directEditAvailable || !targetCommit) return null;
     if (!showsPartOfReview) return { commit: targetCommit, submit: submitDirectEdit };
@@ -3025,6 +3044,7 @@ function App() {
                 openCounts={openCountsByCommit}
                 amendedMessages={amendedMessages}
                 reword={reword}
+                onReorder={saveOrder}
                 onAddCommitComment={handleAddCommitComment}
               />
             </aside>
@@ -3123,6 +3143,7 @@ function App() {
                   openCounts={openCountsByCommit}
                   amendedMessages={amendedMessages}
                   reword={reword}
+                  onReorder={saveOrder}
                   onAddCommitComment={handleAddCommitComment}
                   height={commitListHeight}
                   onResize={handleCommitListResize}

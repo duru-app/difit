@@ -5,6 +5,7 @@ import type { DiffLine } from '../../types/diff';
 import {
   directEditFailureMessage,
   fetchLinesAt,
+  reorderFailureMessage,
   rewordFailureMessage,
   hunkRange,
   newSideLineNumbers,
@@ -117,5 +118,27 @@ describe('rewordFailureMessage', () => {
 
   it('says the agent is at work', () => {
     expect(rewordFailureMessage('agent-working', '')).toContain('에이전트가 작업 중입니다.');
+  });
+});
+
+describe('reorderFailureMessage', () => {
+  it('names moving, not saving, where the wording differs', () => {
+    expect(reorderFailureMessage('agent-working', 'x')).toBe(
+      '에이전트가 작업 중입니다. 에이전트가 답하거나 그 지적을 해결한 뒤 다시 옮겨 주세요.',
+    );
+    expect(reorderFailureMessage('conflict', 'x')).toContain('옮기기 전 이력으로 되돌렸습니다');
+  });
+
+  it('falls back on the wording it shares with a reword', () => {
+    expect(reorderFailureMessage('operation-in-progress', 'x')).toBe(
+      rewordFailureMessage('operation-in-progress', 'x'),
+    );
+    expect(reorderFailureMessage(undefined, 'server said no')).toBe('server said no');
+  });
+
+  it('says the warnings when there are any', () => {
+    expect(reorderFailureMessage('needs-confirmation', 'x', ['pushed-commit'])).toBe(
+      'push한 커밋이 바뀝니다. 다시 올리려면 force push가 필요합니다.',
+    );
   });
 });

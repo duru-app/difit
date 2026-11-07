@@ -366,3 +366,364 @@ describe('readRewriteState', () => {
     expect((await readRewriteState(repo, later, later)).rewritesPushedCommit).toBe(false);
   });
 });
+
+describe('rewriteHistory with a new order', () => {
+  function createStack() {
+    const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+    repos.push(repo);
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+    const first = commit(repo, 'first', { 'first.ts': '1\n' });
+    const second = commit(repo, 'second', { 'second.ts': '2\n' });
+    const third = commit(repo, 'third', { 'third.ts': '3\n' });
+    return { repo, base, first, second, third };
+  }
+  const reorder = (repo: string, base: string, order: string[]) =>
+    rewriteHistory(repo, { base, messages: new Map(), order });
+
+  it('puts the commits in that order, keeps the end tree and maps every replaced commit', async () => {
+    const { repo, base, first, second, third } = createStack();
+    const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+
+    const result = expectOk(await reorder(repo, base, [third, first, second]));
+
+    expect(subjects(repo, `${base}..HEAD`)).toEqual(['third', 'first', 'second']);
+    expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('feature');
+    expect(result.head).toBe(git(repo, 'rev-parse', 'HEAD'));
+    expect(result.rewritten).toEqual({
+      [third]: git(repo, 'rev-parse', 'HEAD~2'),
+      [first]: git(repo, 'rev-parse', 'HEAD~1'),
+      [second]: git(repo, 'rev-parse', 'HEAD'),
+    });
+  });
+
+  it('keeps the SHA of the commits before the first one that moves', async () => {
+    const { repo, base, first, second, third } = createStack();
+
+    const result = expectOk(await reorder(repo, base, [first, third, second]));
+
+    expect(git(repo, 'rev-parse', 'HEAD~2')).toBe(first);
+    expect(Object.keys(result.rewritten).sort()).toEqual([second, third].sort());
+  });
+
+  it('leaves an uncommitted change exactly as it was', async () => {
+    const { repo, base, first, second, third } = createStack();
+    writeFileSync(join(repo, 'a.ts'), 'a\nuncommitted\n');
+
+    expectOk(await reorder(repo, base, [second, first, third]));
+
+    expect(git(repo, 'status', '--porcelain')).toBe('M a.ts');
+    expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+  });
+
+  it('keeps a fixup above the reviewed commits there, naming the new SHA of its target', async () => {
+    const { repo, base, first, second, third } = createStack();
+    commit(repo, `fixup! ${first}\n\nReview-Thread: t1`, { 'first.ts': 'one\n' });
+    commit(repo, 'after the review', { 'later.ts': 'x\n' });
+
+    const result = expectOk(await reorder(repo, base, [second, third, first]));
+
+    const movedFirst = result.rewritten[first] ?? '';
+    expect(subjects(repo, `${base}..HEAD`)).toEqual([
+      'second',
+      'third',
+      'first',
+      `fixup! ${movedFirst}`,
+      'after the review',
+    ]);
+    expect(git(repo, 'log', '-1', '--format=%B', 'HEAD~1')).toContain('Review-Thread: t1');
+  });
+
+  function createStackWithFixup(place: 'after-target' | 'after-next') {
+    const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+    repos.push(repo);
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+    const first = commit(repo, 'first', { 'first.ts': '1\n' });
+    const fixup = () => commit(repo, `fixup! ${first}`, { 'first.ts': 'one\n' });
+    if (place === 'after-target') fixup();
+    const second = commit(repo, 'second', { 'second.ts': '2\n' });
+    if (place === 'after-next') fixup();
+    const third = commit(repo, 'third', { 'third.ts': '3\n' });
+    return { repo, base, first, second, third };
+  }
+
+  it('moves a fixup sitting between commits along with the commit before it', async () => {
+    const { repo, base, first, second, third } = createStackWithFixup('after-target');
+
+    const result = expectOk(await reorder(repo, base, [third, first, second]));
+
+    expect(subjects(repo, `${base}..HEAD`)).toEqual([
+      'third',
+      'first',
+      `fixup! ${result.rewritten[first] ?? ''}`,
+      'second',
+    ]);
+  });
+
+  it('keeps a fixup behind its target when the target moves past it', async () => {
+    const { repo, base, first, second, third } = createStackWithFixup('after-next');
+
+    const result = expectOk(await reorder(repo, base, [second, third, first]));
+
+    expect(subjects(repo, `${base}..HEAD`)).toEqual([
+      'second',
+      'third',
+      'first',
+      `fixup! ${result.rewritten[first] ?? ''}`,
+    ]);
+  });
+
+  describe('with several fixups of one commit', () => {
+    const FIXUP = 'fixup';
+
+    async function expectFixupsInOriginalOrder(
+      stack: readonly string[],
+      order: readonly string[],
+      expected: readonly string[],
+      edits: readonly string[],
+    ) {
+      const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+      repos.push(repo);
+      git(repo, 'init', '-q');
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+      const first = commit(repo, 'first', { 'first.ts': '1\n2\n3\n4\n5\n6\n' });
+      const shas = new Map([['first', first]]);
+      const pending = [...edits];
+      for (const name of stack) {
+        if (name === FIXUP) commit(repo, `fixup! ${first}`, { 'first.ts': pending.shift() ?? '' });
+        else shas.set(name, commit(repo, name, { [`${name}.ts`]: `${name}\n` }));
+      }
+      const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+
+      const result = expectOk(
+        await reorder(
+          repo,
+          base,
+          order.map((name) => shas.get(name) ?? ''),
+        ),
+      );
+
+      const movedFirst = result.rewritten[first] ?? first;
+      expect(subjects(repo, `${base}..HEAD`)).toEqual(
+        expected.map((name) => (name === FIXUP ? `fixup! ${movedFirst}` : name)),
+      );
+      expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+      const contentAfterEachFixup = git(repo, 'log', '--reverse', '--format=%H %s', `${base}..HEAD`)
+        .split('\n')
+        .filter((line) => line.includes(' fixup! '))
+        .map((line) => git(repo, 'show', `${line.split(' ')[0] ?? ''}:first.ts`));
+      expect(contentAfterEachFixup).toEqual(edits.map((edit) => edit.trim()));
+    }
+
+    const STACK_WITH_FIRST_FIXUP_ON_TARGET = [FIXUP, 'second', FIXUP, 'third'];
+    const STACK_WITH_FIXUPS_ON_LATER_COMMITS = ['second', FIXUP, 'third', FIXUP, 'fourth'];
+
+    describe.each([
+      ['the same line', ['one\n2\n3\n4\n5\n6\n', 'uno\n2\n3\n4\n5\n6\n']],
+      ['neighbouring lines', ['one\n2\n3\n4\n5\n6\n', 'one\ntwo\n3\n4\n5\n6\n']],
+    ])('editing %s', (_, edits) => {
+      it('keeps them in order when the target moves past only the later one', async () => {
+        await expectFixupsInOriginalOrder(
+          STACK_WITH_FIRST_FIXUP_ON_TARGET,
+          ['second', 'first', 'third'],
+          ['second', 'first', FIXUP, FIXUP, 'third'],
+          edits,
+        );
+      });
+
+      it('keeps them in order when the target moves past both', async () => {
+        await expectFixupsInOriginalOrder(
+          STACK_WITH_FIXUPS_ON_LATER_COMMITS,
+          ['third', 'second', 'first', 'fourth'],
+          ['third', 'second', 'first', FIXUP, FIXUP, 'fourth'],
+          edits,
+        );
+      });
+
+      it('keeps them in order when the commits they follow swap and the target stays', async () => {
+        await expectFixupsInOriginalOrder(
+          STACK_WITH_FIXUPS_ON_LATER_COMMITS,
+          ['first', 'third', 'second', 'fourth'],
+          ['first', 'third', 'second', FIXUP, FIXUP, 'fourth'],
+          edits,
+        );
+      });
+    });
+
+    it('keeps three of them on the same line in order', async () => {
+      await expectFixupsInOriginalOrder(
+        [FIXUP, 'second', FIXUP, 'third', FIXUP, 'fourth'],
+        ['third', 'second', 'first', 'fourth'],
+        ['third', 'second', 'first', FIXUP, FIXUP, FIXUP, 'fourth'],
+        ['one\n2\n3\n4\n5\n6\n', 'uno\n2\n3\n4\n5\n6\n', 'eins\n2\n3\n4\n5\n6\n'],
+      );
+    });
+
+    it('leaves fixups of different commits with the commits they follow', async () => {
+      const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+      repos.push(repo);
+      git(repo, 'init', '-q');
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+      const first = commit(repo, 'first', { 'first.ts': '1\n' });
+      commit(repo, `fixup! ${first}`, { 'first.ts': 'one\n' });
+      const second = commit(repo, 'second', { 'second.ts': '2\n' });
+      commit(repo, `fixup! ${second}`, { 'second.ts': 'two\n' });
+      const third = commit(repo, 'third', { 'third.ts': '3\n' });
+
+      const result = expectOk(await reorder(repo, base, [second, first, third]));
+
+      expect(subjects(repo, `${base}..HEAD`)).toEqual([
+        'second',
+        `fixup! ${result.rewritten[second] ?? ''}`,
+        'first',
+        `fixup! ${result.rewritten[first] ?? ''}`,
+        'third',
+      ]);
+    });
+
+    describe.each([
+      ['its subject', (_: string) => 'below', (_: string) => 'below'],
+      ['its SHA', (sha: string) => sha, (sha: string) => sha],
+      ['its subject and its short SHA', (_: string) => 'below', (sha: string) => sha.slice(0, 7)],
+    ])('of a commit below the review base, named by %s', (_, firstName, secondName) => {
+      it('keeps them in order when the commits they follow swap', async () => {
+        const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+        repos.push(repo);
+        git(repo, 'init', '-q');
+        git(repo, 'checkout', '-q', '-b', 'feature');
+        commit(repo, 'base', { 'below.ts': '1\n2\n3\n' });
+        const below = commit(repo, 'below', { 'below.ts': '1\nX\n3\n' });
+        const second = commit(repo, 'second', { 'second.ts': '2\n' });
+        const firstFixup = `fixup! ${firstName(below)}`;
+        commit(repo, firstFixup, { 'below.ts': '1\nx1\n3\n' });
+        const third = commit(repo, 'third', { 'third.ts': '3\n' });
+        const secondFixup = `fixup! ${secondName(below)}`;
+        commit(repo, secondFixup, { 'below.ts': '1\nx2\n3\n' });
+        const fourth = commit(repo, 'fourth', { 'fourth.ts': '4\n' });
+        const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+
+        expectOk(await reorder(repo, below, [third, second, fourth]));
+
+        expect(subjects(repo, `${below}..HEAD`)).toEqual([
+          'third',
+          'second',
+          firstFixup,
+          secondFixup,
+          'fourth',
+        ]);
+        expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+      });
+    });
+  });
+
+  it('gives up on a conflict and leaves HEAD and the working tree', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+    repos.push(repo);
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+    const adds = commit(repo, 'adds a line', { 'a.ts': 'a\nb\n' });
+    const edits = commit(repo, 'edits that line', { 'a.ts': 'a\nB\n' });
+
+    const result = await reorder(repo, base, [edits, adds]);
+
+    expect(result).toMatchObject({ ok: false, reason: 'conflict' });
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(edits);
+    expect(git(repo, 'status', '--porcelain')).toBe('');
+    expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+  });
+
+  it('refuses when HEAD moved while the rebase ran', async () => {
+    const { repo, base, first, second, third } = createStack();
+    process.env.BEFORE_UPDATE_REF = `git -C '${repo}' commit -q --allow-empty -m 'came in meanwhile'`;
+
+    const result = await reorder(repo, base, [second, first, third]);
+
+    expect(result).toMatchObject({ ok: false, reason: 'head-moved' });
+    expect(subjects(repo, `${base}..HEAD`)).toEqual([
+      'first',
+      'second',
+      'third',
+      'came in meanwhile',
+    ]);
+  });
+
+  it('refuses an order naming a commit that is not on the line of the range', async () => {
+    const { repo, base, first, second, third } = createStack();
+
+    const result = await reorder(repo, base, [second, first, third, 'f'.repeat(40)]);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(third);
+  });
+
+  describe('with a merge in the range', () => {
+    function createMerge() {
+      const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+      repos.push(repo);
+      git(repo, 'init', '-q');
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      const base = commit(repo, 'base', { 'a.ts': 'a\n' });
+      const before = commit(repo, 'before the side branch', { 'before.ts': 'b\n' });
+      git(repo, 'checkout', '-q', '-b', 'side');
+      const onSide = commit(repo, 'on the side', { 'side.ts': 's\n' });
+      git(repo, 'checkout', '-q', 'feature');
+      const beside = commit(repo, 'beside the side branch', { 'beside.ts': 'b\n' });
+      git(repo, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side');
+      const merge = git(repo, 'rev-parse', 'HEAD');
+      const after = commit(repo, 'after the merge', { 'after.ts': 'a\n' });
+      return { repo, base, before, onSide, beside, merge, after };
+    }
+    const mergeShape = (repo: string, range: string) =>
+      git(repo, 'log', '--first-parent', '--reverse', '--format=%s', range).split('\n');
+
+    it('moves a commit from above the merge to below it and keeps the merge and its branch', async () => {
+      const { repo, base, before, beside, merge, after, onSide } = createMerge();
+      const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+
+      const result = expectOk(await reorder(repo, base, [before, beside, after, merge]));
+
+      expect(mergeShape(repo, `${base}..HEAD`)).toEqual([
+        'before the side branch',
+        'beside the side branch',
+        'after the merge',
+        'merge side',
+      ]);
+      expect(git(repo, 'log', '--merges', '--format=%s', `${base}..HEAD`)).toBe('merge side');
+      expect(git(repo, 'log', '--format=%s', 'HEAD^2', '-1')).toBe('on the side');
+      expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+      expect(result.rewritten[onSide]).toBeUndefined();
+    });
+
+    it('moves a commit older than the fork past the fork, with the side branch still growing from it', async () => {
+      const { repo, base, before, beside, merge, after } = createMerge();
+
+      expectOk(await reorder(repo, base, [beside, before, merge, after]));
+
+      expect(mergeShape(repo, `${base}..HEAD`)).toEqual([
+        'beside the side branch',
+        'before the side branch',
+        'merge side',
+        'after the merge',
+      ]);
+      expect(git(repo, 'log', '--merges', '--format=%s', `${base}..HEAD`)).toBe('merge side');
+    });
+
+    it('leaves the history when the commit the side branch grows from moves past its merge', async () => {
+      const { repo, base, before, beside, merge, after } = createMerge();
+
+      const result = await reorder(repo, base, [beside, merge, before, after]);
+
+      expect(result).toMatchObject({ ok: false, reason: 'conflict' });
+      expect(git(repo, 'rev-parse', 'HEAD')).toBe(after);
+      expect(git(repo, 'status', '--porcelain')).toBe('');
+      expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+    });
+  });
+});

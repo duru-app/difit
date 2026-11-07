@@ -3481,13 +3481,83 @@ describe('App Component - Commits of the review', () => {
       original: 'first step',
       message: 'first step, renamed',
     });
-    expect(moveRecords).toHaveBeenCalledWith(rewritten, 'repo-1');
+    expect(moveRecords).toHaveBeenCalledWith(rewritten, 'repo-1', [{ rewritten }]);
     expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).toBeNull();
     await waitFor(() => {
       const revisionReads = vi
         .mocked(global.fetch)
         .mock.calls.filter(([url]) => String(url) === '/api/revisions');
       expect(revisionReads).toHaveLength(2);
+    });
+  });
+
+  it('moves a commit by its handle and keeps showing that commit on its new SHA', async () => {
+    directEditAvailable = true;
+    const newFirst = 'f'.repeat(40);
+    const newSecond = 'e'.repeat(40);
+    const place = ({ sha, parentSha }: { sha: string; parentSha: string }) => ({ sha, parentSha });
+    const reordered = [
+      { ...COMMITS[1]!, sha: newSecond, shortSha: 'eeeeeee', parentSha: full('def4567') },
+      { ...COMMITS[0]!, sha: newFirst, shortSha: 'fffffff', parentSha: newSecond },
+    ];
+    const rewritten = { [COMMITS[0]!.sha]: newFirst, [COMMITS[1]!.sha]: newSecond };
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    let saved = false;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/reorder')) {
+        saved = true;
+        review = {
+          selection: { baseCommitish: 'def4567', targetCommitish: 'fffffff' },
+          requested: { baseCommitish: full('def4567'), targetCommitish: newFirst },
+          commits: reordered,
+        };
+        return {
+          ok: true,
+          json: async () => ({ success: true, rewritten, version: 1, threads: [], decisions: [] }),
+        } as Response;
+      }
+      if (!saved || !url.startsWith('/api/diff')) return answer(input, init);
+      return {
+        ok: true,
+        json: async () => ({
+          ...viewOf(full('def4567'), newSecond),
+          repositoryId: 'repo-1',
+          rewritten,
+          historyMoves: [
+            {
+              rewritten,
+              reorder: { before: COMMITS.map(place), after: reordered.map(place) },
+            },
+          ],
+        }),
+      } as Response;
+    });
+
+    renderApp();
+    fireEvent.click(await waitFor(() => commitButton(/abc1234/)));
+    await waitFor(() => expect(commitButton(/abc1234/)).toHaveAttribute('aria-current', 'true'));
+
+    const rows = within(screen.getByRole('region', { name: '리뷰 범위의 커밋' })).getAllByRole(
+      'button',
+      { name: '순서 바꾸기' },
+    );
+    fireEvent.pointerDown(rows[1]!, { button: 0 });
+    const target = commitButton(/1111111/).closest<HTMLElement>('[data-reorder-at]')!;
+    document.elementFromPoint = vi.fn(() => target);
+    onTestFinished(() => {
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    });
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 0, height: 10 } as DOMRect);
+    fireEvent.pointerMove(window, { clientX: 5, clientY: 2 });
+    fireEvent.pointerUp(window, { clientX: 5, clientY: 2 });
+
+    await waitFor(() => expect(commitButton(/eeeeeee/)).toHaveAttribute('aria-current', 'true'));
+    const posted = vi
+      .mocked(global.fetch)
+      .mock.calls.find(([url]) => String(url).startsWith('/api/reorder'))!;
+    expect(JSON.parse(String(posted[1]?.body))).toEqual({
+      order: [COMMITS[1]!.sha, COMMITS[0]!.sha],
     });
   });
 
