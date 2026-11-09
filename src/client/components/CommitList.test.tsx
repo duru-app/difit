@@ -646,7 +646,160 @@ describe('CommitList', () => {
     it('keeps it on screen in the phone drawer', () => {
       renderCommentable({ kind: 'all' }, { inDrawer: true });
 
-      expect(commentButtonOf('2222222').className).not.toContain('opacity-0');
+      expect(commentButtonOf('2222222').parentElement!.className).not.toContain('opacity-0');
+    });
+  });
+
+  describe('row buttons', () => {
+    const actionsOf = (name: RegExp) =>
+      within(row(name).closest('li')!).getByRole('button', { name: COPY_NAME }).parentElement!;
+    const isHidden = (element: HTMLElement) => element.className.split(' ').includes('opacity-0');
+    const TOUCH_HIDDEN = '[@media(hover:none)]:hidden';
+
+    function renderWithButtons({ inDrawer = false } = {}) {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          inDrawer={inDrawer}
+          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          onAddCommitComment={vi.fn(async () => {})}
+        />,
+      );
+    }
+
+    it('lays them over the end of the subject, hidden until the row is hovered or focused', () => {
+      renderWithButtons();
+
+      const actions = actionsOf(/2222222/);
+      expect(actions.className).toContain('absolute');
+      expect(isHidden(actions)).toBe(true);
+      expect(actions.className).toContain('group-hover:opacity-100');
+      expect(actions.className).toContain('group-has-[:focus-visible]:opacity-100');
+      expect(within(actions).getAllByRole('button')).toHaveLength(3);
+    });
+
+    it('turns the open count into the comment button, beside the other buttons rather than under them', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      expect(comment).toHaveTextContent('2');
+      expect(comment).toHaveAttribute('title', '열린 지적 2개 · 이 커밋 전체에 지적 달기');
+      const actions = actionsOf(/2222222/);
+      expect(actions.contains(comment)).toBe(false);
+      expect(isHidden(actions)).toBe(true);
+      expect(isHidden(comment.parentElement!)).toBe(false);
+      expect(actions.className).toContain('right-full');
+      expect(within(actions).getAllByRole('button')).toHaveLength(2);
+
+      fireEvent.click(comment);
+      expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
+    });
+
+    it('keeps them in line in the phone drawer of a device with hover', () => {
+      renderWithButtons({ inDrawer: true });
+
+      expect(actionsOf(/2222222/).className.split(' ')).toContain('contents');
+    });
+
+    it.each([
+      ['in the side list', false],
+      ['in the drawer', true],
+    ])('takes them out of the row on touch devices %s', (_where, inDrawer) => {
+      renderWithButtons({ inDrawer });
+
+      expect(actionsOf(/2222222/).className.split(' ')).toContain(TOUCH_HIDDEN);
+    });
+
+    it('takes the open count button out of the row on touch devices too', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      expect(comment.parentElement!.className.split(' ')).toContain(TOUCH_HIDDEN);
+    });
+
+    it('shows the open count inside the row on touch devices only, where tapping it opens the commit', () => {
+      const onSelect = vi.fn();
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={onSelect}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const count = within(row(/2222222/)).getByTitle('열린 지적 2개');
+      expect(count).toHaveTextContent('2');
+      expect(count.className).toContain('fixup-review:text-github-text-secondary');
+      expect(count.parentElement!.className.split(' ')).toEqual(
+        expect.arrayContaining(['hidden', '[@media(hover:none)]:contents']),
+      );
+
+      fireEvent.click(count);
+      expect(onSelect).toHaveBeenCalledWith({ kind: 'click', sha: COMMITS[1]!.sha });
+      expect(screen.queryByPlaceholderText(/comment/i)).toBeNull();
+    });
+
+    it('keeps them on screen while the message editor or the comment form of that row is open', async () => {
+      renderWithButtons();
+
+      fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: '메시지 고치기' }));
+      await screen.findByRole('textbox');
+      expect(isHidden(actionsOf(/2222222/))).toBe(false);
+      expect(isHidden(actionsOf(/3333333/))).toBe(true);
+
+      fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: '메시지 고치기' }));
+      expect(isHidden(actionsOf(/2222222/))).toBe(true);
+
+      fireEvent.click(
+        within(actionsOf(/3333333/)).getByRole('button', { name: '커밋에 지적 달기' }),
+      );
+      expect(isHidden(actionsOf(/3333333/))).toBe(false);
+    });
+
+    it('keeps them on screen while the hash reads as copied', async () => {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn().mockResolvedValue(undefined) },
+        configurable: true,
+      });
+      vi.useFakeTimers();
+      try {
+        renderWithButtons();
+
+        await act(async () => {
+          fireEvent.click(within(actionsOf(/2222222/)).getByRole('button', { name: COPY_NAME }));
+        });
+        expect(isHidden(actionsOf(/2222222/))).toBe(false);
+
+        act(() => vi.advanceTimersByTime(2000));
+        expect(isHidden(actionsOf(/2222222/))).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
