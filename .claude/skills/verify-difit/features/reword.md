@@ -24,8 +24,8 @@ Saving is a browser action with no CLI, so it goes to the API the browser writes
 ```bash
 S=$(bash .claude/skills/verify-difit/harness.sh new)
 ( . "$S/env.sh"; cd "$REPO"
-  git commit -q --allow-empty -m 'add thrid'
   git checkout -q -b feature
+  git commit -q --allow-empty -m 'add thrid'
 ) 
 bash .claude/skills/verify-difit/harness.sh start "$S" HEAD HEAD~2
 ( . "$S/env.sh"; cd "$REPO"
