@@ -166,6 +166,31 @@ describe('findStackedBranches', () => {
     });
   });
 
+  it('keeps a branch that a rebase with --update-refs in another worktree will move in place', async () => {
+    const { dir, repo, a } = stackedRepo();
+    const rebasing = join(dir, 'rebasing');
+    git(repo, 'worktree', 'add', '-q', rebasing, '-b', 'top', 'up');
+    commit(rebasing, 'top');
+    git(
+      rebasing,
+      '-c',
+      'sequence.editor=sed -i "s/^pick \\(.* top\\)$/edit \\1/"',
+      'rebase',
+      '-q',
+      '-i',
+      '--update-refs',
+      'HEAD~2',
+    );
+
+    expect(await find(repo, a)).toMatchObject({
+      moving: [{ name: 'low' }],
+      left: [
+        { name: 'top', why: 'operation' },
+        { name: 'up', why: 'operation' },
+      ],
+    });
+  });
+
   it('keeps a branch under rebase in the main worktree in place, read from a linked one', async () => {
     const { dir, repo, a } = stackedRepo();
     const linked = join(dir, 'linked');
