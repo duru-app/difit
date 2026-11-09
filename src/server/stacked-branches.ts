@@ -33,7 +33,8 @@ async function readIfPresent(path: string): Promise<string | null> {
   }
 }
 
-// A worktree stopped in a rebase or a bisect shows as detached, so only these files tell its branch.
+// A worktree stopped in a rebase or a bisect shows as detached, and a rebase with --update-refs
+// holds more branches than its own, so only these files tell which branches are in use.
 async function branchesInOperation(repoPath: string): Promise<Set<string>> {
   const [common = ''] = await gitLines(repoPath, ['rev-parse', '--git-common-dir']);
   const commonDir = resolve(repoPath, common);
@@ -48,7 +49,14 @@ async function branchesInOperation(repoPath: string): Promise<Set<string>> {
       ].map(readIfPresent),
     ),
   );
-  return new Set(names.flatMap((name) => (name ? [shortName(name)] : [])));
+  // `rebase --update-refs` lists each branch it will move as a ref line followed by two object ids.
+  const updated = await Promise.all(
+    gitDirs.map((gitDir) => readIfPresent(join(gitDir, 'rebase-merge', 'update-refs'))),
+  );
+  const updatedBranches = updated.flatMap((text) =>
+    (text ?? '').split('\n').filter((line) => line.startsWith(BRANCH_PREFIX)),
+  );
+  return new Set([...names, ...updatedBranches].flatMap((name) => (name ? [shortName(name)] : [])));
 }
 
 export async function findStackedBranches(
