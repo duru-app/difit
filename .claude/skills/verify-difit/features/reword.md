@@ -7,7 +7,9 @@ The reviewer changes a commit's message from the commit list. difit rewrites the
 - `POST /api/reword`, which rewrites the history and returns the old-to-new map
 - `GET /api/commit-message`, which fills the edit form
 - The warning on the default branch, passed with `acknowledged`
-- Other local branches holding the reworded commit move with HEAD; one open in another worktree stays and is named in the warning `branch-elsewhere`
+- Other local branches holding the reworded commit move with HEAD; one open in another worktree stays and is named in the warning `branch-elsewhere`, and the default branch stays and is named in `default-branch-left`
+- A symbolic branch (`refs/heads/master` pointing at `main`) is judged as the branch it points at
+- Stopping the server mid-rewrite, or starting it again after a kill, leaves no temporary worktree
 - Refusals: a git operation in progress, HEAD or a moving branch moved, a merge that conflicts when rebuilt, in HEAD's history or in a moving branch
 - `/api/diff`, `/api/fixups`, `/api/comments-json` and `difit comment get` on the new SHAs
 
@@ -66,6 +68,10 @@ Stacked branches: before `start`, stack `work2` on the reviewed branch and `work
 ```
 
 The POST without `acknowledged` answers 409 with `"warnings":["branch-elsewhere"]` and `"warningBranches":{"branch-elsewhere":["work3"]}`, and no ref moves. With `"acknowledged":["branch-elsewhere"]` it answers 200 with `"branches":{"moved":["work2"],"left":[{"name":"work3","why":"worktree"}]}`. Then `git log --format=%s feature..work2` is `stacked work` on the new HEAD (`git rev-parse work2~1` equals `git rev-parse HEAD`), `git reflog -1 work2` says `difit: rewrite history`, `work3` is where it was, and `git -C "$S/other" status --porcelain` stays empty. A branch under `git rebase -i` or `git bisect` in the other worktree stays too, with `"why":"operation"`.
+
+The default branch holding the reworded commit while HEAD is on another branch: start on `feature` above the seeded `main` and reword `add sub`. The POST answers 409 with `"warnings":["default-branch-left"]` and `"warningBranches":{"default-branch-left":["main"]}`. With that warning acknowledged it answers 200 with `"left":[{"name":"main","why":"default"}]` and `main` is where it was. Add `git symbolic-ref refs/heads/master refs/heads/main` first and the answers are the same.
+
+Stopping mid-rewrite: stack 150 empty commits on a branch above `feature`, POST in the background, and once `.git/worktrees/worktree/rebase-merge` exists send `kill -INT` (or `-TERM`) to the pid in `server.json`. `git worktree list` has one line afterwards and no `difit-history-rewrite-*` folder is left in the server's `TMPDIR`. With `kill -9` both are left until `start` runs again on the same repository.
 
 ## Gotchas
 

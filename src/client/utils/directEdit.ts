@@ -162,6 +162,8 @@ const REWORD_FAILURE_MESSAGES: Record<RewordRejection, string> = {
 
 const REWRITE_WARNING_MESSAGES: Record<RewriteWarning, (branches: string) => string> = {
   'default-branch': () => '기본 브랜치의 이력이 바뀝니다.',
+  'default-branch-left': (branches) =>
+    `기본 브랜치 ${branches}는 옮기지 않습니다. 옛 커밋에 남아 지금 브랜치와 갈라집니다.`,
   'branch-elsewhere': (branches) =>
     `다른 작업 폴더에서 쓰는 브랜치 ${branches}는 옮기지 않습니다. 옛 커밋에 남습니다.`,
 };

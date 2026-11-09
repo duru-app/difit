@@ -619,13 +619,12 @@ export interface RewordRequest {
   acknowledged?: RewriteWarning[];
 }
 
-export type RewriteWarning = 'default-branch' | 'branch-elsewhere';
+export type RewriteWarning = 'default-branch' | 'default-branch-left' | 'branch-elsewhere';
 
 // Stays on the old commits after the rewrite.
 export interface LeftBranch {
   name: string;
-  // Checked out in another worktree, or under a rebase or bisect there.
-  why: 'worktree' | 'operation';
+  why: 'default' | 'worktree' | 'operation';
 }
 
 export type RewordRejection =

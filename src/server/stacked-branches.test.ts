@@ -82,12 +82,12 @@ describe('findStackedBranches', () => {
     });
   });
 
-  it('leaves out a branch below the oldest commit and the default branch, without a word', async () => {
+  it('leaves out a branch below the oldest commit, and keeps the default branch in place by name', async () => {
     const { repo, a, b } = stackedRepo();
     git(repo, 'branch', '-f', 'main', b);
 
     expect((await find(repo, b)).moving.map(({ name }) => name)).toEqual(['up']);
-    expect(await find(repo, a, 'main')).toMatchObject({ left: [] });
+    expect(await find(repo, a, 'main')).toMatchObject({ left: [{ name: 'main', why: 'default' }] });
     expect((await find(repo, a, null)).moving.map(({ name }) => name)).toEqual([
       'low',
       'main',
@@ -102,6 +102,48 @@ describe('findStackedBranches', () => {
     expect(await find(repo, a)).toMatchObject({
       moving: [{ name: 'low' }],
       left: [{ name: 'up', why: 'worktree' }],
+    });
+  });
+
+  it('neither moves nor names a symbolic branch, and judges the branch it points at', async () => {
+    const { dir, repo, a, b } = stackedRepo();
+    git(repo, 'branch', '-f', 'main', b);
+    git(repo, 'symbolic-ref', 'refs/heads/master', 'refs/heads/main');
+    git(repo, 'symbolic-ref', 'refs/heads/head-alias', 'refs/heads/work1');
+    git(repo, 'symbolic-ref', 'refs/heads/up-alias', 'refs/heads/up');
+    git(repo, 'checkout', '-q', '-b', 'opened', 'up');
+    git(repo, 'checkout', '-q', 'work1');
+    git(repo, 'worktree', 'add', '-q', join(dir, 'other'), 'opened');
+    git(repo, 'symbolic-ref', 'refs/heads/opened-alias', 'refs/heads/opened');
+
+    expect(await find(repo, a)).toEqual({
+      moving: [
+        { name: 'low', tip: a },
+        { name: 'up', tip: git(repo, 'rev-parse', 'up') },
+      ],
+      left: [
+        { name: 'main', why: 'default' },
+        { name: 'opened', why: 'worktree' },
+      ],
+      pushed: [],
+    });
+  });
+
+  it('follows a symbolic name given for HEAD’s branch or the default branch', async () => {
+    const { repo, a, b } = stackedRepo();
+    git(repo, 'branch', '-f', 'main', b);
+    git(repo, 'symbolic-ref', 'refs/heads/master', 'refs/heads/main');
+    git(repo, 'symbolic-ref', 'refs/heads/current', 'refs/heads/work1');
+
+    expect(
+      await findStackedBranches(repo, {
+        oldest: a,
+        headBranch: 'current',
+        defaultBranch: 'master',
+      }),
+    ).toMatchObject({
+      moving: [{ name: 'low' }, { name: 'up' }],
+      left: [{ name: 'main', why: 'default' }],
     });
   });
 

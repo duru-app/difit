@@ -73,4 +73,20 @@ describe('checkRewrite', () => {
       warningBranches: { 'branch-elsewhere': ['work2', 'rebasing'] },
     });
   });
+
+  it('warns about the default branch left on the old commits apart from the other branches', () => {
+    expect(
+      checkRewrite({
+        ...FEATURE_BRANCH,
+        leftBranches: [
+          { name: 'main', why: 'default' },
+          { name: 'work2', why: 'worktree' },
+        ],
+      }),
+    ).toEqual({
+      blocks: [],
+      warnings: ['default-branch-left', 'branch-elsewhere'],
+      warningBranches: { 'default-branch-left': ['main'], 'branch-elsewhere': ['work2'] },
+    });
+  });
 });

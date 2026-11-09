@@ -64,7 +64,7 @@ export async function findStackedBranches(
       'for-each-ref',
       '--contains',
       oldest,
-      '--format=%(refname)%00%(objectname)%00%(worktreepath)%00%(upstream)',
+      '--format=%(refname)%00%(objectname)%00%(worktreepath)%00%(upstream)%00%(symref)',
       'refs/heads',
     ]),
     gitLines(repoPath, [
@@ -77,12 +77,30 @@ export async function findStackedBranches(
     branchesInOperation(repoPath),
   ]);
   const pushedUpstreams = new Set(remotes);
+  const branches = heads.map((line) => {
+    const [ref = '', tip = '', worktree = '', upstream = '', symref = ''] = line.split('\0');
+    return { name: shortName(ref), tip, worktree, upstream, symref };
+  });
+  const aliases = new Map(
+    branches.flatMap(({ name, symref }) =>
+      symref.startsWith(BRANCH_PREFIX) ? [[name, shortName(symref)] as const] : [],
+    ),
+  );
+  const resolveAlias = (name: string | null) => {
+    let resolved = name;
+    while (resolved !== null && aliases.has(resolved)) resolved = aliases.get(resolved) ?? null;
+    return resolved;
+  };
+  const head = resolveAlias(headBranch);
+  const defaultName = resolveAlias(defaultBranch);
   const result: StackedBranches = { moving: [], left: [], pushed: [] };
-  for (const line of heads) {
-    const [ref = '', tip = '', worktree = '', upstream = ''] = line.split('\0');
-    const name = shortName(ref);
-    const isHead = name === headBranch;
-    if (!isHead && name === defaultBranch) continue;
+  for (const { name, tip, worktree, upstream, symref } of branches) {
+    if (symref !== '') continue;
+    const isHead = name === head;
+    if (!isHead && name === defaultName) {
+      result.left.push({ name, why: 'default' });
+      continue;
+    }
     if (!isHead && worktree !== '') {
       result.left.push({ name, why: 'worktree' });
       continue;

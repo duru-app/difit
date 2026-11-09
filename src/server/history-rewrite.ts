@@ -1,6 +1,6 @@
 import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 
 import type { LeftBranch, RewrittenShas } from '../types/diff.js';
 import { threadIdsOf, withThreadTrailer } from '../utils/commitMessage.js';
@@ -69,13 +69,14 @@ async function plannedTodo(
   dir: string,
   generated: string,
   landedAt: ReadonlyMap<string, string>,
+  signal: AbortSignal,
 ): Promise<{ todo: string; commits: string[] }> {
   const lines = generated.split('\n');
   const abbreviated = lines.flatMap((line) => {
     const [, sha] = /^(?:pick|merge -C) ([0-9a-f]+)/.exec(line) ?? [];
     return sha === undefined ? [] : [sha];
   });
-  const full = (await gitText(dir, ['rev-parse', ...abbreviated])).split('\n');
+  const full = (await gitText(dir, ['rev-parse', ...abbreviated], { signal })).split('\n');
   const todo: string[] = [];
   const commits: string[] = [];
   let next = 0;
@@ -97,16 +98,24 @@ async function plannedTodo(
   return { todo: todo.join('\n'), commits };
 }
 
-async function readMessages(repoPath: string, commits: string[]): Promise<Map<string, string>> {
-  const log = await runGit(repoPath, [
-    'log',
-    '--no-walk=unsorted',
-    '--no-show-signature',
-    '--encoding=UTF-8',
-    '--format=%x00%H%x00%B',
-    ...commits,
-    '--',
-  ]);
+async function readMessages(
+  repoPath: string,
+  commits: string[],
+  signal: AbortSignal,
+): Promise<Map<string, string>> {
+  const log = await runGit(
+    repoPath,
+    [
+      'log',
+      '--no-walk=unsorted',
+      '--no-show-signature',
+      '--encoding=UTF-8',
+      '--format=%x00%H%x00%B',
+      ...commits,
+      '--',
+    ],
+    { signal },
+  );
   if (log.code !== 0) throw new Error(`git log failed: ${log.output}`);
   const fields = log.stdout.toString('utf8').split('\0');
   const messages = new Map<string, string>();
@@ -166,18 +175,26 @@ const rewriteConfig = (hooks: string) => [
   'i18n.commitEncoding=UTF-8',
 ];
 
-async function listCommits(repoPath: string, range: string): Promise<TodoCommit[]> {
+async function listCommits(
+  repoPath: string,
+  range: string,
+  signal: AbortSignal,
+): Promise<TodoCommit[]> {
   return (
-    await gitText(repoPath, [
-      'log',
-      '--reverse',
-      '--no-merges',
-      '--no-show-signature',
-      '--encoding=UTF-8',
-      '--format=%H%x00%s',
-      range,
-      '--',
-    ])
+    await gitText(
+      repoPath,
+      [
+        'log',
+        '--reverse',
+        '--no-merges',
+        '--no-show-signature',
+        '--encoding=UTF-8',
+        '--format=%H%x00%s',
+        range,
+        '--',
+      ],
+      { signal },
+    )
   )
     .split('\n')
     .map((line) => {
@@ -187,6 +204,41 @@ async function listCommits(repoPath: string, range: string): Promise<TodoCommit[
 }
 
 const OBJECT_NAME = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const REWRITE_DIR_PREFIX = 'difit-history-rewrite-';
+const OWNER_FILE = 'owner';
+const INTERRUPTING_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+
+async function removeRewriteDir(repoPath: string, dir: string): Promise<void> {
+  const removed = await runGit(repoPath, ['worktree', 'remove', '--force', join(dir, 'worktree')]);
+  await fs.rm(dir, { recursive: true, force: true });
+  if (removed.code !== 0) await runGit(repoPath, ['worktree', 'prune']);
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export async function removeAbandonedRewrites(repoPath: string): Promise<void> {
+  const listed = await runGit(repoPath, ['worktree', 'list', '--porcelain']);
+  if (listed.code !== 0) return;
+  const dirs = listed.stdout
+    .toString('utf8')
+    .split('\n')
+    .flatMap((line) => (line.startsWith('worktree ') ? [line.slice('worktree '.length)] : []))
+    .filter((path) => basename(path) === 'worktree')
+    .map(dirname)
+    .filter((dir) => basename(dir).startsWith(REWRITE_DIR_PREFIX));
+  for (const dir of dirs) {
+    const owner = Number(await fs.readFile(join(dir, OWNER_FILE), 'utf8').catch(() => ''));
+    if (!Number.isInteger(owner) || owner <= 0 || isRunning(owner)) continue;
+    await removeRewriteDir(repoPath, dir);
+  }
+}
 
 export async function rewriteHistory(
   repoPath: string,
@@ -212,25 +264,30 @@ export async function rewriteHistory(
   );
   byLength.sort((a, b) => b.length - a.length);
 
-  const dir = await fs.mkdtemp(join(tmpdir(), 'difit-history-rewrite-'));
+  const dir = await fs.mkdtemp(join(tmpdir(), REWRITE_DIR_PREFIX));
+  const interrupted = new AbortController();
+  const { signal } = interrupted;
+  let received: NodeJS.Signals | undefined;
+  const interrupt = (name: NodeJS.Signals) => {
+    received ??= name;
+    interrupted.abort();
+  };
+  for (const name of INTERRUPTING_SIGNALS) process.on(name, interrupt);
   const hooks = join(dir, 'no-hooks');
   const worktree = join(dir, 'worktree');
-  await fs.mkdir(hooks);
   const config = rewriteConfig(hooks);
   try {
-    const added = await runGit(repoPath, [
-      ...config,
-      'worktree',
-      'add',
-      '--quiet',
-      '--detach',
-      worktree,
-      head,
-    ]);
+    await fs.writeFile(join(dir, OWNER_FILE), `${process.pid}\n`);
+    await fs.mkdir(hooks);
+    const added = await runGit(
+      repoPath,
+      [...config, 'worktree', 'add', '--quiet', '--detach', worktree, head],
+      { signal },
+    );
     if (added.code !== 0) return { ok: false, reason: 'commit-failed', output: added.output };
-    const replay = new Replay(repoPath, worktree, dir, config, `${oldest}^`);
+    const replay = new Replay(repoPath, worktree, dir, config, `${oldest}^`, signal);
     const replayed = await replay.run(
-      messagePlanner(await listCommits(repoPath, range), request.messages),
+      messagePlanner(await listCommits(repoPath, range, signal), request.messages),
     );
     if (!replayed.ok) return replayed;
     for (const { name, tip } of byLength) {
@@ -238,7 +295,10 @@ export async function rewriteHistory(
       const moved =
         (await replay.checkout(tip)) ??
         (await replay.run(
-          messagePlanner(await listCommits(repoPath, `${request.base}..${tip}`), request.messages),
+          messagePlanner(
+            await listCommits(repoPath, `${request.base}..${tip}`, signal),
+            request.messages,
+          ),
         ));
       if (!moved.ok) return { ...moved, output: `Moving branch ${name}: ${moved.output ?? ''}` };
     }
@@ -251,7 +311,9 @@ export async function rewriteHistory(
     // Only messages change, so every tip keeps its files.
     for (const { name, tip, landed } of [{ name: 'HEAD', tip: head, landed: newHead }, ...moves]) {
       const [oldTree, newTree] = await Promise.all(
-        [tip, landed].map((commit) => gitText(worktree, ['rev-parse', `${commit}^{tree}`])),
+        [tip, landed].map((commit) =>
+          gitText(worktree, ['rev-parse', `${commit}^{tree}`], { signal }),
+        ),
       );
       if (oldTree !== newTree) {
         return {
@@ -277,6 +339,7 @@ export async function rewriteHistory(
     ) {
       return { ok: false, reason: 'commit-failed', output: updates.join('\n') };
     }
+    signal.throwIfAborted();
     const written = await runGit(
       repoPath,
       ['-c', `core.hooksPath=${hooks}`, 'update-ref', '-m', 'difit: rewrite history', '--stdin'],
@@ -292,9 +355,9 @@ export async function rewriteHistory(
     }
     return { ok: false, reason: await whatMoved(repoPath, head, moves), output: written.output };
   } finally {
-    const removed = await runGit(repoPath, ['worktree', 'remove', '--force', worktree]);
-    await fs.rm(dir, { recursive: true, force: true });
-    if (removed.code !== 0) await runGit(repoPath, ['worktree', 'prune']);
+    await removeRewriteDir(repoPath, dir);
+    for (const name of INTERRUPTING_SIGNALS) process.off(name, interrupt);
+    if (received && process.listenerCount(received) === 0) process.kill(process.pid, received);
   }
 }
 
@@ -327,27 +390,26 @@ class Replay {
     private readonly dir: string,
     private readonly config: string[],
     private readonly upstream: string,
+    private readonly signal: AbortSignal,
   ) {}
 
   async checkout(tip: string): Promise<Failure | null> {
-    const run = await runGit(this.worktree, [
-      ...this.config,
-      'checkout',
-      '--quiet',
-      '--detach',
-      tip,
-    ]);
+    const { worktree, config, signal } = this;
+    const run = await runGit(worktree, [...config, 'checkout', '--quiet', '--detach', tip], {
+      signal,
+    });
     return run.code === 0 ? null : { ok: false, reason: 'commit-failed', output: run.output };
   }
 
   async run(plan: ReturnType<typeof messagePlanner>): Promise<{ ok: true } | Failure> {
-    const { worktree, config } = this;
+    const { worktree, config, signal } = this;
     const generatedPath = join(this.dir, 'generated-todo');
     const todoPath = join(this.dir, 'todo');
     await fs.rm(generatedPath, { force: true });
     const rebase = (args: string[], sequenceEditor: string) =>
       runGit(worktree, [...config, 'rebase', ...args], {
         env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: sequenceEditor },
+        signal,
       });
     const start = [
       '--interactive',
@@ -364,12 +426,14 @@ class Replay {
     );
     const generated = await fs.readFile(generatedPath, 'utf8').catch(() => null);
     if (generated === null) return { ok: false, reason: 'commit-failed', output: listing.output };
-    const { todo, commits } = await plannedTodo(worktree, generated, this.landedAt);
+    const { todo, commits } = await plannedTodo(worktree, generated, this.landedAt, signal);
     await fs.writeFile(todoPath, todo);
-    const current = await readMessages(this.repoPath, commits);
+    const current = await readMessages(this.repoPath, commits, signal);
 
     const stuck = async (output: string): Promise<Failure> => {
-      const state = await gitText(worktree, ['rev-parse', '--git-path', 'rebase-merge']);
+      const state = await gitText(worktree, ['rev-parse', '--git-path', 'rebase-merge'], {
+        signal,
+      });
       return {
         ok: false,
         reason: existsSync(resolve(worktree, state)) ? 'conflict' : 'commit-failed',
@@ -396,13 +460,13 @@ class Replay {
             '--cleanup=verbatim',
             '--file=-',
           ],
-          { input: Buffer.from(`${planned}\n`, 'utf8') },
+          { input: Buffer.from(`${planned}\n`, 'utf8'), signal },
         );
         if (amended.code !== 0) {
           return { ok: false, reason: 'commit-failed', output: amended.output };
         }
       }
-      const landed = await gitText(worktree, ['rev-parse', 'HEAD']);
+      const landed = await gitText(worktree, ['rev-parse', 'HEAD'], { signal });
       this.landedAt.set(commit, landed);
       if (landed !== commit) this.rewritten[commit] = landed;
       run = await rebase(['--continue'], 'true');

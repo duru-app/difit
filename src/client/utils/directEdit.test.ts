@@ -110,6 +110,14 @@ describe('rewordFailureMessage', () => {
     );
   });
 
+  it('says the default branch stays on the old commits and parts from the current branch', () => {
+    expect(
+      rewordFailureMessage('needs-confirmation', '', ['default-branch-left'], {
+        'default-branch-left': ['main'],
+      }),
+    ).toBe('기본 브랜치 main는 옮기지 않습니다. 옛 커밋에 남아 지금 브랜치와 갈라집니다.');
+  });
+
   it('asks to save again when a branch moved during the save', () => {
     expect(rewordFailureMessage('branch-moved', 'Reword refused: branch-moved')).toBe(
       '저장하는 동안 브랜치가 바뀌어 이력을 바꾸지 않았습니다. 다시 저장해 주세요.',
