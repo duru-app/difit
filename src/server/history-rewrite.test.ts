@@ -1,10 +1,18 @@
-import { execFileSync } from 'child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { execFileSync, spawnSync } from 'child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { delimiter, join } from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { type HistoryRewrite, rewriteHistory } from './history-rewrite';
+import { type HistoryRewrite, removeAbandonedRewrites, rewriteHistory } from './history-rewrite';
 
 let home: string;
 const savedEnv = { ...process.env };
@@ -49,6 +57,7 @@ afterAll(() => {
 
 afterEach(() => {
   delete process.env.BEFORE_UPDATE_REF;
+  delete process.env.TMPDIR;
   for (const repo of repos.splice(0)) {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -473,6 +482,52 @@ describe('rewriteHistory', () => {
       const result = expectOk(await reword(repo, base, first, 'main'));
 
       expect(tip(repo, 'main')).toBe(second);
+      expect(result.branches).toEqual({
+        moved: ['low', 'up'],
+        left: [{ name: 'main', why: 'default' }],
+      });
+    });
+
+    it('keeps the default branch in place when a symbolic name points at it', async () => {
+      const { repo, base, first, second } = stackedRepo();
+      git(repo, 'branch', '-f', 'main', second);
+      git(repo, 'symbolic-ref', 'refs/heads/master', 'refs/heads/main');
+
+      const result = expectOk(await reword(repo, base, first, 'main'));
+
+      expect(tip(repo, 'main')).toBe(second);
+      expect(git(repo, 'symbolic-ref', 'refs/heads/master')).toBe('refs/heads/main');
+      expect(result.branches).toEqual({
+        moved: ['low', 'up'],
+        left: [{ name: 'main', why: 'default' }],
+      });
+    });
+
+    it('keeps a branch open in another worktree in place when a symbolic name points at it', async () => {
+      const { repo, base, first, third } = stackedRepo();
+      const other = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-other-'));
+      repos.push(other);
+      git(repo, 'worktree', 'add', '-q', join(other, 'wt'), 'up');
+      git(repo, 'symbolic-ref', 'refs/heads/up-alias', 'refs/heads/up');
+
+      const result = expectOk(await reword(repo, base, first));
+
+      expect(tip(repo, 'up')).toBe(third);
+      expect(git(join(other, 'wt'), 'rev-parse', 'HEAD')).toBe(third);
+      expect(result.branches).toEqual({ moved: ['low'], left: [{ name: 'up', why: 'worktree' }] });
+    });
+
+    it('rewrites when symbolic names point at HEAD’s branch and at a moving branch', async () => {
+      const { repo, base, first } = stackedRepo();
+      git(repo, 'symbolic-ref', 'refs/heads/alias', 'refs/heads/feature');
+      git(repo, 'symbolic-ref', 'refs/heads/up-alias', 'refs/heads/up');
+
+      const result = expectOk(await reword(repo, base, first));
+
+      expect(tip(repo, 'alias')).toBe(result.head);
+      expect(tip(repo, 'up-alias')).toBe(tip(repo, 'up'));
+      expect(git(repo, 'rev-parse', 'up~1')).toBe(result.head);
+      expect(git(repo, 'symbolic-ref', 'refs/heads/alias')).toBe('refs/heads/feature');
       expect(result.branches).toEqual({ moved: ['low', 'up'], left: [] });
     });
 
@@ -556,5 +611,77 @@ describe('rewriteHistory', () => {
         });
       },
     );
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('a rewrite cut short', { timeout: 30_000 }, () => {
+  const worktrees = (repo: string) => git(repo, 'worktree', 'list').split('\n');
+  const scratch = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-scratch-'));
+    repos.push(dir);
+    return dir;
+  };
+
+  it('removes its worktree and temporary folder when the server is told to stop', async () => {
+    const { repo, base, first } = createRepo();
+    git(repo, 'checkout', '-q', '-b', 'up');
+    for (let i = 0; i < 60; i += 1) git(repo, 'commit', '-q', '--allow-empty', '-m', `up ${i}`);
+    git(repo, 'checkout', '-q', 'feature');
+    const state = () => ({
+      refs: git(repo, 'for-each-ref', '--format=%(refname) %(objectname)'),
+      head: git(repo, 'symbolic-ref', 'HEAD'),
+      status: git(repo, 'status', '--porcelain'),
+    });
+    const before = state();
+    const temp = scratch();
+    process.env.TMPDIR = temp;
+    const keepRunning = () => {};
+    process.on('SIGHUP', keepRunning);
+    try {
+      let settled = false;
+      const running = rewrite(repo, { base, messages: new Map([[first, 'add feature']]) }).then(
+        (result) => result,
+        (error: unknown) => error,
+      );
+      void running.finally(() => {
+        settled = true;
+      });
+      const midRebase = join(repo, '.git', 'worktrees', 'worktree', 'rebase-merge');
+      while (!settled && !existsSync(midRebase)) await new Promise((r) => setTimeout(r, 5));
+      expect(settled).toBe(false);
+
+      process.emit('SIGHUP', 'SIGHUP');
+      const result = await running;
+
+      expect(result).toMatchObject({ name: 'AbortError' });
+      expect(state()).toEqual(before);
+      expect(worktrees(repo)).toHaveLength(1);
+      expect(readdirSync(temp)).toEqual([]);
+    } finally {
+      process.off('SIGHUP', keepRunning);
+    }
+  });
+
+  it('removes at startup a rewrite whose server is gone, and leaves one whose server runs', async () => {
+    const { repo } = createRepo();
+    const temp = scratch();
+    const rewriteDir = (owner: number) => {
+      const dir = mkdtempSync(join(temp, 'difit-history-rewrite-'));
+      writeFileSync(join(dir, 'owner'), `${owner}\n`);
+      git(repo, 'worktree', 'add', '-q', '--detach', join(dir, 'worktree'), 'HEAD');
+      return dir;
+    };
+    const gone = spawnSync(process.execPath, ['-e', '']).pid;
+    const abandoned = rewriteDir(gone);
+    const live = rewriteDir(process.pid);
+    const unowned = mkdtempSync(join(temp, 'difit-history-rewrite-'));
+    git(repo, 'worktree', 'add', '-q', '--detach', join(unowned, 'worktree'), 'HEAD');
+
+    await removeAbandonedRewrites(repo);
+
+    expect(existsSync(abandoned)).toBe(false);
+    expect(existsSync(join(live, 'worktree'))).toBe(true);
+    expect(existsSync(join(unowned, 'worktree'))).toBe(true);
+    expect(worktrees(repo)).toHaveLength(3);
   });
 });

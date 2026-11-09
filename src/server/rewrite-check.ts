@@ -28,9 +28,14 @@ export function checkRewrite(state: RewriteState): RewriteCheck {
   if (state.branch !== null && state.branch === state.defaultBranch) {
     warnings.push('default-branch');
   }
-  if (state.leftBranches.length > 0) {
-    warnings.push('branch-elsewhere');
-    warningBranches['branch-elsewhere'] = state.leftBranches.map(({ name }) => name);
+  const byWarning = [
+    ['default-branch-left', state.leftBranches.filter(({ why }) => why === 'default')],
+    ['branch-elsewhere', state.leftBranches.filter(({ why }) => why !== 'default')],
+  ] as const;
+  for (const [warning, left] of byWarning) {
+    if (left.length === 0) continue;
+    warnings.push(warning);
+    warningBranches[warning] = left.map(({ name }) => name);
   }
   return { blocks, warnings, warningBranches };
 }

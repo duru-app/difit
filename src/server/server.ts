@@ -55,7 +55,7 @@ import { validateCommitish } from '../cli/utils.js';
 import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
 import { commitDirectEdit, type EditedView } from './direct-edit.js';
-import { readRewriteState, rewriteHistory } from './history-rewrite.js';
+import { readRewriteState, removeAbandonedRewrites, rewriteHistory } from './history-rewrite.js';
 import { checkRewrite } from './rewrite-check.js';
 import { chooseFixupTarget } from './fixup-target.js';
 import { FileWatcherService } from './file-watcher.js';
@@ -2562,6 +2562,12 @@ export async function startServer(options: ServerOptions): Promise<{
       console.warn('⚠️  File watcher failed to start:', error);
       console.warn('   Continuing without file watching...');
     }
+  }
+
+  if (!options.stdinDiff && listensOnLoopbackOnly) {
+    void removeAbandonedRewrites(repositoryPath).catch((error: unknown) => {
+      console.error('Error removing an abandoned history rewrite:', error);
+    });
   }
 
   if (options.clearComments && listensOnLoopbackOnly) {

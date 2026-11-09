@@ -23,13 +23,18 @@ const parserStartup = vi.hoisted(() => ({ validCommit: true, emptyDiff: false })
 const commitDirectEdit = vi.hoisted(() => vi.fn());
 const rewriteHistory = vi.hoisted(() => vi.fn());
 const readRewriteState = vi.hoisted(() => vi.fn());
+const removeAbandonedRewrites = vi.hoisted(() => vi.fn(async () => {}));
 
 const searchSymbol = vi.hoisted(() => vi.fn());
 const findLibrarySource = vi.hoisted(() => vi.fn());
 const reviewCommits = vi.hoisted(() => ({ list: [] as unknown[] }));
 
 vi.mock('./direct-edit.js', () => ({ commitDirectEdit }));
-vi.mock('./history-rewrite.js', () => ({ readRewriteState, rewriteHistory }));
+vi.mock('./history-rewrite.js', () => ({
+  readRewriteState,
+  removeAbandonedRewrites,
+  rewriteHistory,
+}));
 vi.mock('./symbol-search.js', () => ({ searchSymbol }));
 vi.mock('./library-source.js', () => ({ findLibrarySource, sourceLocations: () => ({}) }));
 
