@@ -34,6 +34,9 @@
   --color-composer-line: rgb(255 255 255 / 0.15);
   --color-composer-focus: #3c82f7;
 
+  --color-agent: #b18cff;
+  --color-agent-bg: #2a2140;
+
   --animate-responding-dot: responding-dot 0.9s ease-in-out infinite;
 
   @keyframes responding-dot {
@@ -284,6 +287,8 @@ tr.drag-selected-last td::after {
   --color-composer-field: #f6f8fa;
   --color-composer-line: #d1d9e0;
   --composer-shadow: 0 4px 24px rgb(0 0 0 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.06);
+  --color-agent: #7c3aed;
+  --color-agent-bg: #f3ecff;
 }
 
 /* Dark theme word highlight */

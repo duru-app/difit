@@ -90,3 +90,22 @@ describe('global.css files only a fixup changed', () => {
     expect(header['border-top-color']).toBe('var(--color-github-warning)');
   });
 });
+
+describe('global.css agent message colors', () => {
+  const propertiesOf = (predicate: (selector: string) => boolean) =>
+    new Set(declarationsOf(rulesMatching(predicate)).map(({ prop }) => prop));
+  const themeProperties = new Set<string>();
+  stylesheet.walkAtRules('theme', (rule) => {
+    rule.walkDecls((declaration) => {
+      themeProperties.add(declaration.prop);
+    });
+  });
+
+  it('defines the agent colors for both themes', () => {
+    const lightProperties = propertiesOf((selector) => selector === '[data-theme="light"]');
+    for (const property of ['--color-agent', '--color-agent-bg']) {
+      expect(themeProperties).toContain(property);
+      expect(lightProperties).toContain(property);
+    }
+  });
+});
