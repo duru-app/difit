@@ -1447,27 +1447,26 @@ export class GitDiffParser {
   }
 
   async getDefaultBranch(): Promise<string | null> {
-    try {
-      // Try to get the default branch from origin/HEAD
-      const result = await this.git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD']);
-      // Result will be like "refs/remotes/origin/main\n"
-      const match = result.trim().match(/refs\/remotes\/origin\/(.+)/);
-      if (match) {
-        return match[1];
-      }
-    } catch {
-      // If origin/HEAD is not set, fall back to common default branches
-      const commonDefaults = ['main', 'master'];
-      const branchResult = await this.git.branchLocal();
-      const branchNames = Object.keys(branchResult.branches);
-
-      for (const defaultName of commonDefaults) {
-        if (branchNames.includes(defaultName)) {
-          return defaultName;
-        }
-      }
+    const [remoteHead, heads] = await Promise.all([
+      this.git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD']).catch(() => ''),
+      this.git.raw(['for-each-ref', '--format=%(refname)%00%(upstream)', 'refs/heads']),
+    ]);
+    const branches = heads
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => {
+        const [ref = '', upstream = ''] = line.split('\0');
+        return { name: ref.replace(/^refs\/heads\//, ''), upstream };
+      });
+    const has = (name: string) => branches.some((branch) => branch.name === name);
+    const remoteDefault = remoteHead.trim();
+    const remoteName = remoteDefault.replace(/^refs\/remotes\/origin\//, '');
+    if (remoteDefault !== '' && remoteName !== remoteDefault) {
+      if (has(remoteName)) return remoteName;
+      const tracking = branches.find(({ upstream }) => upstream === remoteDefault);
+      if (tracking) return tracking.name;
     }
-    return null;
+    return ['main', 'master'].find(has) ?? null;
   }
 
   async getOriginDefaultBranch(): Promise<string | null> {
