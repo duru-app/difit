@@ -3000,9 +3000,9 @@ function App() {
             <aside
               id="commit-drawer"
               inert={!isCommitDrawerOpen}
-              className="fixed inset-y-0 right-0 z-40 w-[min(85vw,360px)] flex flex-col bg-github-bg-secondary border-l border-github-border transition-transform duration-300 ease-out"
+              className="fixed inset-y-0 left-0 z-40 w-[min(85vw,360px)] flex flex-col bg-github-bg-secondary border-r border-github-border transition-transform duration-300 ease-out"
               style={{
-                transform: isCommitDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
+                transform: isCommitDrawerOpen ? 'translateX(0)' : 'translateX(calc(-100% - 1px))',
               }}
             >
               <CommitList
@@ -3059,7 +3059,7 @@ function App() {
               inert={!isFileTreeShown}
               className={`bg-github-bg-secondary overflow-y-auto flex flex-col ${
                 isMobile
-                  ? 'fixed inset-y-0 right-0 z-40 w-[min(85vw,360px)] border-l border-github-border transition-transform duration-300 ease-out'
+                  ? 'fixed inset-y-0 left-0 z-40 w-[min(85vw,360px)] border-r border-github-border transition-transform duration-300 ease-out'
                   : 'relative border-r border-github-border'
               }`}
               style={{
@@ -3074,7 +3074,7 @@ function App() {
                 transform: isMobile
                   ? isFileDrawerOpen
                     ? 'translateX(0)'
-                    : 'translateX(100%)'
+                    : 'translateX(calc(-100% - 1px))'
                   : undefined,
               }}
             >
