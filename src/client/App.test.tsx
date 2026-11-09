@@ -4216,6 +4216,29 @@ describe('App Component - Commits of the review', () => {
 
         expect(screen.queryByRole('status')).not.toBeInTheDocument();
       });
+
+      it('slides the file and commit drawers in from the left and the comments drawer from the right', async () => {
+        renderApp();
+        await screen.findByText('Look here');
+        const fileDrawer = document.getElementById('file-tree-panel')!;
+        const commitDrawer = document.getElementById('commit-drawer')!;
+        const commentsDrawer = commentsPanel()!;
+
+        for (const drawer of [fileDrawer, commitDrawer]) {
+          expect(drawer).toHaveClass('left-0', 'border-r');
+          expect(drawer).not.toHaveClass('right-0');
+          expect(drawer.style.transform).toBe('translateX(calc(-100% - 1px))');
+        }
+        expect(commentsDrawer).toHaveClass('right-0', 'border-l');
+        expect(commentsDrawer).not.toHaveClass('left-0');
+        expect(commentsDrawer.style.transform).toBe('translateX(100%)');
+
+        fireEvent.click(drawerButton());
+        expect(commitDrawer.style.transform).toBe('translateX(0)');
+        fireEvent.click(screen.getByRole('button', { name: '커밋 목록 닫기' }));
+        fireEvent.click(screen.getByRole('button', { name: /toggle file tree panel/i }));
+        expect(fileDrawer.style.transform).toBe('translateX(0)');
+      });
     });
   });
 
