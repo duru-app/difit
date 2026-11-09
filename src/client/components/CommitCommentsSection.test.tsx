@@ -143,6 +143,37 @@ describe('CommitCommentsSection', () => {
     expect(screen.queryByRole('region', { name: '커밋 지적' })).toBeNull();
   });
 
+  it('shows the body of the one commit shown when it can read messages', async () => {
+    const loadMessage = vi.fn(async () => 'first step\n\nWhy it is needed.');
+    renderSection({ loadMessage });
+
+    const region = screen.getByRole('region', { name: '커밋 지적' });
+    expect(await within(region).findByText('Why it is needed.')).toBeInTheDocument();
+    expect(loadMessage).toHaveBeenCalledExactlyOnceWith(FIRST.sha);
+  });
+
+  it('shows the message an amend! will leave on the one commit shown', () => {
+    const loadMessage = vi.fn(async () => 'first step');
+    renderSection({
+      loadMessage,
+      amendedMessages: new Map([[FIRST.sha, 'first step, renamed\n\nWhy.']]),
+    });
+
+    expect(screen.getByText('바뀔 메시지')).toBeInTheDocument();
+    expect(loadMessage).not.toHaveBeenCalled();
+  });
+
+  it('shows no body while several commits are shown', () => {
+    const loadMessage = vi.fn(async () => 'step');
+    renderSection({
+      commits: [FIRST, { ...FIRST, sha: '2'.repeat(40), shortSha: '2222222', subject: 'second' }],
+      loadMessage,
+    });
+
+    expect(screen.queryByRole('region', { name: '커밋 지적' })).toBeNull();
+    expect(loadMessage).not.toHaveBeenCalled();
+  });
+
   it('does not carry an open form over to the next commit shown', () => {
     const onAddComment = vi.fn(async () => {});
     const { rerender } = renderSection({ onAddComment });

@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HotkeysProvider } from 'react-hotkeys-hook';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import '@testing-library/jest-dom';
 
 import { mockFetch } from '../../vitest.setup';
@@ -3492,11 +3492,11 @@ describe('App Component - Commits of the review', () => {
     expect(screen.queryByRole('button', { name: '메시지 고치기' })).toBeNull();
   });
 
-  it('lists no commits for a review of one commit or one that is not pinned', async () => {
+  it('lists the commit of a one-commit review and no commits of one that is not pinned', async () => {
     review = { ...REVIEW, commits: COMMITS.slice(1) };
     const { unmount } = renderApp();
     await screen.findByText('Look here');
-    expect(screen.queryByRole('region', { name: '리뷰 범위의 커밋' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '리뷰 범위의 커밋' })).toBeInTheDocument();
     unmount();
 
     review = undefined;
@@ -3545,6 +3545,34 @@ describe('App Component - Commits of the review', () => {
     act(() => window.history.back());
     await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
     expect(diffQueries().at(-1)).toEqual([COMMITS[0]!.parentSha, COMMITS[0]!.sha]);
+  });
+
+  it('shows the message above the diff on a touch screen wider than a phone', async () => {
+    const hoverQuery = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: query.includes('min-width'),
+          media: query,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        }) as unknown as MediaQueryList,
+    );
+    onTestFinished(() => hoverQuery.mockRestore());
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation((input, init) =>
+      String(input).startsWith('/api/commit-message')
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({ message: 'first step\n\nWhy this step was needed' }),
+          } as Response)
+        : answer(input, init),
+    );
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+
+    fireEvent.click(commitButton(/1111111/));
+
+    expect(await screen.findByText(/Why this step was needed/)).toBeInTheDocument();
   });
 
   it('draws a comment from before commit views only on the whole review and its last commit', async () => {
@@ -4312,13 +4340,13 @@ describe('App Component - Commits of the review', () => {
     });
   });
 
-  it('offers no commit drawer on a phone for a review of one commit', async () => {
+  it('offers the commit drawer on a phone for a review of one commit', async () => {
     vi.mocked(useViewport).mockReturnValue({ isMobile: true, isDesktop: false });
     review = { ...REVIEW, commits: COMMITS.slice(1) };
     renderApp();
     await screen.findByText('Look here');
 
-    expect(screen.queryByRole('button', { name: '커밋 목록' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '커밋 목록' })).toBeInTheDocument();
     vi.mocked(useViewport).mockReturnValue({ isMobile: false, isDesktop: true });
   });
 
