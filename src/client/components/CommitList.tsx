@@ -14,7 +14,6 @@ import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
 import { useCopyCommitHash } from '../hooks/useCopyCommitHash';
 import { useGuardedReword } from '../hooks/useGuardedReword';
-import { movedBranchesNotice } from '../utils/directEdit';
 
 import { CommentCount } from './CommentCount';
 import { CommentForm } from './CommentForm';
@@ -26,6 +25,7 @@ import {
   useCommitHoverCard,
 } from './CommitMessageBody';
 import { CommitMessageForm, type RewordControls } from './CommitMessageForm';
+import { MovedBranchesNotice } from './MovedBranchesNotice';
 
 interface CommitListProps {
   review: Pick<ReviewScope, 'requested' | 'commits'>;
@@ -431,21 +431,7 @@ export function CommitList({
           onLeave={hoverCard.leave}
         />
       )}
-      {movedBranches.length > 0 && (
-        <div className="shrink-0 flex items-center gap-2 px-4 py-1 text-xs bg-github-bg-tertiary border-t border-github-border">
-          <p role="status" className="min-w-0 flex-1 text-github-text-secondary">
-            {movedBranchesNotice(movedBranches)}
-          </p>
-          <button
-            type="button"
-            aria-label="알림 닫기"
-            onClick={dismissMovedBranches}
-            className="shrink-0 p-0.5 text-github-text-muted hover:text-github-text-primary"
-          >
-            <X size={12} />
-          </button>
-        </div>
-      )}
+      <MovedBranchesNotice branches={movedBranches} onDismiss={dismissMovedBranches} />
       {isListShown && (
         <ul
           ref={listRef}
