@@ -10,6 +10,9 @@ import { withoutThreadTrailers } from '../../utils/commitMessage';
 import { diffSelectionsEqual } from '../../utils/diffSelection';
 import type { DirectEditFailure } from '../contexts/FixupOverlayContext';
 import { rewordFailureMessage } from '../utils/directEdit';
+import { shortRef } from '../utils/symbolPeek';
+
+import { SPECIAL_LABEL_OVERRIDES } from './DiffQuickMenu';
 
 export interface RewordFailure extends DirectEditFailure {
   // Saving again with these acknowledged goes ahead.
@@ -30,12 +33,27 @@ export interface RewordControls {
   showBlockingThread: (thread: RewriteBlockingThread) => void;
 }
 
-function locationOf({ commit, file, line }: RewriteBlockingThread, shownFile = file): string {
+function lineOf({ commit, file, line }: RewriteBlockingThread, shownFile = file): string {
   const lines = Array.isArray(line) ? line.join('-') : line;
   const place = lines === undefined ? shownFile : `${shownFile}:${lines}`;
-  return [commit?.shortSha ?? '커밋하지 않은 변경', place, commit?.subject]
-    .filter(Boolean)
-    .join(' · ');
+  const fixed = commit
+    ? [commit.shortSha, commit.subject].filter(Boolean).join(' ')
+    : '커밋하지 않은 변경';
+  return place === undefined ? fixed : `${fixed} ← ${place}`;
+}
+
+const refLabel = (ref: string) => SPECIAL_LABEL_OVERRIDES[ref] ?? shortRef(ref);
+
+function explanationOf(thread: RewriteBlockingThread, onScreen: boolean): string {
+  const opens = thread.deleted
+    ? onScreen
+      ? '지운 코멘트라 열 카드가 없습니다.'
+      : '지운 코멘트. 누르면 그 코멘트가 있던 리뷰를 엽니다.'
+    : `에이전트가 ${thread.commit ? `${thread.commit.shortSha} 커밋` : '커밋하지 않은 변경'}을 고치려는 코멘트. 누르면 그 코멘트를 엽니다.`;
+  const where = onScreen
+    ? ''
+    : ` 다른 리뷰(${refLabel(thread.review.baseCommitish)}..${refLabel(thread.review.targetCommitish)})에 있습니다.`;
+  return `${lineOf(thread)}\n${opens}${where}`;
 }
 
 function BlockingThreads({
@@ -56,20 +74,20 @@ function BlockingThreads({
       <ul className="m-0 max-h-32 list-none overflow-auto p-0">
         {ordered.map((thread) => {
           const onScreen = inShownReview(thread);
-          const note = thread.deleted ? '지운 지적' : onScreen ? null : '다른 리뷰';
+          const explanation = explanationOf(thread, onScreen);
           const label = (
             <>
               <span className="min-w-0 truncate">
-                {locationOf(thread, thread.file?.split('/').at(-1))}
+                {lineOf(thread, thread.file?.split('/').at(-1))}
               </span>
-              {note && <span className="shrink-0">{` · ${note}`}</span>}
+              {thread.deleted && <span className="shrink-0"> · 지운 지적</span>}
             </>
           );
           const rowClass = 'flex w-full items-baseline gap-1 text-left';
           return (
             <li key={`${thread.review.targetCommitish}:${thread.threadId}`}>
               {thread.deleted && onScreen ? (
-                <span className={rowClass} title={locationOf(thread)}>
+                <span className={rowClass} title={explanation}>
                   {label}
                 </span>
               ) : (
@@ -77,7 +95,8 @@ function BlockingThreads({
                   type="button"
                   onClick={() => onShow(thread)}
                   className={`${rowClass} text-sky-400 hover:text-sky-300 hover:underline`}
-                  title={locationOf(thread)}
+                  title={explanation}
+                  aria-label={explanation}
                 >
                   {label}
                 </button>
