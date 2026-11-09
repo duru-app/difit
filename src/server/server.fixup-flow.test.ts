@@ -712,6 +712,54 @@ it(
   },
 );
 
+it('keeps a local master tracking origin’s default main in place as the default branch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const repo = join(dir, 'repo');
+  const remote = join(dir, 'remote.git');
+  git(dir, ['init', '-q', '-b', 'master', repo]);
+  git(dir, ['init', '-q', '--bare', remote]);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  git(repo, ['remote', 'add', 'origin', remote]);
+  git(repo, ['push', '-q', 'origin', 'master:main']);
+  git(repo, ['remote', 'set-head', 'origin', 'main']);
+  git(repo, ['branch', '-q', '-u', 'origin/main', 'master']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const tip = commit(repo, 'tip', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9282,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const reword = (extra: object) =>
+    fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo', ...extra }),
+    });
+
+  const warned = await reword({});
+  expect(warned.status).toBe(409);
+  expect(await warned.json()).toMatchObject({
+    warnings: ['default-branch-left'],
+    warningBranches: { 'default-branch-left': ['master'] },
+  });
+
+  const confirmed = await reword({ acknowledged: ['default-branch-left'] });
+  expect(confirmed.status).toBe(200);
+  expect(((await confirmed.json()) as { branches: unknown }).branches).toEqual({
+    moved: [],
+    left: [{ name: 'master', why: 'default' }],
+  });
+  expect(git(repo, ['rev-parse', 'master'])).toBe(typo);
+  expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
+});
+
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
