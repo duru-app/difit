@@ -1037,7 +1037,7 @@ describe('CommentThreadCard', () => {
       expect(within(boxOf('Agent reply')).getByText('Agent')).toBeInTheDocument();
     });
 
-    it('draws an agent message in the agent box and the reviewer’s in a lined box', () => {
+    it('draws both messages in lined boxes and fills only the agent’s', () => {
       renderConversation(true);
 
       const userBox = boxOf('Root comment');
@@ -1045,7 +1045,7 @@ describe('CommentThreadCard', () => {
       expect(userBox).toHaveClass('border-github-border');
       expect(userBox).not.toHaveClass('bg-agent-bg');
       expect(within(userBox).getByText('User')).toHaveClass('text-github-text-secondary');
-      expect(agentBox).toHaveClass('border-transparent', 'bg-agent-bg');
+      expect(agentBox).toHaveClass('border-github-border', 'bg-agent-bg');
       expect(within(agentBox).getByText('Agent')).toHaveClass('text-agent');
     });
 

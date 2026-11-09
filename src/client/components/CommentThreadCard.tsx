@@ -128,8 +128,8 @@ function ThreadMessageItem({
     <div onClick={onClick}>
       {!isEditing ? (
         <div
-          className={`group flow-root min-w-0 rounded-lg border px-[9px] py-[5px] ${
-            isAgentAuthored ? 'border-transparent bg-agent-bg' : 'border-github-border'
+          className={`group flow-root min-w-0 rounded-lg border border-github-border px-[9px] py-[5px] ${
+            isAgentAuthored ? 'bg-agent-bg' : ''
           }`}
         >
           {isConfirming ? (
