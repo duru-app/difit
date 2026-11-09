@@ -3644,7 +3644,7 @@ describe('App Component - Commits of the review', () => {
       ]);
 
       fireEvent.click(
-        alert.getByRole('button', { name: '1111111 · test.ts:1 · first step · 다른 리뷰' }),
+        alert.getByRole('button', { name: /^1111111 first step ← test\.ts:1\n.*다른 리뷰/s }),
       );
 
       await waitFor(() =>
@@ -3665,7 +3665,7 @@ describe('App Component - Commits of the review', () => {
       const queries = diffQueries().length;
       const lengthBefore = window.history.length;
 
-      fireEvent.click(alert.getByRole('button', { name: 'abc1234 · test.ts:1 · second step' }));
+      fireEvent.click(alert.getByRole('button', { name: /^abc1234 second step ← test\.ts:1/ }));
 
       await waitFor(() => expect(window.history.length).toBe(lengthBefore + 1));
       expect(diffQueries()).toHaveLength(queries);

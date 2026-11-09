@@ -648,7 +648,7 @@ export interface RewriteBlockingThread {
   threadId: string;
   // The whole review, the one view that always shows the comment.
   review: DiffSelection;
-  // The commit its lines come from; absent when they are not committed.
+  // Absent when its lines are not committed.
   commit?: { shortSha: string; subject?: string };
   file?: string;
   line?: LineNumber;

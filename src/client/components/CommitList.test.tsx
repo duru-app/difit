@@ -418,26 +418,35 @@ describe('CommitList', () => {
         return { ...rendered, alert: screen.getByRole('alert') };
       };
 
-      it('shows the commit and goes to the comment of another review', async () => {
+      const lineTexts = (alert: HTMLElement) =>
+        within(alert)
+          .getAllByRole('listitem')
+          .map((item) => item.textContent);
+
+      it('names the commit the agent will fix, then where the comment is, and goes to it', async () => {
         const thread = blocking('t1');
         const { alert, showBlockingThread } = await refuseWith([thread]);
 
-        const link = within(alert).getByRole('button', {
-          name: 'bbbbbbb · c.ts:3 · feat: second · 다른 리뷰',
-        });
-        expect(link).toHaveAttribute('title', 'bbbbbbb · src/deep/c.ts:3 · feat: second');
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3']);
+        const link = within(alert).getByRole('button');
+        expect(link).toHaveAttribute(
+          'title',
+          'bbbbbbb feat: second ← src/deep/c.ts:3\n' +
+            '에이전트가 bbbbbbb 커밋을 고치려는 코멘트. 누르면 그 코멘트를 엽니다.' +
+            ' 다른 리뷰(aaaaaaa..bbbbbbb)에 있습니다.',
+        );
+        expect(link).toHaveAttribute('aria-label', link.title);
         fireEvent.click(link);
 
         expect(showBlockingThread).toHaveBeenCalledWith(thread);
         expect(screen.getByRole('textbox', { name: '커밋 메시지' })).toHaveValue('better');
       });
 
-      it('does not call the review on screen another review', async () => {
+      it('does not name another review for a comment of the review on screen', async () => {
         const { alert } = await refuseWith([blocking('t1', { review: REVIEW.requested })]);
 
-        expect(
-          within(alert).getByRole('button', { name: 'bbbbbbb · c.ts:3 · feat: second' }),
-        ).toBeInTheDocument();
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3']);
+        expect(within(alert).getByRole('button').title).not.toContain('다른 리뷰');
       });
 
       it('names every comment, those of the review on screen first', async () => {
@@ -447,14 +456,31 @@ describe('CommitList', () => {
         );
         const { alert } = await refuseWith([...elsewhere, ...here]);
 
-        expect(
-          within(alert)
-            .getAllByRole('button')
-            .map((link) => link.textContent),
-        ).toEqual([
-          'bbbbbbb · c.ts:6 · feat: second',
-          'bbbbbbb · c.ts:7 · feat: second',
-          ...[1, 2, 3, 4, 5].map((line) => `bbbbbbb · c.ts:${line} · feat: second · 다른 리뷰`),
+        expect(lineTexts(alert)).toEqual(
+          [6, 7, 1, 2, 3, 4, 5].map((line) => `bbbbbbb feat: second ← c.ts:${line}`),
+        );
+      });
+
+      it('names a comment on a file, a range of lines and a whole commit', async () => {
+        const { alert } = await refuseWith([
+          {
+            threadId: 't1',
+            review: OTHER_REVIEW,
+            commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+            file: 'src/deep/c.ts',
+          },
+          blocking('t2', { line: [3, 5] }),
+          {
+            threadId: 't3',
+            review: OTHER_REVIEW,
+            commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+          },
+        ]);
+
+        expect(lineTexts(alert)).toEqual([
+          'bbbbbbb feat: second ← c.ts',
+          'bbbbbbb feat: second ← c.ts:3-5',
+          'bbbbbbb feat: second',
         ]);
       });
 
@@ -463,29 +489,25 @@ describe('CommitList', () => {
           { threadId: 't1', review: OTHER_REVIEW, file: 'src/deep/c.ts', line: 3 },
         ]);
 
-        expect(
-          within(alert).getByRole('button', { name: '커밋하지 않은 변경 · c.ts:3 · 다른 리뷰' }),
-        ).toBeInTheDocument();
+        expect(lineTexts(alert)).toEqual(['커밋하지 않은 변경 ← c.ts:3']);
+        expect(within(alert).getByRole('button').title).toContain(
+          '에이전트가 커밋하지 않은 변경을 고치려는 코멘트.',
+        );
       });
 
-      it('names a comment on a whole commit and a range of lines', async () => {
+      it('names an uncommitted review the way the review picker does', async () => {
         const { alert } = await refuseWith([
           {
             threadId: 't1',
-            review: OTHER_REVIEW,
-            commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+            review: { baseCommitish: 'a'.repeat(40), targetCommitish: '.' },
+            file: 'src/deep/c.ts',
+            line: 3,
           },
-          blocking('t2', { line: [3, 5] }),
         ]);
 
-        expect(
-          within(alert).getByRole('button', { name: 'bbbbbbb · feat: second · 다른 리뷰' }),
-        ).toBeInTheDocument();
-        expect(
-          within(alert).getByRole('button', {
-            name: 'bbbbbbb · c.ts:3-5 · feat: second · 다른 리뷰',
-          }),
-        ).toBeInTheDocument();
+        expect(within(alert).getByRole('button').title).toContain(
+          ' 다른 리뷰(aaaaaaa..Uncommitted Changes)에 있습니다.',
+        );
       });
 
       it('leaves a deleted comment of this review without a link, there being nothing to show', async () => {
@@ -494,17 +516,16 @@ describe('CommitList', () => {
         ]);
 
         expect(within(alert).queryByRole('button')).toBeNull();
-        expect(alert).toHaveTextContent('bbbbbbb · c.ts:3 · feat: second · 지운 지적');
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3 · 지운 지적']);
       });
 
       it('still opens the other review of a deleted comment', async () => {
         const { alert } = await refuseWith([blocking('t1', { deleted: true })]);
 
-        expect(
-          within(alert).getByRole('button', {
-            name: 'bbbbbbb · c.ts:3 · feat: second · 지운 지적',
-          }),
-        ).toBeInTheDocument();
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3 · 지운 지적']);
+        expect(within(alert).getByRole('button').title).toContain(
+          '지운 코멘트. 누르면 그 코멘트가 있던 리뷰를 엽니다.',
+        );
       });
     });
 

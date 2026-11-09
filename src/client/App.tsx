@@ -2475,7 +2475,10 @@ function App() {
     // A new view folds its viewed files once they load; jumping before that would be folded again.
     if (!collapsedInitializedRef.current && !hasLoadedInitialViewedFiles) return;
     const { place } = pending;
-    if (place.kind === 'thread' && (!hasLoadedComments || hiddenThreadIds.has(place.threadId))) {
+    if (
+      place.kind === 'thread' &&
+      (!hasBootstrappedComments || hiddenThreadIds.has(place.threadId))
+    ) {
       return;
     }
     if (
@@ -2489,7 +2492,7 @@ function App() {
   }, [
     loading,
     diffData,
-    hasLoadedComments,
+    hasBootstrappedComments,
     hasLoadedInitialViewedFiles,
     normalizedThreads,
     hiddenThreadIds,
