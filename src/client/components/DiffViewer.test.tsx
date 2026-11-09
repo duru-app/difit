@@ -184,7 +184,7 @@ describe('DiffViewer saving a comment across hidden lines', () => {
     document.dispatchEvent(new Event('selectionchange'));
     fireEvent.click(await screen.findByRole('button', { name: '고른 부분에 지적 달기' }));
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Why?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -351,8 +351,9 @@ describe('DiffViewer comments on the whole file', () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: '파일 전체에 지적 달기' }));
+    expect(screen.getByText('› a.ts')).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText(/comment/i), 'Split this file');
-    await user.click(screen.getByRole('button', { name: 'Submit' }));
+    await user.click(screen.getByRole('button', { name: '보내기' }));
 
     expect(onAddFileComment).toHaveBeenCalledWith('a.ts', 'Split this file', 'new');
     expect(screen.queryByPlaceholderText(/comment/i)).toBeNull();
@@ -367,7 +368,7 @@ describe('DiffViewer comments on the whole file', () => {
 
     await user.click(screen.getByRole('button', { name: '파일 전체에 지적 달기' }));
     await user.type(screen.getByPlaceholderText(/comment/i), 'Split this file');
-    await user.click(screen.getByRole('button', { name: 'Submit' }));
+    await user.click(screen.getByRole('button', { name: '보내기' }));
 
     expect(screen.getByPlaceholderText(/comment/i)).toHaveValue('Split this file');
   });
@@ -388,7 +389,7 @@ describe('DiffViewer comments on the whole file', () => {
 
     await user.click(screen.getByRole('button', { name: '파일 전체에 지적 달기' }));
     await user.type(screen.getByPlaceholderText(/comment/i), 'Keep this file');
-    await user.click(screen.getByRole('button', { name: 'Submit' }));
+    await user.click(screen.getByRole('button', { name: '보내기' }));
 
     expect(onAddFileComment).toHaveBeenCalledWith('a.ts', 'Keep this file', 'old');
   });

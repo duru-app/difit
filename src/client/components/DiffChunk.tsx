@@ -11,6 +11,7 @@ import {
   type DiffViewMode,
   type LineSelection,
 } from '../../types/diff';
+import { locationLabel } from '../../utils/commentPosition';
 import { DEFAULT_DIFF_VIEW_MODE } from '../../utils/diffMode';
 import { threadReviewControls, useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { type CursorPosition } from '../hooks/keyboardNavigation';
@@ -725,6 +726,12 @@ export const DiffChunk = memo(function DiffChunk({
                             <CommentForm
                               onSubmit={handleSubmitComment}
                               onCancel={handleCancelComment}
+                              location={locationLabel(
+                                filename ?? '',
+                                commentingLine.lineNumber,
+                                pickedRanges.slice(0, -1),
+                                commentingLine.side,
+                              )}
                               header={
                                 <PickControls
                                   store={linePick}

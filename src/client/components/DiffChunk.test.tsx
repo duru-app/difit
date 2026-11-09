@@ -71,10 +71,11 @@ describe('DiffChunk range comments', () => {
     fireEvent.click(rows[0]!);
     fireEvent.click(rows[2]!, { shiftKey: true });
 
+    expect(screen.getByText('› src/example.ts:10-12')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Please revisit this range' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -106,10 +107,11 @@ describe('DiffChunk range comments', () => {
     fireEvent.click(rows[0]!.children[2]!);
     fireEvent.click(rows[2]!.children[2]!, { shiftKey: true });
 
+    expect(screen.getByText('› src/example.ts:10-12')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Please revisit this range' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -144,7 +146,7 @@ describe('DiffChunk range comments', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Single line only' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(12, 'Single line only', 'const third = 3;', 'new');
@@ -178,7 +180,7 @@ describe('DiffChunk range comments', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Please revisit this range' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -216,7 +218,7 @@ describe('DiffChunk range comments', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Please revisit this range' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -1453,7 +1455,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
 
     expect(screen.getByLabelText('고른 부분')).toHaveTextContent('first = 1; const second');
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Why two lines?' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     const body = '> first = 1;\n> const second\n\nWhy two lines?';
     await waitFor(() => {
@@ -1475,7 +1477,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
 
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'All three' } });
     expect(screen.queryByLabelText('고른 부분')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(
@@ -1525,7 +1527,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
     expect(dragged()).toEqual(['// first note', '// second note', 'guard();']);
     fireEvent.mouseUp(document);
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Keep these' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
     await waitFor(() => {
       expect(onAddComment).toHaveBeenCalledWith(23, 'Keep these', 'guard();', 'new', {
@@ -1699,7 +1701,7 @@ describe.each<ChunkMode>(['unified', 'split'])('commenting on picked code (%s)',
       expect(dragged()).toEqual(['kept();', '// first note', '// second note']);
       fireEvent.mouseUp(document);
       fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'These go' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
       await waitFor(() => {
         expect(onAddComment).toHaveBeenCalledWith(

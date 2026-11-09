@@ -120,7 +120,7 @@ export function SkillTextarea({
   };
 
   return (
-    <div className="relative mb-2 rounded bg-github-bg-secondary">
+    <div className="relative mb-2 rounded-[8px] bg-composer-field">
       <div
         ref={backdropRef}
         aria-hidden="true"

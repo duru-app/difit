@@ -27,6 +27,16 @@
   --color-comment-border: #373e47;
   --color-comment-text: #e6edf3;
 
+  --color-composer-bg: #1a1a1a;
+  --color-composer-text: #ffffff;
+  --color-composer-muted: rgb(255 255 255 / 0.5);
+  --color-composer-field: rgb(255 255 255 / 0.05);
+  --color-composer-line: rgb(255 255 255 / 0.15);
+  --color-composer-focus: #3c82f7;
+
+  --color-agent: #3fb950;
+  --color-agent-bg: #1c2128;
+
   --animate-responding-dot: responding-dot 0.9s ease-in-out infinite;
 
   @keyframes responding-dot {
@@ -263,6 +273,22 @@ tr.drag-selected-last td::after {
 
 [data-theme="light"] {
   color-scheme: light;
+}
+
+:root,
+[data-theme="dark"] {
+  --composer-shadow: 0 4px 24px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(255 255 255 / 0.08);
+}
+
+[data-theme="light"] {
+  --color-composer-bg: #ffffff;
+  --color-composer-text: #24292f;
+  --color-composer-muted: #656d76;
+  --color-composer-field: #f6f8fa;
+  --color-composer-line: #d1d9e0;
+  --composer-shadow: 0 4px 24px rgb(0 0 0 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.06);
+  --color-agent: #1a7f37;
+  --color-agent-bg: #f6f8fa;
 }
 
 /* Dark theme word highlight */

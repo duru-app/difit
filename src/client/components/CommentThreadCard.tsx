@@ -15,6 +15,7 @@ import {
   appearsResolved,
   awaitsJudgmentOfReplacement,
   deriveThreadReviewState,
+  isAgentMessage,
   isThreadFolded,
   reviewStateLabel,
 } from '../../utils/reviewDecisions';
@@ -28,6 +29,7 @@ import { CommentBodyRenderer } from './CommentBodyRenderer';
 import { CommentForm } from './CommentForm';
 import { FixupLinesButton } from './FixupLineReply';
 import { ReplyChoices } from './ReplyChoices';
+import { RespondingChip } from './RespondingChip';
 import type { AppearanceSettings } from './SettingsModal';
 
 // Hidden until the message is hovered only where hovering is possible; touch screens keep it shown.
@@ -37,6 +39,7 @@ const REVEAL_ON_HOVER =
 interface ThreadMessageItemProps {
   message: DiffCommentMessage;
   threadId: string;
+  location: string;
   showAuthorBadge: boolean;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   filename?: string;
@@ -51,6 +54,7 @@ interface ThreadMessageItemProps {
 function ThreadMessageItem({
   message,
   threadId,
+  location,
   showAuthorBadge,
   syntaxTheme,
   filename,
@@ -66,8 +70,10 @@ function ThreadMessageItem({
   const [isCopied, setIsCopied] = useState(false);
   const confirmContainerRef = useRef<HTMLDivElement>(null);
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const author = message.author?.trim();
   const showAuthorHeader = showAuthorBadge && Boolean(message.author);
-  const isUserAuthoredMessage = message.author?.trim() === REVIEWER_AUTHOR;
+  const isUserAuthoredMessage = author === REVIEWER_AUTHOR;
+  const isAgentAuthored = Boolean(author) && isAgentMessage({ author });
 
   useClickOutside(confirmContainerRef, () => setIsConfirming(false), isConfirming);
 
@@ -119,32 +125,17 @@ function ThreadMessageItem({
   };
 
   return (
-    <div className={isEditing ? '' : 'group flex min-w-0 items-start gap-3'} onClick={onClick}>
+    <div onClick={onClick}>
       {!isEditing ? (
-        <>
-          <div className="min-w-0 flex-1">
-            {showAuthorHeader && (
-              <div className="mb-2 flex min-w-0 items-center gap-2 pr-2 text-xs text-github-text-secondary">
-                <span className="inline-flex items-center rounded-full border border-github-border bg-github-bg-primary px-2 py-0.5 text-[11px] font-medium text-github-text-primary">
-                  {message.author}
-                </span>
-              </div>
-            )}
-
-            {message.fixupLines && (
-              <FixupLinesButton lines={message.fixupLines} threadId={threadId} />
-            )}
-            <CommentBodyRenderer
-              body={message.body}
-              originalCode={originalCode}
-              filename={filename}
-              syntaxTheme={syntaxTheme}
-            />
-          </div>
+        <div
+          className={`group flow-root min-w-0 rounded-lg border border-github-border px-[9px] py-[5px] ${
+            isAgentAuthored ? 'bg-agent-bg' : ''
+          }`}
+        >
           {isConfirming ? (
             <div
               ref={confirmContainerRef}
-              className="flex shrink-0 items-center gap-1.5 pt-0.5"
+              className="float-right ml-3 flex items-center gap-1.5 pt-0.5"
               onClick={(e) => e.stopPropagation()}
             >
               <span className="whitespace-nowrap text-xs text-github-text-secondary">Delete?</span>
@@ -172,7 +163,7 @@ function ThreadMessageItem({
               </button>
             </div>
           ) : (
-            <div className="flex shrink-0 items-start gap-2 pt-0.5">
+            <div className="float-right ml-3 flex items-start gap-2 pt-0.5">
               <button
                 type="button"
                 onClick={handleCopy}
@@ -211,7 +202,26 @@ function ThreadMessageItem({
               )}
             </div>
           )}
-        </>
+          {showAuthorHeader && (
+            <span
+              className={`block truncate text-xs font-semibold ${
+                isAgentAuthored ? 'text-agent' : 'text-github-text-secondary'
+              }`}
+            >
+              {message.author}
+            </span>
+          )}
+
+          {message.fixupLines && (
+            <FixupLinesButton lines={message.fixupLines} threadId={threadId} />
+          )}
+          <CommentBodyRenderer
+            body={message.body}
+            originalCode={originalCode}
+            filename={filename}
+            syntaxTheme={syntaxTheme}
+          />
+        </div>
       ) : (
         <CommentForm
           onSubmit={handleSaveEdit}
@@ -221,8 +231,8 @@ function ThreadMessageItem({
           filename={filename}
           initialValue={message.body}
           embedded={true}
-          title="Edit comment"
-          submitLabel="Save"
+          location={location}
+          submitLabel="저장"
           placeholder="Edit your message..."
         />
       )}
@@ -234,8 +244,6 @@ const OUTDATED_REASON_TITLE: Record<AnchorStaleReason, string> = {
   missing: '지적한 줄이 지금 파일에 없어 수정을 겹쳐 그리지 않습니다',
   ambiguous: '같은 내용의 줄이 여러 곳이라 자리를 정할 수 없어 수정을 겹쳐 그리지 않습니다',
 };
-
-const RESPONDING_DOT_DELAYS_MS = [0, 150, 300];
 
 const runsOffTheTop = (card: HTMLElement | null) => {
   const visible = card && visibleTopOf(card);
@@ -337,6 +345,10 @@ export function CommentThreadCard({
 
   const rootMessage = thread.messages[0];
   if (!rootMessage) return null;
+  const location =
+    'file' in thread
+      ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
+      : commitLocationLabel(thread);
 
   return (
     <div
@@ -372,9 +384,7 @@ export function CommentThreadCard({
               color: 'var(--color-yellow-path-text)',
             }}
           >
-            {'file' in thread
-              ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
-              : commitLocationLabel(thread)}
+            {location}
           </span>
           {isResolved && (
             <span
@@ -400,24 +410,7 @@ export function CommentThreadCard({
                 {reviewStateLabel(reviewState)}
               </span>
             )}
-          {review?.responding && (
-            <span
-              data-testid="responding-chip"
-              className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-github-accent px-2 text-[10px] font-medium text-github-accent"
-            >
-              <span aria-hidden className="inline-flex items-center gap-0.5">
-                {RESPONDING_DOT_DELAYS_MS.map((delay) => (
-                  <span
-                    key={delay}
-                    data-testid="responding-dot"
-                    className="h-1 w-1 animate-responding-dot rounded-full bg-current motion-reduce:animate-none"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
-              </span>
-              응답 중
-            </span>
-          )}
+          {review?.responding && <RespondingChip />}
           {thread.isOutdated && (
             <span
               className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${
@@ -490,44 +483,48 @@ export function CommentThreadCard({
             </div>
           )}
 
-          <ThreadMessageItem
-            message={rootMessage}
-            threadId={thread.id}
-            showAuthorBadge={showAuthorBadges}
-            syntaxTheme={syntaxTheme}
-            filename={onFile?.file}
-            originalCode={codeContent}
-            onUpdate={(newBody) => onUpdateMessage(thread.id, rootMessage.id, newBody)}
-            onCopy={() => messageText(rootMessage)}
-            {...(isFolded ? {} : { onDelete: () => recordDecision(thread.id, 'deleted', '') })}
-            deleteLabel="Delete comment"
-          />
+          <div className="space-y-1">
+            <ThreadMessageItem
+              message={rootMessage}
+              threadId={thread.id}
+              location={location}
+              showAuthorBadge={showAuthorBadges}
+              syntaxTheme={syntaxTheme}
+              filename={onFile?.file}
+              originalCode={codeContent}
+              onUpdate={(newBody) => onUpdateMessage(thread.id, rootMessage.id, newBody)}
+              onCopy={() => messageText(rootMessage)}
+              {...(isFolded ? {} : { onDelete: () => recordDecision(thread.id, 'deleted', '') })}
+              deleteLabel="Delete comment"
+            />
 
-          {thread.messages.slice(1).map((message, index) => (
-            <div key={message.id} className="ml-4 border-l border-github-border pl-3">
-              <ThreadMessageItem
-                message={message}
-                threadId={thread.id}
-                showAuthorBadge={showAuthorBadges}
-                syntaxTheme={syntaxTheme}
-                filename={onFile?.file}
-                originalCode={codeContent}
-                onUpdate={(newBody) => onUpdateMessage(thread.id, message.id, newBody)}
-                onCopy={() => messageText(message)}
-                onDelete={() => onRemoveMessage(thread.id, message.id)}
-              />
-              {message.choices && message.choices.length > 0 && (
-                <ReplyChoices
-                  message={{ ...message, choices: message.choices }}
-                  later={thread.messages.slice(index + 2)}
-                  onPick={async (body, answer) => {
-                    await onReplyToThread(thread.id, body, { answer });
-                    if (isResolved) recordDecision(thread.id, 'unresolved', '');
-                  }}
+            {thread.messages.slice(1).map((message, index) => (
+              <div key={message.id}>
+                <ThreadMessageItem
+                  message={message}
+                  threadId={thread.id}
+                  location={location}
+                  showAuthorBadge={showAuthorBadges}
+                  syntaxTheme={syntaxTheme}
+                  filename={onFile?.file}
+                  originalCode={codeContent}
+                  onUpdate={(newBody) => onUpdateMessage(thread.id, message.id, newBody)}
+                  onCopy={() => messageText(message)}
+                  onDelete={() => onRemoveMessage(thread.id, message.id)}
                 />
-              )}
-            </div>
-          ))}
+                {message.choices && message.choices.length > 0 && (
+                  <ReplyChoices
+                    message={{ ...message, choices: message.choices }}
+                    later={thread.messages.slice(index + 2)}
+                    onPick={async (body, answer) => {
+                      await onReplyToThread(thread.id, body, { answer });
+                      if (isResolved) recordDecision(thread.id, 'unresolved', '');
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
 
           {review &&
             ((review.state === 'awaiting-approval' && !isResolved) ||
@@ -628,8 +625,8 @@ export function CommentThreadCard({
                 syntaxTheme={syntaxTheme}
                 filename={onFile?.file}
                 embedded={true}
-                title="Reply to thread"
-                submitLabel={isResolved ? '답글 달고 다시 열기' : 'Reply'}
+                location={location}
+                submitLabel={isResolved ? '답글 달고 다시 열기' : '보내기'}
                 placeholder="Write a reply..."
               />
             ) : (

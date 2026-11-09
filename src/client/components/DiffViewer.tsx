@@ -439,6 +439,7 @@ export const DiffViewer = memo(function DiffViewer({
                       setIsAddingFileComment(false);
                     }}
                     onCancel={() => setIsAddingFileComment(false)}
+                    location={file.path}
                     syntaxTheme={syntaxTheme}
                     filename={file.path}
                   />

@@ -159,6 +159,7 @@ export function CommitCommentsSection({
                   setAddingTo(null);
                 }}
                 onCancel={() => setAddingTo(null)}
+                location={commitLocationLabel({ commit })}
                 syntaxTheme={syntaxTheme}
               />
             )}

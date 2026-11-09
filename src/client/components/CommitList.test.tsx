@@ -607,10 +607,11 @@ describe('CommitList', () => {
       const { onAddCommitComment } = renderCommentable({ kind: 'commit', sha: COMMITS[1]!.sha });
 
       fireEvent.click(commentButtonOf('1111111'));
+      expect(screen.getByText('› 커밋 1111111')).toBeInTheDocument();
       fireEvent.change(screen.getByPlaceholderText(/comment/i), {
         target: { value: 'Split this commit' },
       });
-      fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      fireEvent.click(screen.getByRole('button', { name: '보내기' }));
 
       await vi.waitFor(() =>
         expect(onAddCommitComment).toHaveBeenCalledWith(COMMITS[0]!.sha, 'Split this commit'),

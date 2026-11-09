@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -92,6 +92,7 @@ describe('CommentThreadCard', () => {
 
     await user.click(screen.getAllByTitle('Edit message')[0]!);
     expect(screen.getByPlaceholderText('Edit your message...')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '저장' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /suggestion/i })).toBeNull();
   });
 
@@ -491,7 +492,7 @@ describe('CommentThreadCard', () => {
         await user.click(screen.getByRole('button', { name: 'Write a reply...' }));
 
         rerender(replyingCard(overlayWith([resolution('resolved', '2026-01-01T00:00:00Z')])));
-        await user.click(screen.getByRole('button', { name: 'Cancel' }));
+        await user.click(screen.getByRole('button', { name: '취소' }));
 
         expect(screen.queryByText('Reply comment')).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Expand thread' })).toBeInTheDocument();
@@ -996,6 +997,84 @@ describe('CommentThreadCard', () => {
     expect(screen.queryByText('Reviewer')).not.toBeInTheDocument();
   });
 
+  describe('message boxes', () => {
+    const conversation: CommentThread = {
+      ...mockThread,
+      messages: [
+        mockThread.messages[0]!,
+        { ...mockThread.messages[1]!, author: 'Agent', body: 'Agent reply' },
+        {
+          ...mockThread.messages[1]!,
+          id: 'message-3',
+          author: undefined,
+          body: 'Unnamed reply',
+        },
+      ],
+    };
+    const renderConversation = (showAuthorBadges: boolean) =>
+      render(
+        <CommentThreadCard
+          thread={conversation}
+          showAuthorBadges={showAuthorBadges}
+          onResolveThread={vi.fn()}
+          onReplyToThread={vi.fn().mockResolvedValue(undefined)}
+          onRemoveMessage={vi.fn()}
+          onUpdateMessage={vi.fn()}
+        />,
+      );
+    const boxOf = (text: string) => screen.getByText(text).closest<HTMLElement>('.rounded-lg')!;
+
+    it('puts the speaker on top inside the box that holds the message', () => {
+      renderConversation(true);
+
+      const userBox = boxOf('Root comment');
+      const speaker = within(userBox).getByText('User');
+      expect(speaker).toHaveClass('block', 'text-xs', 'font-semibold');
+      expect(
+        speaker.compareDocumentPosition(screen.getByText('Root comment')) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(within(boxOf('Agent reply')).getByText('Agent')).toBeInTheDocument();
+    });
+
+    it('draws both messages in lined boxes and fills only the agent’s', () => {
+      renderConversation(true);
+
+      const userBox = boxOf('Root comment');
+      const agentBox = boxOf('Agent reply');
+      expect(userBox).toHaveClass('border-github-border');
+      expect(userBox).not.toHaveClass('bg-agent-bg');
+      expect(within(userBox).getByText('User')).toHaveClass('text-github-text-secondary');
+      expect(agentBox).toHaveClass('border-github-border', 'bg-agent-bg');
+      expect(within(agentBox).getByText('Agent')).toHaveClass('text-agent');
+    });
+
+    it('keeps the agent box when no speaker is named', () => {
+      renderConversation(false);
+
+      expect(screen.queryByText('Agent')).not.toBeInTheDocument();
+      expect(boxOf('Agent reply')).toHaveClass('bg-agent-bg');
+    });
+
+    it('does not take a message without an author for the agent’s', () => {
+      renderConversation(true);
+
+      expect(boxOf('Unnamed reply')).not.toHaveClass('bg-agent-bg');
+      expect(boxOf('Unnamed reply')).toHaveClass('border-github-border');
+    });
+
+    it('keeps each message’s actions inside its box', () => {
+      renderConversation(true);
+
+      const [rootCopy, agentCopy] = screen.getAllByRole('button', { name: 'Copy comment' });
+      expect(boxOf('Root comment')).toContainElement(rootCopy!);
+      expect(boxOf('Root comment')).toContainElement(
+        screen.getByRole('button', { name: 'Delete comment' }),
+      );
+      expect(boxOf('Agent reply')).toContainElement(agentCopy!);
+    });
+  });
+
   it('shows the "Outdated" badge when the thread is marked outdated', () => {
     render(
       <CommentThreadCard
@@ -1315,7 +1394,7 @@ describe('CommentThreadCard', () => {
 
       await user.click(screen.getByRole('button', { name: 'Write a reply...' }));
       await user.type(screen.getByPlaceholderText('Write a reply...'), '둘 다 받으면 안 되나요?');
-      await user.click(screen.getByRole('button', { name: 'Reply' }));
+      await user.click(screen.getByRole('button', { name: '보내기' }));
       expect(onReplyToThread).toHaveBeenCalledWith('thread-1', '둘 다 받으면 안 되나요?');
       rerender(
         <CommentThreadCard
@@ -1390,9 +1469,12 @@ describe('CommentThreadCard', () => {
 
     const textarea = screen.getByPlaceholderText('Write a reply...');
     expect(textarea).toHaveFocus();
+    expect(
+      screen.getByText('› src/client/components/CommentThreadCard.tsx:80'),
+    ).toBeInTheDocument();
 
     await user.type(textarea, 'A new reply');
-    await user.click(screen.getByRole('button', { name: 'Reply' }));
+    await user.click(screen.getByRole('button', { name: '보내기' }));
 
     expect(onReplyToThread).toHaveBeenCalledWith('thread-1', 'A new reply');
     // Collapses back to the trigger after submitting
@@ -1413,7 +1495,7 @@ describe('CommentThreadCard', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Write a reply...' }));
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: '취소' }));
 
     expect(screen.queryByPlaceholderText('Write a reply...')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Write a reply...' })).toBeInTheDocument();

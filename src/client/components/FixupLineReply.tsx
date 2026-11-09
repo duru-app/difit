@@ -136,45 +136,43 @@ export function useFixupLineReply({
     isFormUnder: (line) =>
       last !== undefined && line.side === last.side && line.lineNumber === endOfLine(last.line),
     form: last && (
-      <div className="font-sans">
-        <CommentForm
-          label="fixup 줄에 답글"
-          title={fixupLinesLabel({
-            fixupSha: fixup.sha,
-            filePath: file.path,
-            ranges,
-          })}
-          header={
-            <>
-              {threads.length > 1 && (
-                <label className="mb-2 flex items-center gap-2 text-xs text-github-text-secondary">
-                  답글을 달 지적
-                  <select
-                    value={target.id}
-                    onChange={(event) => setChosenId(event.target.value)}
-                    className="min-w-0 rounded border border-github-border bg-github-bg-secondary px-1 py-0.5 font-mono text-github-text-primary"
-                  >
-                    {threads.map((thread) => (
-                      <option key={thread.id} value={thread.id}>
-                        {'file' in thread
-                          ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
-                          : commitLocationLabel(thread)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <PickControls store={store} ranges={[]} canHover={canHover} />
-            </>
-          }
-          value={draft}
-          onValueChange={setDraft}
-          onSubmit={submit}
-          onCancel={store.close}
-          submitLabel={resolved ? '답글 달고 다시 열기' : '답글'}
-          placeholder="이 줄에 답글..."
-        />
-      </div>
+      <CommentForm
+        label="fixup 줄에 답글"
+        location={fixupLinesLabel({
+          fixupSha: fixup.sha,
+          filePath: file.path,
+          ranges,
+        })}
+        header={
+          <>
+            {threads.length > 1 && (
+              <label className="mb-2 flex items-center gap-2 text-xs text-github-text-secondary">
+                답글을 달 지적
+                <select
+                  value={target.id}
+                  onChange={(event) => setChosenId(event.target.value)}
+                  className="min-w-0 rounded border border-github-border bg-github-bg-secondary px-1 py-0.5 font-mono text-github-text-primary"
+                >
+                  {threads.map((thread) => (
+                    <option key={thread.id} value={thread.id}>
+                      {'file' in thread
+                        ? locationLabel(thread.file, thread.line, thread.extraLines, thread.side)
+                        : commitLocationLabel(thread)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <PickControls store={store} ranges={[]} canHover={canHover} />
+          </>
+        }
+        value={draft}
+        onValueChange={setDraft}
+        onSubmit={submit}
+        onCancel={store.close}
+        submitLabel={resolved ? '답글 달고 다시 열기' : '답글'}
+        placeholder="이 줄에 답글..."
+      />
     ),
   };
 }
