@@ -112,7 +112,7 @@ function stubServer() {
     if (url.startsWith('/api/reword')) {
       return reply(
         {
-          error: 'Reword refused: agent-working',
+          error: 'Rewrite refused: agent-working',
           reason: 'agent-working',
           blockingThreads: [blocking],
         },

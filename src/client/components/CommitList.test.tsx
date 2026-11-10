@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom';
 
@@ -1502,5 +1503,367 @@ describe('CommitList on a phone', () => {
       '커밋 4개1111111 pin the old behavior',
     );
     expect(list()).toBeInTheDocument();
+  });
+});
+
+describe('CommitList reorder handle', () => {
+  const handleLabel = '순서 바꾸기';
+  const handles = () => screen.queryAllByRole('button', { name: handleLabel });
+  const rowElement = (name: RegExp) => row(name).closest<HTMLElement>('[data-reorder-at]')!;
+  const SHA = (digit: string) => digit.repeat(40);
+  type Saved = Awaited<ReturnType<NonNullable<ComponentProps<typeof CommitList>['onReorder']>>>;
+  const SAVED: Saved = { saved: true, movedBranches: [] };
+
+  function renderReorderable({
+    onReorder = vi.fn(async (): Promise<Saved> => SAVED),
+    commits = COMMITS,
+    inDrawer = false,
+    onAddCommitComment,
+    reword,
+  }: {
+    onReorder?: ComponentProps<typeof CommitList>['onReorder'];
+    commits?: ReviewCommit[];
+    inDrawer?: boolean;
+    onAddCommitComment?: (sha: string, body: string) => Promise<void>;
+    reword?: RewordControls;
+  } = {}) {
+    const onSelect = vi.fn();
+    render(
+      <CommitList
+        review={{ ...REVIEW, commits }}
+        shown={{ kind: 'all' }}
+        onSelect={onSelect}
+        onReorder={onReorder}
+        inDrawer={inDrawer}
+        onAddCommitComment={onAddCommitComment}
+        reword={reword}
+      />,
+    );
+    return { onSelect, onReorder };
+  }
+
+  // The row's top half is y 0..4 and its bottom half 6..10 in these tests.
+  function pointAt(element: Element | null) {
+    document.elementFromPoint = vi.fn(() => element);
+    if (element) {
+      vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        height: 10,
+      } as DOMRect);
+    }
+  }
+  const grab = (index: number) => fireEvent.pointerDown(handles()[index]!, { button: 0 });
+  const moveOver = (element: Element | null, y: number) => {
+    pointAt(element);
+    fireEvent.pointerMove(window, { clientX: 5, clientY: y });
+  };
+  const drop = (y = 0) => fireEvent.pointerUp(window, { clientX: 5, clientY: y });
+  const dropLines = () => document.querySelectorAll('[data-drop-line]');
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(document, 'elementFromPoint');
+  });
+
+  it('shows no handle without a way to save, and none for a single commit', () => {
+    renderList();
+    expect(handles()).toEqual([]);
+    cleanup();
+
+    renderReorderable({ commits: [COMMITS[0]!] });
+    expect(handles()).toEqual([]);
+  });
+
+  it('asks for the new order when a handle is dragged and dropped', async () => {
+    const { onReorder, onSelect } = renderReorderable();
+
+    grab(1);
+    moveOver(rowElement(/4444444/), 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith({
+      order: [SHA('1'), SHA('3'), SHA('4'), SHA('2')],
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('moves a commit up to before the row it is dropped on', async () => {
+    const { onReorder } = renderReorderable();
+
+    grab(3);
+    moveOver(rowElement(/2222222/), 2);
+    await act(async () => {
+      drop(2);
+    });
+
+    expect(onReorder).toHaveBeenCalledWith({
+      order: [SHA('1'), SHA('4'), SHA('2'), SHA('3')],
+    });
+  });
+
+  it('still asks for a range when the row itself is dragged, and for no new order', () => {
+    const { onReorder, onSelect } = renderReorderable();
+
+    fireEvent.mouseDown(row(/2222222/), { button: 0 });
+    fireEvent.mouseEnter(row(/4444444/));
+    fireEvent.mouseUp(row(/4444444/));
+
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'drop',
+      fromSha: SHA('2'),
+      toSha: SHA('4'),
+    });
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it('draws where the commit will land while dragging and clears it after', async () => {
+    renderReorderable();
+    expect(dropLines()).toHaveLength(0);
+
+    grab(0);
+    moveOver(rowElement(/3333333/), 8);
+    const line = dropLines();
+    expect(line).toHaveLength(1);
+    const lineRow = line[0]!.closest('li')!;
+    expect(lineRow.nextElementSibling).toBe(rowElement(/4444444/));
+
+    await act(async () => {
+      drop(8);
+    });
+    expect(dropLines()).toHaveLength(0);
+  });
+
+  it('draws the line past the last row when dropping at the end', () => {
+    renderReorderable();
+
+    grab(0);
+    moveOver(rowElement(/4444444/), 8);
+
+    expect(dropLines()[0]!.closest('li')!.previousElementSibling).toBe(rowElement(/4444444/));
+  });
+
+  it('draws no line and asks nothing when dropped back on its own place', async () => {
+    const { onReorder } = renderReorderable();
+
+    grab(1);
+    moveOver(rowElement(/2222222/), 8);
+    expect(dropLines()).toHaveLength(0);
+    moveOver(rowElement(/3333333/), 2);
+    expect(dropLines()).toHaveLength(0);
+    await act(async () => {
+      drop(2);
+    });
+
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing when dropped outside the list or when the drag is cancelled', async () => {
+    const { onReorder } = renderReorderable();
+
+    grab(1);
+    moveOver(rowElement(/4444444/), 8);
+    moveOver(document.body, 8);
+    expect(dropLines()).toHaveLength(0);
+    await act(async () => {
+      drop(8);
+    });
+
+    grab(1);
+    moveOver(rowElement(/4444444/), 8);
+    fireEvent.pointerCancel(window);
+    expect(dropLines()).toHaveLength(0);
+    pointAt(rowElement(/4444444/));
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it('puts a commit dropped on a branch row just before that merge', async () => {
+    const merged = { sha: SHA('9'), shortSha: '9999999', subject: 'on the side' };
+    const commits = [
+      COMMITS[0]!,
+      COMMITS[1]!,
+      { ...COMMITS[2]!, subject: 'merge', isMerge: true as const, merged: [merged] },
+    ];
+    const { onReorder } = renderReorderable({ commits });
+
+    expect(handles()).toHaveLength(3);
+    grab(0);
+    const side = within(list()).getByText('on the side').closest<HTMLElement>('[data-reorder-at]')!;
+    moveOver(side, 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(onReorder).toHaveBeenCalledWith({ order: [SHA('2'), SHA('1'), SHA('3')] });
+  });
+
+  it('offers the handle in the phone drawer too', async () => {
+    const { onReorder } = renderReorderable({ inDrawer: true });
+
+    fireEvent.pointerDown(handles()[0]!, { button: 0, pointerType: 'touch' });
+    moveOver(rowElement(/2222222/), 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(onReorder).toHaveBeenCalledWith({
+      order: [SHA('2'), SHA('1'), SHA('3'), SHA('4')],
+    });
+  });
+
+  it('shows a warning and goes ahead only once confirmed', async () => {
+    const onReorder = vi
+      .fn<NonNullable<ComponentProps<typeof CommitList>['onReorder']>>()
+      .mockResolvedValueOnce({
+        message: 'push한 커밋이 바뀝니다.',
+        warnings: ['pushed-commit'],
+      })
+      .mockResolvedValueOnce(SAVED);
+    renderReorderable({ onReorder });
+
+    grab(1);
+    moveOver(rowElement(/3333333/), 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('push한 커밋이 바뀝니다.');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '그래도 옮기기' }));
+    });
+
+    expect(onReorder).toHaveBeenLastCalledWith({
+      order: [SHA('1'), SHA('3'), SHA('2'), SHA('4')],
+      acknowledged: ['pushed-commit'],
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('lists the comments an agent is at work on when they hold the move up, and goes to one', async () => {
+    const thread: RewriteBlockingThread = {
+      threadId: 't1',
+      review: REVIEW.requested,
+      commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+      file: 'src/deep/c.ts',
+      line: 3,
+    };
+    const showBlockingThread = vi.fn();
+    renderReorderable({
+      onReorder: vi.fn(async () => ({ message: 'blocked', blockingThreads: [thread] })),
+      reword: { load: vi.fn(async () => null), save: vi.fn(async () => SAVED), showBlockingThread },
+    });
+
+    grab(1);
+    moveOver(rowElement(/3333333/), 8);
+    await act(async () => {
+      drop(8);
+    });
+    fireEvent.click(
+      within(screen.getByRole('alert')).getByRole('button', { name: /^bbbbbbb feat: second/ }),
+    );
+
+    expect(showBlockingThread).toHaveBeenCalledWith(thread);
+  });
+
+  it('says which branches the new order moved and which it left, until dismissed', async () => {
+    const onReorder = vi.fn(
+      async (): Promise<Saved> => ({
+        saved: true,
+        movedBranches: ['next'],
+        leftBranches: ['reviewed/1'],
+      }),
+    );
+    renderReorderable({ onReorder });
+
+    grab(1);
+    moveOver(rowElement(/3333333/), 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '브랜치 next도 함께 옮겼습니다. 브랜치 reviewed/1는 순서가 바뀐 커밋을 가리키고 있어 옛 커밋에 남겼습니다.',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '알림 닫기' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('drops the warning on cancel and asks nothing more', async () => {
+    const onReorder = vi.fn(async () => ({
+      message: '기본 브랜치의 이력이 바뀝니다.',
+      warnings: ['default-branch' as const],
+    }));
+    renderReorderable({ onReorder });
+
+    grab(1);
+    moveOver(rowElement(/3333333/), 8);
+    await act(async () => {
+      drop(8);
+    });
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(onReorder).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows why a refused order was refused, with the output', async () => {
+    const onReorder = vi.fn(async () => ({
+      message: '순서를 바꾸면 충돌이 나서 옮기기 전 이력으로 되돌렸습니다.',
+      output: 'CONFLICT (content): Merge conflict in a.ts',
+    }));
+    renderReorderable({ onReorder });
+
+    grab(1);
+    moveOver(rowElement(/3333333/), 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('옮기기 전 이력으로 되돌렸습니다');
+    expect(alert).toHaveTextContent('CONFLICT (content)');
+    expect(screen.queryByRole('button', { name: '그래도 옮기기' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('turns the handles off while saving, and shows that it is saving', async () => {
+    let finish: (value: Saved) => void = () => undefined;
+    const onReorder = vi.fn(
+      () =>
+        new Promise<Saved>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderReorderable({ onReorder });
+
+    grab(1);
+    moveOver(rowElement(/3333333/), 8);
+    await act(async () => {
+      drop(8);
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent('옮기는 중…');
+    expect(handles()[0]).toBeDisabled();
+    await act(async () => {
+      finish(SAVED);
+    });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(handles()[0]).toBeEnabled();
+  });
+
+  it('turns the handles off while a comment on a commit is being written', () => {
+    renderReorderable({ onAddCommitComment: async () => undefined });
+
+    fireEvent.click(
+      within(rowElement(/2222222/)).getByRole('button', { name: '커밋에 지적 달기' }),
+    );
+
+    expect(handles()[0]).toBeDisabled();
   });
 });

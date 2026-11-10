@@ -4,7 +4,7 @@ import { createServer, type Server } from 'http';
 import { join, dirname, isAbsolute, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 
-import express, { type Express } from 'express';
+import express, { type Express, type Request } from 'express';
 import open from 'open';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,7 +55,12 @@ import { validateCommitish } from '../cli/utils.js';
 import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
 import { commitDirectEdit, type EditedView } from './direct-edit.js';
-import { readRewriteState, removeAbandonedRewrites, rewriteHistory } from './history-rewrite.js';
+import {
+  type HistoryRewriteResult,
+  readRewriteState,
+  removeAbandonedRewrites,
+  rewriteHistory,
+} from './history-rewrite.js';
 import { checkRewrite, threadsAtWork } from './rewrite-check.js';
 import {
   chooseCommitOfUncommittedView,
@@ -113,6 +118,8 @@ import {
   type RewordResponse,
   type RewriteWarning,
   type RewrittenShas,
+  type HistoryMove,
+  type ReorderRequest,
   type LibrarySourceResponse,
   type ShownThread,
   type SidedLine,
@@ -140,9 +147,10 @@ import {
 import {
   afterRewrite,
   movedDecision,
+  movedCommitish,
   movedPlace,
-  movedSelection,
   movedThread,
+  selectionAfterMoves,
 } from '../utils/rewrittenShas.js';
 
 interface ServerOptions {
@@ -595,6 +603,7 @@ export async function startServer(options: ServerOptions): Promise<{
   const commentSessions = new Map<string, CommentSessionState>();
   // What a tab or an agent still holding old SHAs says lands on the commits that replaced them.
   let rewrittenShas: RewrittenShas = {};
+  let historyMoves: HistoryMove[] = [];
   const initialCommentThreads = mergeCommentImports([], initialCommentImports).threads;
   if (initialCommentThreads.length > 0) {
     commentSessions.set(createCommentSessionKey(currentCommentSelection), {
@@ -614,7 +623,7 @@ export async function startServer(options: ServerOptions): Promise<{
       return currentCommentSelection;
     }
 
-    const selection = movedSelection(
+    const selection = selectionAfterMoves(
       createDiffSelection(
         hasBase ? (query.base as string) : currentCommentSelection.baseCommitish,
         hasTarget ? (query.target as string) : currentCommentSelection.targetCommitish,
@@ -624,7 +633,7 @@ export async function startServer(options: ServerOptions): Promise<{
             ? undefined
             : currentCommentSelection.baseMode,
       ),
-      rewrittenShas,
+      historyMoves,
     );
     return findReviewOf(selection)?.selection ?? selection;
   }
@@ -650,7 +659,7 @@ export async function startServer(options: ServerOptions): Promise<{
     const hasBase = typeof query.base === 'string';
     const hasTarget = typeof query.target === 'string';
     const hasBaseMode = typeof query.baseMode === 'string';
-    return movedSelection(
+    return selectionAfterMoves(
       createDiffSelection(
         hasBase ? (query.base as string) : currentSelection.baseCommitish,
         hasTarget ? (query.target as string) : currentSelection.targetCommitish,
@@ -660,7 +669,7 @@ export async function startServer(options: ServerOptions): Promise<{
             ? undefined
             : currentSelection.baseMode,
       ),
-      rewrittenShas,
+      historyMoves,
     );
   };
 
@@ -737,7 +746,7 @@ export async function startServer(options: ServerOptions): Promise<{
       commentImports: shouldIncludeCommentImports ? initialCommentImports : undefined,
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,
       review,
-      ...(Object.keys(rewrittenShas).length > 0 ? { rewritten: rewrittenShas } : {}),
+      ...(Object.keys(rewrittenShas).length > 0 ? { rewritten: rewrittenShas, historyMoves } : {}),
     });
   });
 
@@ -1591,7 +1600,7 @@ export async function startServer(options: ServerOptions): Promise<{
       const body: unknown =
         typeof req.body === 'string' ? (JSON.parse(req.body) as unknown) : req.body;
       const nextThreads = parseCommentsPayload(body).map((thread) =>
-        movedThread(thread, rewrittenShas),
+        movedThread(thread, rewrittenShas, historyMoves),
       );
       const nextDecisions = parseDecisionsPayload(body)?.map((decision) =>
         movedDecision(decision, rewrittenShas),
@@ -1635,7 +1644,7 @@ export async function startServer(options: ServerOptions): Promise<{
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const session = getOrCreateCommentSession(selection);
       const commentImports = parseCommentImportsPayload(req.body).map((item) =>
-        movedPlace(item, rewrittenShas),
+        movedPlace(item, rewrittenShas, historyMoves),
       );
       const importId = createHash('sha256')
         .update(serializeCommentImports(commentImports))
@@ -2089,13 +2098,22 @@ export async function startServer(options: ServerOptions): Promise<{
     return { commit, original, message, acknowledged: acknowledged as RewriteWarning[] };
   }
 
-  const refuseReword = (
+  function parseReorderRequest(body: unknown): ReorderRequest | null {
+    if (!body || typeof body !== 'object') return null;
+    const { order, acknowledged } = body as Record<string, unknown>;
+    if (!Array.isArray(order) || !order.every((sha) => typeof sha === 'string')) return null;
+    if (acknowledged === undefined) return { order: order as string[] };
+    if (!Array.isArray(acknowledged)) return null;
+    return { order: order as string[], acknowledged: acknowledged as RewriteWarning[] };
+  }
+
+  const refuseRewrite = (
     reason: RewordRejection,
     output?: string,
   ): { status: number; body: RewordResponse } => ({
     status: 409,
     body: {
-      error: `Reword refused: ${reason}`,
+      error: `Rewrite refused: ${reason}`,
       reason,
       ...(output === undefined ? {} : { output }),
     },
@@ -2103,12 +2121,15 @@ export async function startServer(options: ServerOptions): Promise<{
 
   // Everything held under the old SHAs moves in one step, with no await between a session and its
   // new key; only the commit lists of the moved reviews are read first.
-  async function followRewrite(rewritten: RewrittenShas) {
+  async function followRewrite(move: HistoryMove) {
+    const { rewritten } = move;
+    const moves = [move];
     rewrittenShas = afterRewrite(rewrittenShas, rewritten);
+    historyMoves = [...historyMoves, move];
     invalidateCache();
     const movedReviews = await Promise.all(
       pinnedReviews.map(async (review): Promise<ReviewScope> => {
-        const selection = movedSelection(review.selection, rewritten);
+        const selection = selectionAfterMoves(review.selection, moves);
         if (diffSelectionsEqual(selection, review.selection)) return review;
         let commits: ReviewScope['commits'] = [];
         try {
@@ -2116,7 +2137,7 @@ export async function startServer(options: ServerOptions): Promise<{
         } catch (error) {
           console.error('Error listing review commits:', error);
         }
-        return { selection, requested: movedSelection(review.requested, rewritten), commits };
+        return { selection, requested: selectionAfterMoves(review.requested, moves), commits };
       }),
     );
     pinnedReviews.splice(0, pinnedReviews.length, ...movedReviews);
@@ -2124,15 +2145,15 @@ export async function startServer(options: ServerOptions): Promise<{
     for (const { selection } of movedReviews) {
       pinnedCommentSessionKeys.add(createCommentSessionKey(selection));
     }
-    initialSelection = movedSelection(initialSelection, rewritten);
-    currentSelection = movedSelection(currentSelection, rewritten);
-    currentCommentSelection = movedSelection(currentCommentSelection, rewritten);
+    initialSelection = selectionAfterMoves(initialSelection, moves);
+    currentSelection = selectionAfterMoves(currentSelection, moves);
+    currentCommentSelection = selectionAfterMoves(currentCommentSelection, moves);
     for (const [key, session] of [...commentSessions]) {
-      const selection = movedSelection(session.selection, rewritten);
+      const selection = selectionAfterMoves(session.selection, moves);
       commentSessions.delete(key);
       commentSessions.set(createCommentSessionKey(selection), {
         selection,
-        threads: session.threads.map((thread) => movedThread(thread, rewritten)),
+        threads: session.threads.map((thread) => movedThread(thread, rewritten, moves)),
         decisions: session.decisions.map((decision) => movedDecision(decision, rewritten)),
         version: session.version + 1,
       });
@@ -2205,27 +2226,22 @@ export async function startServer(options: ServerOptions): Promise<{
     return run.code === 0 ? run.stdout.toString('utf8').trim() : null;
   }
 
-  async function applyReword(
+  async function refusalBeforeRewrite(
     selection: DiffSelection,
-    commit: ReviewCommit,
-    request: RewordRequest,
-  ): Promise<{ status: number; body: RewordResponse }> {
-    const current = await messageAsReviewed(selection, commit);
-    if (withoutThreadTrailers(request.original) !== current) return refuseReword('stale-view');
-    const message = withoutThreadTrailers(request.message);
-    if (message === current) return refuseReword('no-change');
-    if (message.length === 0) return refuseReword('empty-message');
-
-    const defaultBranch = await parser.getDefaultBranch();
+    oldestReplaced: ReviewCommit,
+    rewordsMerge: boolean,
+    defaultBranch: string | null,
+    acknowledged: readonly RewriteWarning[] | undefined,
+  ): Promise<{ status: number; body: RewordResponse } | null> {
     const { blocks, warnings, warningBranches, blockingThreads } = checkRewrite({
       ...(await readRewriteState(
         repositoryPath,
         selection.targetCommitish,
-        commit.sha,
+        oldestReplaced.sha,
         defaultBranch,
       )),
       defaultBranch,
-      rewordsMerge: commit.isMerge === true,
+      rewordsMerge,
       commentSessions: await Promise.all(
         [...commentSessions.values()]
           .filter(({ threads }) => threads.length > 0)
@@ -2234,13 +2250,13 @@ export async function startServer(options: ServerOptions): Promise<{
     });
     const [blocked] = blocks;
     if (blocked === 'agent-working') {
-      const refused = refuseReword(blocked);
+      const refused = refuseRewrite(blocked);
       return { ...refused, body: { ...refused.body, blockingThreads } };
     }
-    if (blocked) return refuseReword(blocked);
-    const unseen = warnings.filter((warning) => !request.acknowledged?.includes(warning));
+    if (blocked) return refuseRewrite(blocked);
+    const unseen = warnings.filter((warning) => !acknowledged?.includes(warning));
     if (unseen.length > 0) {
-      const refused = refuseReword('needs-confirmation');
+      const refused = refuseRewrite('needs-confirmation');
       const named = Object.fromEntries(
         Object.entries(warningBranches).filter(([warning]) =>
           unseen.includes(warning as RewriteWarning),
@@ -2255,62 +2271,158 @@ export async function startServer(options: ServerOptions): Promise<{
         },
       };
     }
+    return null;
+  }
+
+  function rewrittenBody(
+    movedReview: DiffSelection,
+    { rewritten, branches }: Extract<HistoryRewriteResult, { ok: true }>,
+  ): { status: number; body: RewordResponse } {
+    const session = getOrCreateCommentSession(movedReview);
+    return {
+      status: 200,
+      body: {
+        success: true,
+        rewritten,
+        version: session.version,
+        threads: session.threads,
+        decisions: session.decisions,
+        branches,
+      },
+    };
+  }
+
+  async function applyReword(
+    selection: DiffSelection,
+    commit: ReviewCommit,
+    request: RewordRequest,
+  ): Promise<{ status: number; body: RewordResponse }> {
+    const current = await messageAsReviewed(selection, commit);
+    if (withoutThreadTrailers(request.original) !== current) return refuseRewrite('stale-view');
+    const message = withoutThreadTrailers(request.message);
+    if (message === current) return refuseRewrite('no-change');
+    if (message.length === 0) return refuseRewrite('empty-message');
+
+    const defaultBranch = await parser.getDefaultBranch();
+    const refused = await refusalBeforeRewrite(
+      selection,
+      commit,
+      commit.isMerge === true,
+      defaultBranch,
+      request.acknowledged,
+    );
+    if (refused) return refused;
 
     const result = await rewriteHistory(repositoryPath, {
       base: selection.baseCommitish,
       messages: new Map([[commit.sha, message]]),
       defaultBranch,
     });
-    if (!result.ok) return refuseReword(result.reason, result.output);
-    await followRewrite(result.rewritten);
-
-    const session = getOrCreateCommentSession(movedSelection(selection, result.rewritten));
-    return {
-      status: 200,
-      body: {
-        success: true,
-        rewritten: result.rewritten,
-        version: session.version,
-        threads: session.threads,
-        decisions: session.decisions,
-        branches: result.branches,
-      },
-    };
+    if (!result.ok) return refuseRewrite(result.reason, result.output);
+    const move = { rewritten: result.rewritten };
+    await followRewrite(move);
+    return rewrittenBody(selectionAfterMoves(selection, [move]), result);
   }
 
-  app.post('/api/reword', async (req, res) => {
-    const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
-    if (!canEditDirectly(selection)) {
-      res.status(403).json({ error: 'Rewording is not available for this review' });
-      return;
+  async function applyReorder(
+    selection: DiffSelection,
+    review: ReviewScope,
+    request: ReorderRequest,
+  ): Promise<{ status: number; body: RewordResponse }> {
+    const { commits } = review;
+    const { order } = request;
+    const listed = new Set(commits.map(({ sha }) => sha));
+    if (order.length !== commits.length || new Set(order).size !== listed.size) {
+      return refuseRewrite('stale-view');
     }
-    if (!isLocalRequest(req)) {
-      res.status(403).json({ error: 'Rewording accepts requests to localhost only' });
-      return;
-    }
-    if (!req.is('application/json')) {
-      res.status(415).json({ error: 'Expected application/json' });
-      return;
-    }
-    const request = parseRewordRequest(req.body);
-    const review = findReviewOf(selection);
-    const commit = request ? reviewCommitOf(review, request.commit) : undefined;
-    if (!request || !review || !commit) {
-      res.status(400).json({ error: 'Invalid reword request' });
-      return;
-    }
+    if (!order.every((sha) => listed.has(sha))) return refuseRewrite('stale-view');
+    const oldestReplaced = commits.find(({ sha }, index) => sha !== order[index]);
+    if (!oldestReplaced) return refuseRewrite('no-change');
 
-    const run = directEditQueue.then(() => applyReword(selection, commit, request));
-    directEditQueue = run.catch(() => undefined);
-    try {
-      const { status, body } = await run;
-      res.status(status).json(body);
-    } catch (error) {
-      console.error('Error rewording a commit:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Failed to reword the commit',
-      });
-    }
+    const defaultBranch = await parser.getDefaultBranch();
+    const refused = await refusalBeforeRewrite(
+      selection,
+      oldestReplaced,
+      false,
+      defaultBranch,
+      request.acknowledged,
+    );
+    if (refused) return refused;
+
+    const result = await rewriteHistory(repositoryPath, {
+      base: selection.baseCommitish,
+      messages: new Map(),
+      defaultBranch,
+      order,
+    });
+    if (!result.ok) return refuseRewrite(result.reason, result.output);
+
+    const { rewritten } = result;
+    const newTop = order.at(-1) ?? '';
+    const target = isSameCommit(selection.targetCommitish, commits.at(-1)?.sha ?? '')
+      ? (rewritten[newTop] ?? newTop)
+      : movedCommitish(selection.targetCommitish, rewritten);
+    const after = await parser.listReviewCommits(
+      createDiffSelection(selection.baseCommitish, target, selection.baseMode),
+    );
+    const place = ({ sha, parentSha }: ReviewCommit) => ({ sha, parentSha });
+    const move = { rewritten, reorder: { before: commits.map(place), after: after.map(place) } };
+    await followRewrite(move);
+    return rewrittenBody(selectionAfterMoves(selection, [move]), result);
+  }
+
+  function historyRoute(
+    path: string,
+    what: string,
+    apply: (
+      selection: DiffSelection,
+      req: Request,
+    ) => Promise<{ status: number; body: RewordResponse }> | null,
+  ) {
+    app.post(path, async (req, res) => {
+      const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+      if (!canEditDirectly(selection)) {
+        res.status(403).json({ error: `${what} is not available for this review` });
+        return;
+      }
+      if (!isLocalRequest(req)) {
+        res.status(403).json({ error: `${what} accepts requests to localhost only` });
+        return;
+      }
+      if (!req.is('application/json')) {
+        res.status(415).json({ error: 'Expected application/json' });
+        return;
+      }
+      const applied = apply(selection, req);
+      if (!applied) {
+        res.status(400).json({ error: `Invalid ${what} request` });
+        return;
+      }
+      directEditQueue = applied.catch(() => undefined);
+      try {
+        const { status, body } = await applied;
+        res.status(status).json(body);
+      } catch (error) {
+        console.error(`Error in ${what}:`, error);
+        res.status(500).json({
+          error: error instanceof Error ? error.message : `${what} failed`,
+        });
+      }
+    });
+  }
+
+  historyRoute('/api/reword', 'Rewording', (selection, req) => {
+    const request = parseRewordRequest(req.body);
+    const commit = request ? reviewCommitOf(findReviewOf(selection), request.commit) : undefined;
+    if (!request || !commit) return null;
+    return directEditQueue.then(() => applyReword(selection, commit, request));
+  });
+
+  historyRoute('/api/reorder', 'Reordering', (selection, req) => {
+    const request = parseReorderRequest(req.body);
+    const review = findReviewOf(selection);
+    if (!request || !review) return null;
+    return directEditQueue.then(() => applyReorder(selection, review, request));
   });
 
   async function fixupsByThreadOrNone(
@@ -2544,7 +2656,7 @@ export async function startServer(options: ServerOptions): Promise<{
     const ping = setInterval(() => res.write(': ping\n\n'), 30_000);
     const wait: CommentWait = {
       check: async () => {
-        const moved = movedSelection(selection, rewrittenShas);
+        const moved = selectionAfterMoves(selection, historyMoves);
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(moved);
         if (waiting.length > 0 && commentWaits.has(wait)) {
           await wait.finish(`event: threads\ndata: ${JSON.stringify(waiting)}\n\n`);

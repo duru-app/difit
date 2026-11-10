@@ -3,6 +3,7 @@ import {
   type DiffCommentThread,
   type ViewedFileRecord,
   type DiffContextStorage,
+  type HistoryMove,
   type LegacyDiffContextStorage,
   type LegacyDiffComment,
   type RewrittenShas,
@@ -12,7 +13,7 @@ import {
 } from '../../types/diff';
 import { isOnCommit } from '../../utils/commentPosition';
 import { diffSelectionsEqual, normalizeBaseMode } from '../../utils/diffSelection';
-import { movedDecision, movedSelection, movedThread } from '../../utils/rewrittenShas';
+import { movedDecision, movedThread, selectionAfterMoves } from '../../utils/rewrittenShas';
 import {
   isMarkedAfterUnmark,
   keepNewestViewedItems,
@@ -295,7 +296,11 @@ export class StorageService {
   }
 
   // A record already under its new key stays: it was written after the rewrite.
-  moveRewrittenRecords(rewritten: RewrittenShas, repositoryId: string | undefined): void {
+  moveRewrittenRecords(
+    rewritten: RewrittenShas,
+    repositoryId: string | undefined,
+    moves: readonly HistoryMove[] = [{ rewritten }],
+  ): void {
     if (!repositoryId) return;
     const prefix = this.getFullStorageKey(repositoryId, '');
     const keys = Array.from({ length: localStorage.length }, (_, index) =>
@@ -305,7 +310,7 @@ export class StorageService {
       try {
         const record = JSON.parse(localStorage.getItem(key) ?? 'null') as DiffContextStorage | null;
         if (!record?.threads) continue;
-        const moved = movedSelection(record, rewritten);
+        const moved = selectionAfterMoves(record, moves);
         if (diffSelectionsEqual(moved, record)) continue;
         const movedKey = this.getFullStorageKey(
           repositoryId,
@@ -316,7 +321,7 @@ export class StorageService {
             ...record,
             baseCommitish: moved.baseCommitish,
             targetCommitish: moved.targetCommitish,
-            threads: record.threads.map((thread) => movedThread(thread, rewritten)),
+            threads: record.threads.map((thread) => movedThread(thread, rewritten, moves)),
             decisions: record.decisions?.map((decision) => movedDecision(decision, rewritten)),
           };
           localStorage.setItem(movedKey, JSON.stringify(movedRecord));
