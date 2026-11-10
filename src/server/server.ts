@@ -56,8 +56,12 @@ import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
 import { commitDirectEdit, type EditedView } from './direct-edit.js';
 import { readRewriteState, removeAbandonedRewrites, rewriteHistory } from './history-rewrite.js';
-import { checkRewrite } from './rewrite-check.js';
-import { chooseFixupTarget } from './fixup-target.js';
+import { checkRewrite, threadsAtWork } from './rewrite-check.js';
+import {
+  chooseCommitOfUncommittedView,
+  chooseFixupTarget,
+  linesOfComment,
+} from './fixup-target.js';
 import { FileWatcherService } from './file-watcher.js';
 import { GitDiffParser } from './git-diff.js';
 import { findLibrarySource, sourceLocations } from './library-source.js';
@@ -131,6 +135,7 @@ import {
   isSameCommit,
   isSameView,
   isViewOfReview,
+  normalizeBaseMode,
 } from '../utils/diffSelection.js';
 import {
   afterRewrite,
@@ -2136,6 +2141,70 @@ export async function startServer(options: ServerOptions): Promise<{
     for (const wait of commentWaits) void wait.check();
   }
 
+  async function commentSessionForRewrite({ selection, threads, decisions }: CommentSessionState) {
+    const fixupsByThread = await fixupsByThreadFor(selection);
+    const review = pinnedReviews.find((pinned) => diffSelectionsEqual(pinned.selection, selection));
+    const withoutCommit = threadsAtWork({ threads, decisions, fixupsByThread }).flatMap((thread) =>
+      thread.fixupTarget === undefined && !isOnCommit(thread) ? [thread] : [],
+    );
+    const committed = isCommitTarget(selection.targetCommitish);
+    let commits = review?.commits ?? [];
+    if (!review && withoutCommit.length > 0) {
+      commits = await parser
+        .listReviewCommits(committed ? selection : { ...selection, targetCommitish: 'HEAD' })
+        .catch(() => []);
+    }
+    const base =
+      committed || withoutCommit.length === 0 ? null : await baseOfUncommittedView(selection);
+    const lineCommits = new Map(
+      await Promise.all(
+        withoutCommit.map(async (thread): Promise<[string, string | null]> => {
+          const view = thread.view ?? selection;
+          const listed = commitsOfView(view, { selection, commits }).map(({ sha }) => sha);
+          const query = {
+            filePath: thread.filePath,
+            ...linesOfComment(thread.position),
+            ...(listed.length > 0 ? { commits: listed } : {}),
+          };
+          try {
+            if (committed) {
+              return [
+                thread.id,
+                await chooseFixupTarget(repositoryPath, {
+                  view: { base: view.baseCommitish, target: view.targetCommitish },
+                  ...query,
+                }),
+              ];
+            }
+            if (base === null) return [thread.id, null];
+            return [
+              thread.id,
+              await chooseCommitOfUncommittedView(repositoryPath, {
+                base,
+                newSide: selection.targetCommitish === 'staged' ? 'index' : 'working-tree',
+                ...query,
+              }),
+            ];
+          } catch (error) {
+            console.error('Error finding the commit of a comment:', error);
+            return [thread.id, committed ? selection.targetCommitish : null];
+          }
+        }),
+      ),
+    );
+    return { selection, review, commits, threads, decisions, fixupsByThread, lineCommits };
+  }
+
+  async function baseOfUncommittedView(selection: DiffSelection): Promise<string | null> {
+    const run = await runGit(
+      repositoryPath,
+      normalizeBaseMode(selection.baseMode) === 'merge-base'
+        ? ['merge-base', 'HEAD', selection.baseCommitish]
+        : ['rev-parse', '--verify', `${selection.baseCommitish}^{commit}`],
+    );
+    return run.code === 0 ? run.stdout.toString('utf8').trim() : null;
+  }
+
   async function applyReword(
     selection: DiffSelection,
     commit: ReviewCommit,
@@ -2148,7 +2217,7 @@ export async function startServer(options: ServerOptions): Promise<{
     if (message.length === 0) return refuseReword('empty-message');
 
     const defaultBranch = await parser.getDefaultBranch();
-    const { blocks, warnings, warningBranches } = checkRewrite({
+    const { blocks, warnings, warningBranches, blockingThreads } = checkRewrite({
       ...(await readRewriteState(
         repositoryPath,
         selection.targetCommitish,
@@ -2157,8 +2226,17 @@ export async function startServer(options: ServerOptions): Promise<{
       )),
       defaultBranch,
       rewordsMerge: commit.isMerge === true,
+      commentSessions: await Promise.all(
+        [...commentSessions.values()]
+          .filter(({ threads }) => threads.length > 0)
+          .map(commentSessionForRewrite),
+      ),
     });
     const [blocked] = blocks;
+    if (blocked === 'agent-working') {
+      const refused = refuseReword(blocked);
+      return { ...refused, body: { ...refused.body, blockingThreads } };
+    }
     if (blocked) return refuseReword(blocked);
     const unseen = warnings.filter((warning) => !request.acknowledged?.includes(warning));
     if (unseen.length > 0) {

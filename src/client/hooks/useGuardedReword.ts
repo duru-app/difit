@@ -8,7 +8,7 @@ export function useGuardedReword(reword: RewordControls | undefined) {
   const guarded = useMemo<RewordControls | undefined>(
     () =>
       reword && {
-        load: reword.load,
+        ...reword,
         save: async (request) => {
           setIsSaving(true);
           setMovedBranches([]);

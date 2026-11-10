@@ -10,6 +10,7 @@ import type {
   DiffResponse,
   FileCommentThread,
   ReviewDecision,
+  RewriteBlockingThread,
 } from '../types/diff';
 import type { ClientWatchState } from '../types/watch';
 import { DiffMode } from '../types/watch';
@@ -3595,6 +3596,80 @@ describe('App Component - Commits of the review', () => {
     fireEvent.click(within(row).getByRole('button', { name: '그래도 저장' }));
 
     expect(await screen.findByText('브랜치 work3도 함께 옮겼습니다.')).toBeInTheDocument();
+  });
+
+  describe('when an open comment blocks saving a message', () => {
+    const openBlockedEditor = async (blockingThreads: RewriteBlockingThread[]) => {
+      directEditAvailable = true;
+      const answer = vi.mocked(global.fetch).getMockImplementation()!;
+      vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.startsWith('/api/commit-message')) {
+          return { ok: true, json: async () => ({ message: 'first step' }) } as Response;
+        }
+        if (url.startsWith('/api/reword')) {
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({
+              error: 'Reword refused: agent-working',
+              reason: 'agent-working',
+              blockingThreads,
+            }),
+          } as Response;
+        }
+        return answer(input, init);
+      });
+
+      renderApp();
+      const row = (await waitFor(() => commitButton(/1111111/))).closest('li')!;
+      fireEvent.click(within(row).getByRole('button', { name: '메시지 고치기' }));
+      fireEvent.change(await within(row).findByRole('textbox', { name: '커밋 메시지' }), {
+        target: { value: 'first step, renamed' },
+      });
+      fireEvent.click(within(row).getByRole('button', { name: '저장' }));
+      return within(await within(row).findByRole('alert'));
+    };
+
+    it('opens the earlier review the comment lives in', async () => {
+      const earlier = { baseCommitish: full('def4567'), targetCommitish: full('1111111') };
+      const alert = await openBlockedEditor([
+        {
+          threadId: 'on-the-earlier-review',
+          review: earlier,
+          commit: { shortSha: '1111111', subject: 'first step' },
+          file: 'test.ts',
+          line: 1,
+        },
+      ]);
+
+      fireEvent.click(
+        alert.getByRole('button', { name: /^1111111 first step ← test\.ts:1\n.*다른 리뷰/s }),
+      );
+
+      await waitFor(() =>
+        expect(diffQueries().at(-1)).toEqual([earlier.baseCommitish, earlier.targetCommitish]),
+      );
+    });
+
+    it('stays on the review and picks the comment when it is on screen', async () => {
+      const alert = await openBlockedEditor([
+        {
+          threadId: 'c1',
+          review: REVIEW.requested,
+          commit: { shortSha: 'abc1234', subject: 'second step' },
+          file: 'test.ts',
+          line: 1,
+        },
+      ]);
+      const queries = diffQueries().length;
+      const lengthBefore = window.history.length;
+
+      fireEvent.click(alert.getByRole('button', { name: /^abc1234 second step ← test\.ts:1/ }));
+
+      await waitFor(() => expect(window.history.length).toBe(lengthBefore + 1));
+      expect(diffQueries()).toHaveLength(queries);
+    });
   });
 
   it('offers no rewording where direct edits are off', async () => {

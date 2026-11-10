@@ -616,7 +616,11 @@ export interface RewordRequest {
   acknowledged?: RewriteWarning[];
 }
 
-export type RewriteWarning = 'default-branch' | 'default-branch-left' | 'branch-elsewhere';
+export type RewriteWarning =
+  | 'default-branch'
+  | 'default-branch-left'
+  | 'branch-elsewhere'
+  | 'pushed-commit';
 
 // A local branch holding a replaced commit that the rewrite leaves on the old commits.
 export interface LeftBranch {
@@ -630,6 +634,7 @@ export type RewordRejection =
   | 'detached-head'
   | 'operation-in-progress'
   | 'merge-commit'
+  | 'agent-working'
   | 'empty-message'
   | 'no-change'
   | 'needs-confirmation'
@@ -637,6 +642,18 @@ export type RewordRejection =
   | 'head-moved'
   | 'branch-moved'
   | 'commit-failed';
+
+// A comment that stops a history rewrite, in a review that may no longer be on screen.
+export interface RewriteBlockingThread {
+  threadId: string;
+  // The whole review, the one view that always shows the comment.
+  review: DiffSelection;
+  // Absent when its lines are not committed.
+  commit?: { shortSha: string; subject?: string };
+  file?: string;
+  line?: LineNumber;
+  deleted?: true;
+}
 
 // Keyed by the old full SHA; only commits the rewrite actually replaced.
 export type RewrittenShas = Readonly<Record<string, string>>;
@@ -656,6 +673,7 @@ export type RewordResponse =
       output?: string;
       warnings?: RewriteWarning[];
       warningBranches?: Partial<Record<RewriteWarning, string[]>>;
+      blockingThreads?: RewriteBlockingThread[];
     };
 
 // The message a commit of the review shows: the one its pending amend! commits leave, or its own.

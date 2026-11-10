@@ -7,7 +7,7 @@ import { fetch } from 'undici';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 
 import { startServer } from './server.js';
-import type { DiffResponse } from '../types/diff.js';
+import type { DiffResponse, RewriteBlockingThread, RewordResponse } from '../types/diff.js';
 import { bindingForView, createDiffSelection } from '../utils/diffSelection.js';
 
 let home: string;
@@ -758,6 +758,409 @@ it('keeps a local master tracking origin’s default main in place as the defaul
   });
   expect(git(repo, ['rev-parse', 'master'])).toBe(typo);
   expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
+});
+
+it('warns before rewording a commit already pushed and rewrites without pushing once confirmed', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  const remote = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-remote-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  cleanups.push(() => rmSync(remote, { recursive: true, force: true }));
+  git(remote, ['init', '-q', '--bare']);
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  git(repo, ['remote', 'add', 'origin', remote]);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  git(repo, ['push', '-q', '-u', 'origin', 'feature']);
+  const local = commit(repo, 'locl', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, local),
+    repoPath: repo,
+    preferredPort: 9278,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const reword = (body: object) =>
+    fetch(api(`/api/reword?base=${base}&target=${local}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const notPushed = await reword({ commit: local, original: 'locl', message: 'local' });
+  expect(notPushed.status).toBe(200);
+  const head = git(repo, ['rev-parse', 'HEAD']);
+
+  const fixTypo = { commit: typo, original: 'add typpo', message: 'add typo' };
+  const warned = await reword(fixTypo);
+  expect(warned.status).toBe(409);
+  expect(await warned.json()).toMatchObject({
+    reason: 'needs-confirmation',
+    warnings: ['pushed-commit'],
+  });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(head);
+
+  const confirmed = await reword({ ...fixTypo, acknowledged: ['pushed-commit'] });
+  expect(confirmed.status).toBe(200);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add typo',
+    'local',
+  ]);
+  expect(git(remote, ['rev-parse', 'feature'])).toBe(typo);
+  expect(git(repo, ['rev-parse', '@{upstream}'])).toBe(typo);
+});
+
+it("blocks rewording while a thread is the agent's, and not while the agent only waits", async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const tip = commit(repo, 'mistke', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9279,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const query = `?base=${base}&target=${tip}`;
+  const reword = (body: object) =>
+    fetch(api(`/api/reword${query}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const comment = (entry: object) =>
+    fetch(api('/api/comment-imports'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([entry]),
+    });
+
+  const waiting = new AbortController();
+  cleanups.push(() => waiting.abort());
+  const wait = await fetch(api('/api/comments-wait'), { signal: waiting.signal });
+  expect(wait.status).toBe(200);
+  const onlyWaiting = await reword({ commit: tip, original: 'mistke', message: 'mistake' });
+  expect(onlyWaiting.status).toBe(200);
+  const movedTip = git(repo, ['rev-parse', 'HEAD']);
+
+  const position = { scope: 'commit' };
+  await comment({
+    type: 'thread',
+    id: 't1',
+    author: 'User',
+    position,
+    fixupTarget: typo,
+    body: 'typo in the subject',
+  });
+  const fixTypo = { commit: typo, original: 'add typpo', message: 'add typo' };
+  const blocked = await reword(fixTypo);
+  expect(blocked.status).toBe(409);
+  expect(await blocked.json()).toMatchObject({ reason: 'agent-working' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(movedTip);
+
+  await comment({
+    type: 'reply',
+    author: 'Agent',
+    position,
+    fixupTarget: typo,
+    body: 'on it',
+    fixPending: true,
+  });
+  const stillFixing = await reword(fixTypo);
+  expect(stillFixing.status).toBe(409);
+  expect(await stillFixing.json()).toMatchObject({ reason: 'agent-working' });
+
+  await comment({
+    type: 'reply',
+    author: 'Agent',
+    position,
+    fixupTarget: typo,
+    body: 'nothing to change after all',
+  });
+  const answered = await reword(fixTypo);
+  expect(answered.status).toBe(200);
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add typo',
+    'mistake',
+  ]);
+});
+
+it("blocks rewording while a thread of another selection on the server is the agent's", async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const tip = commit(repo, 'mistke', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9280,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  await fetch(api('/api/comment-imports?base=HEAD&target=.'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      {
+        type: 'thread',
+        id: 'working-tree',
+        author: 'User',
+        filePath: 'c.js',
+        position: { side: 'new', line: 1 },
+        body: 'about the working tree',
+      },
+    ]),
+  });
+
+  const response = await fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commit: tip, original: 'mistke', message: 'mistake' }),
+  });
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ reason: 'agent-working' });
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
+});
+
+it('says where a comment of an earlier review holds a reword up after the review reopened', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const oldTip = commit(repo, 'add c', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, oldTip),
+    repoPath: repo,
+    preferredPort: 9281,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  await fetch(api('/api/comment-imports'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      {
+        type: 'thread',
+        id: 'earlier',
+        author: 'User',
+        filePath: 'c.js',
+        position: { side: 'new', line: 1 },
+        body: 'left on the earlier review',
+      },
+    ]),
+  });
+
+  const newTip = commit(repo, 'add d', { 'd.js': '1\n' });
+  await fetch(api(`/api/diff?base=${base}&target=${newTip}`));
+  const onNewReview = await fetch(api(`/api/comments-json?base=${base}&target=${newTip}`));
+  expect(((await onNewReview.json()) as { threads: unknown[] }).threads).toEqual([]);
+
+  const blocked = await fetch(api(`/api/reword?base=${base}&target=${newTip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo' }),
+  });
+
+  expect(blocked.status).toBe(409);
+  const refused = (await blocked.json()) as RewordResponse & {
+    blockingThreads: RewriteBlockingThread[];
+  };
+  expect(refused).toEqual({
+    error: 'Reword refused: agent-working',
+    reason: 'agent-working',
+    blockingThreads: [
+      {
+        threadId: 'earlier',
+        review: createDiffSelection(base, oldTip),
+        commit: { shortSha: oldTip.slice(0, 7), subject: 'add c' },
+        file: 'c.js',
+        line: 1,
+      },
+    ],
+  });
+
+  const { review } = refused.blockingThreads[0]!;
+  const opened = await fetch(
+    api(`/api/diff?base=${review.baseCommitish}&target=${review.targetCommitish}`),
+  );
+  const { selection } = ((await opened.json()) as DiffResponse).review!;
+  const comments = await fetch(
+    api(`/api/comments-json?base=${selection.baseCommitish}&target=${selection.targetCommitish}`),
+  );
+  const shown = (await comments.json()) as { threads: Array<{ id: string }> };
+  expect(shown.threads.map(({ id }) => id)).toEqual(['earlier']);
+  expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newTip);
+});
+
+async function blockingThreadsOfReword(
+  api: (path: string) => string,
+  review: { base: string; tip: string },
+  request: { commit: string; original: string; message: string },
+): Promise<RewriteBlockingThread[]> {
+  const blocked = await fetch(api(`/api/reword?base=${review.base}&target=${review.tip}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  expect(blocked.status).toBe(409);
+  return ((await blocked.json()) as { blockingThreads: RewriteBlockingThread[] }).blockingThreads;
+}
+
+const agentsTurn = (id: string, filePath: string, line: number) => ({
+  type: 'thread',
+  id,
+  author: 'User',
+  filePath,
+  position: { side: 'new', line },
+  body: 'please fix',
+});
+
+it('names the commit a line comes from for a comment with no fixup target', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': 'one\n' });
+  const tip = commit(repo, 'add c', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9282,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  await fetch(api('/api/comment-imports'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([agentsTurn('on-b', 'b.js', 1), agentsTurn('on-c', 'c.js', 1)]),
+  });
+
+  const blocking = await blockingThreadsOfReword(
+    api,
+    { base, tip },
+    { commit: typo, original: 'add typpo', message: 'add typo' },
+  );
+
+  expect(blocking.map(({ threadId, commit }) => ({ threadId, commit }))).toEqual([
+    { threadId: 'on-b', commit: { shortSha: typo.slice(0, 7), subject: 'add typpo' } },
+    { threadId: 'on-c', commit: { shortSha: tip.slice(0, 7), subject: 'add c' } },
+  ]);
+});
+
+it('names the commit of a committed line in a review of the working tree', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const main = commit(repo, 'base', { 'a.js': '1\n' });
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const typo = commit(repo, 'add typpo', { 'b.js': 'one\n' });
+  const tip = commit(repo, 'add c', { 'c.js': '1\n' });
+  writeFileSync(join(repo, 'b.js'), 'one\ntwo\n');
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(main, tip),
+    repoPath: repo,
+    preferredPort: 9283,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const working = `base=${main.slice(0, 7)}&target=.&baseMode=merge-base`;
+  await fetch(api(`/api/diff?${working}`));
+  await fetch(api(`/api/comment-imports?${working}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([
+      agentsTurn('committed', 'b.js', 1),
+      agentsTurn('uncommitted', 'b.js', 2),
+    ]),
+  });
+
+  const blocking = await blockingThreadsOfReword(
+    api,
+    { base: main, tip },
+    { commit: typo, original: 'add typpo', message: 'add typo' },
+  );
+
+  expect(blocking).toEqual([
+    {
+      threadId: 'committed',
+      review: createDiffSelection(main.slice(0, 7), '.', 'merge-base'),
+      commit: { shortSha: typo.slice(0, 7), subject: 'add typpo' },
+      file: 'b.js',
+      line: 1,
+    },
+    {
+      threadId: 'uncommitted',
+      review: createDiffSelection(main.slice(0, 7), '.', 'merge-base'),
+      file: 'b.js',
+      line: 2,
+    },
+  ]);
+});
+
+it('names a commit for a line a commit deleted in a review of the working tree', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const main = commit(repo, 'base', { 'a.js': '1\n2\n3\n' });
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const typo = commit(repo, 'add typpo', { 'b.js': 'one\n' });
+  const tip = commit(repo, 'drop 2', { 'a.js': '1\n3\n' });
+  writeFileSync(join(repo, 'a.js'), '1\n');
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(main, tip),
+    repoPath: repo,
+    preferredPort: 9284,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const working = `base=${main.slice(0, 7)}&target=.&baseMode=merge-base`;
+  await fetch(api(`/api/diff?${working}`));
+  const onOldSide = (id: string, line: number) => ({
+    ...agentsTurn(id, 'a.js', line),
+    position: { side: 'old', line },
+  });
+  await fetch(api(`/api/comment-imports?${working}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([onOldSide('deleted-by-commit', 2), onOldSide('deleted-uncommitted', 3)]),
+  });
+
+  const blocking = await blockingThreadsOfReword(
+    api,
+    { base: main, tip },
+    { commit: typo, original: 'add typpo', message: 'add typo' },
+  );
+
+  expect(blocking.map(({ threadId, commit }) => ({ threadId, commit }))).toEqual([
+    { threadId: 'deleted-by-commit', commit: { shortSha: tip.slice(0, 7), subject: 'drop 2' } },
+    { threadId: 'deleted-uncommitted' },
+  ]);
 });
 
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {

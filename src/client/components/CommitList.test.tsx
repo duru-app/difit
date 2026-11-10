@@ -6,6 +6,7 @@ import type { ReviewCommit, ReviewView } from '../../types/diff';
 
 import { CommitList } from './CommitList';
 import type { RewordControls } from './CommitMessageForm';
+import type { RewriteBlockingThread } from '../../types/diff';
 
 const commit = (digit: string, subject: string): ReviewCommit => ({
   sha: digit.repeat(40),
@@ -301,16 +302,17 @@ describe('CommitList', () => {
       inDrawer?: boolean;
     } = {}) {
       const onSelect = vi.fn();
+      const showBlockingThread = vi.fn();
       render(
         <CommitList
           review={REVIEW}
           shown={{ kind: 'all' }}
           onSelect={onSelect}
           inDrawer={inDrawer}
-          reword={{ load, save }}
+          reword={{ load, save, showBlockingThread }}
         />,
       );
-      return { onSelect, load, save };
+      return { onSelect, load, save, showBlockingThread };
     }
 
     const itemOf = (name: RegExp) => row(name).closest('li')!;
@@ -391,6 +393,140 @@ describe('CommitList', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('refused');
       expect(screen.getByRole('alert')).toHaveTextContent('git said no');
       expect(screen.getByRole('textbox', { name: '커밋 메시지' })).toHaveValue('better');
+    });
+
+    describe('when comments block the save', () => {
+      const OTHER_REVIEW = { baseCommitish: 'a'.repeat(40), targetCommitish: 'b'.repeat(40) };
+      const blocking = (threadId: string, extra: Partial<RewriteBlockingThread> = {}) => ({
+        threadId,
+        review: OTHER_REVIEW,
+        commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+        file: 'src/deep/c.ts',
+        line: 3,
+        ...extra,
+      });
+      const refuseWith = async (blockingThreads: RewriteBlockingThread[]) => {
+        const rendered = renderRewordable({
+          save: vi.fn(async () => ({ message: 'blocked', blockingThreads })),
+        });
+        fireEvent.click(editButtonOf(/2222222/));
+        const editor = await screen.findByRole('textbox', { name: '커밋 메시지' });
+        fireEvent.change(editor, { target: { value: 'better' } });
+        await act(async () => {
+          fireEvent.click(screen.getByRole('button', { name: '저장' }));
+        });
+        return { ...rendered, alert: screen.getByRole('alert') };
+      };
+
+      const lineTexts = (alert: HTMLElement) =>
+        within(alert)
+          .getAllByRole('listitem')
+          .map((item) => item.textContent);
+
+      it('names the commit the agent will fix, then where the comment is, and goes to it', async () => {
+        const thread = blocking('t1');
+        const { alert, showBlockingThread } = await refuseWith([thread]);
+
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3']);
+        const link = within(alert).getByRole('button');
+        expect(link).toHaveAttribute(
+          'title',
+          'bbbbbbb feat: second ← src/deep/c.ts:3\n' +
+            '에이전트가 bbbbbbb 커밋을 고치려는 코멘트. 누르면 그 코멘트를 엽니다.' +
+            ' 다른 리뷰(aaaaaaa..bbbbbbb)에 있습니다.',
+        );
+        expect(link).toHaveAttribute('aria-label', link.title);
+        fireEvent.click(link);
+
+        expect(showBlockingThread).toHaveBeenCalledWith(thread);
+        expect(screen.getByRole('textbox', { name: '커밋 메시지' })).toHaveValue('better');
+      });
+
+      it('does not name another review for a comment of the review on screen', async () => {
+        const { alert } = await refuseWith([blocking('t1', { review: REVIEW.requested })]);
+
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3']);
+        expect(within(alert).getByRole('button').title).not.toContain('다른 리뷰');
+      });
+
+      it('names every comment, those of the review on screen first', async () => {
+        const elsewhere = [1, 2, 3, 4, 5].map((line) => blocking(`old-${line}`, { line }));
+        const here = [6, 7].map((line) =>
+          blocking(`here-${line}`, { line, review: REVIEW.requested }),
+        );
+        const { alert } = await refuseWith([...elsewhere, ...here]);
+
+        expect(lineTexts(alert)).toEqual(
+          [6, 7, 1, 2, 3, 4, 5].map((line) => `bbbbbbb feat: second ← c.ts:${line}`),
+        );
+      });
+
+      it('names a comment on a file, a range of lines and a whole commit', async () => {
+        const { alert } = await refuseWith([
+          {
+            threadId: 't1',
+            review: OTHER_REVIEW,
+            commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+            file: 'src/deep/c.ts',
+          },
+          blocking('t2', { line: [3, 5] }),
+          {
+            threadId: 't3',
+            review: OTHER_REVIEW,
+            commit: { shortSha: 'bbbbbbb', subject: 'feat: second' },
+          },
+        ]);
+
+        expect(lineTexts(alert)).toEqual([
+          'bbbbbbb feat: second ← c.ts',
+          'bbbbbbb feat: second ← c.ts:3-5',
+          'bbbbbbb feat: second',
+        ]);
+      });
+
+      it('names a comment on uncommitted changes without a commit', async () => {
+        const { alert } = await refuseWith([
+          { threadId: 't1', review: OTHER_REVIEW, file: 'src/deep/c.ts', line: 3 },
+        ]);
+
+        expect(lineTexts(alert)).toEqual(['커밋하지 않은 변경 ← c.ts:3']);
+        expect(within(alert).getByRole('button').title).toContain(
+          '에이전트가 커밋하지 않은 변경을 고치려는 코멘트.',
+        );
+      });
+
+      it('names an uncommitted review the way the review picker does', async () => {
+        const { alert } = await refuseWith([
+          {
+            threadId: 't1',
+            review: { baseCommitish: 'a'.repeat(40), targetCommitish: '.' },
+            file: 'src/deep/c.ts',
+            line: 3,
+          },
+        ]);
+
+        expect(within(alert).getByRole('button').title).toContain(
+          ' 다른 리뷰(aaaaaaa..Uncommitted Changes)에 있습니다.',
+        );
+      });
+
+      it('leaves a deleted comment of this review without a link, there being nothing to show', async () => {
+        const { alert } = await refuseWith([
+          blocking('t1', { review: REVIEW.requested, deleted: true }),
+        ]);
+
+        expect(within(alert).queryByRole('button')).toBeNull();
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3 · 지운 지적']);
+      });
+
+      it('still opens the other review of a deleted comment', async () => {
+        const { alert } = await refuseWith([blocking('t1', { deleted: true })]);
+
+        expect(lineTexts(alert)).toEqual(['bbbbbbb feat: second ← c.ts:3 · 지운 지적']);
+        expect(within(alert).getByRole('button').title).toContain(
+          '지운 코멘트. 누르면 그 코멘트가 있던 리뷰를 엽니다.',
+        );
+      });
     });
 
     const hintOf = (editor: HTMLElement) => within(editor.closest('form')!).getByRole('status');
@@ -548,6 +684,7 @@ describe('CommitList', () => {
           reword={{
             load: vi.fn(async () => ''),
             save: vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
+            showBlockingThread: vi.fn(),
           }}
         />,
       );
@@ -922,7 +1059,11 @@ describe('CommitList', () => {
           shown={{ kind: 'all' }}
           onSelect={vi.fn()}
           inDrawer={inDrawer}
-          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          reword={{
+            load: vi.fn(async () => 'change the behavior'),
+            save: vi.fn(),
+            showBlockingThread: vi.fn(),
+          }}
           onAddCommitComment={vi.fn(async () => {})}
         />,
       );
@@ -945,7 +1086,11 @@ describe('CommitList', () => {
           review={REVIEW}
           shown={{ kind: 'all' }}
           onSelect={vi.fn()}
-          reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+          reword={{
+            load: vi.fn(async () => 'change the behavior'),
+            save: vi.fn(),
+            showBlockingThread: vi.fn(),
+          }}
           onAddCommitComment={vi.fn(async () => {})}
           openCounts={new Map([[COMMITS[1]!.sha, 2]])}
         />,
