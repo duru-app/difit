@@ -1912,6 +1912,7 @@ function App() {
           ...(payload.output ? { output: payload.output } : {}),
           ...(payload.warnings ? { warnings: payload.warnings } : {}),
           ...(payload.blockingThreads ? { blockingThreads: payload.blockingThreads } : {}),
+          ...(payload.conflict ? { conflict: payload.conflict } : {}),
         };
       }
       await fetchDiffDataRef.current?.();

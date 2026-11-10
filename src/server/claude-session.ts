@@ -12,6 +12,18 @@ export function sessionMessageFor(port: number, threads: ThreadAwaitingAgent[]):
   ].join('\n');
 }
 
+export function claudeSessionListening(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  const socketPath = env.CLAUDE_CODE_MESSAGING_SOCKET;
+  if (!socketPath) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const connection = createConnection(socketPath, () => {
+      connection.end();
+      resolve(true);
+    });
+    connection.on('error', () => resolve(false));
+  });
+}
+
 // Resolves to whether the message reached the session's socket.
 export function sendToClaudeSession(
   content: string,
