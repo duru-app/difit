@@ -2,7 +2,7 @@ import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, join, resolve } from 'path';
 
-import { AUTOSQUASH_PREFIX, type LeftBranch, type RewrittenShas } from '../types/diff.js';
+import type { LeftBranch, RewrittenShas } from '../types/diff.js';
 import { threadIdsOf, withThreadTrailer } from '../utils/commitMessage.js';
 
 import { autosquashGroups, squashTarget, type TodoCommit } from './autosquash.js';
@@ -78,15 +78,13 @@ export async function readRewriteState(
 
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
-// The whole first-parent line in its new order, or null when `order` names a commit off that line.
-// A commit the review does not list goes with the listed commit before it. A fixup standing ahead of
-// the commit before it in its autosquash group then goes right behind that commit. What stands above
-// the last listed commit stays above the review.
-function lineInOrder(
+// `order` laid on the first-parent line, or null when it names a commit off that line. A commit the
+// review does not list goes with the listed commit before it; what stands outside the listed commits
+// stays where it is.
+function laidOut(
   line: readonly string[],
   order: readonly string[],
-  groups: readonly TodoCommit[][],
-): string[] | null {
+): { before: string[]; placed: string[]; after: string[] } | null {
   if (order.some((commit) => !line.includes(commit))) return null;
   const isListed = new Set(order);
   const places = line.flatMap((commit, at) => (isListed.has(commit) ? [at] : []));
@@ -98,11 +96,18 @@ function lineInOrder(
     if (isListed.has(commit)) following.set(commit, (current = []));
     else current.push(commit);
   }
-  const placed = order.flatMap((commit) => [commit, ...(following.get(commit) ?? [])]);
+  return {
+    before: line.slice(0, firstListed),
+    placed: order.flatMap((commit) => [commit, ...(following.get(commit) ?? [])]),
+    after: line.slice(lastListed + 1),
+  };
+}
+
+function keptInChainOrder(placed: readonly string[], chains: readonly string[][]): string[] {
   const settled = [...placed];
-  for (const group of groups) {
+  for (const chain of chains) {
     let previous: string | undefined;
-    for (const { sha } of group) {
+    for (const sha of chain) {
       if (!settled.includes(sha)) continue;
       if (previous !== undefined && settled.indexOf(sha) < settled.indexOf(previous)) {
         settled.splice(settled.indexOf(sha), 1);
@@ -111,88 +116,110 @@ function lineInOrder(
       previous = sha;
     }
   }
-  return [...line.slice(0, firstListed), ...settled, ...line.slice(lastListed + 1)];
+  return settled;
 }
 
-const TARGET_SEARCH_DEPTH = 1000;
-
-// The commit below the base each fixup folds into, as git picks it in the shortest autosquash
-// rebase that reaches the nearest match of every fixup: the oldest exact subject, then the commit
-// id, then the oldest subject that starts with the name.
-async function targetsBelow(
-  repoPath: string,
-  base: string,
-  fixups: TodoCommit[],
-): Promise<Map<string, string>> {
-  const log = await runGit(repoPath, [
-    'log',
-    '--topo-order',
-    '--no-merges',
-    '--no-show-signature',
-    '--encoding=UTF-8',
-    `--max-count=${TARGET_SEARCH_DEPTH}`,
-    '--format=%H%x00%s',
-    base,
-    '--',
-  ]);
-  if (log.code !== 0) return new Map();
-  const below = log.stdout
-    .toString('utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [sha = '', subject = ''] = line.split('\0');
-      return { sha, subject };
-    });
-  const reach = Math.max(
-    -1,
-    ...fixups.map((fixup) =>
-      below.findIndex((commit) => squashTarget([commit, fixup], 1) !== undefined),
-    ),
-  );
-  const reached = below.slice(0, reach + 1).reverse();
-  return new Map(
-    fixups.flatMap((fixup) => {
-      const target = squashTarget([...reached, fixup], reached.length);
-      return target ? [[fixup.sha, target.sha] as const] : [];
-    }),
-  );
-}
-
-// The autosquash groups, with the fixups that fold into one commit below the base joined into one
-// group.
-async function orderingGroups(
-  repoPath: string,
-  base: string,
-  listed: TodoCommit[],
-): Promise<TodoCommit[][]> {
-  const groups = autosquashGroups(listed);
-  const unplaced = groups.flatMap(([root]) =>
-    root && AUTOSQUASH_PREFIX.test(root.subject) ? [root] : [],
-  );
-  if (unplaced.length === 0) return groups;
-  const targetOf = await targetsBelow(repoPath, base, unplaced);
-  const position = new Map(listed.map(({ sha }, at) => [sha, at]));
-  const byTarget = new Map<string, TodoCommit[]>();
-  const joined: TodoCommit[][] = [];
-  for (const group of groups) {
-    const [root] = group;
-    if (!root || !AUTOSQUASH_PREFIX.test(root.subject)) {
-      joined.push(group);
-      continue;
-    }
-    const target = targetOf.get(root.sha) ?? root.subject.replace(AUTOSQUASH_PREFIXES, '');
-    const same = byTarget.get(target);
-    if (same) {
-      same.push(...group);
-      same.sort((a, b) => (position.get(a.sha) ?? 0) - (position.get(b.sha) ?? 0));
+// Every fixup right behind its target, or ahead of all placed commits when the target does not move.
+// The fixups of a commit on a side branch stay put.
+function pulledToTargets(
+  placed: readonly string[],
+  chains: readonly string[][],
+  offLine: ReadonlySet<string>,
+): string[] {
+  const settled = [...placed];
+  let front = 0;
+  for (const [target = '', ...fixups] of chains) {
+    const moving = fixups.filter((sha) => settled.includes(sha));
+    if (moving.length === 0 || offLine.has(target)) continue;
+    for (const sha of moving) settled.splice(settled.indexOf(sha), 1);
+    if (settled.includes(target)) {
+      settled.splice(settled.indexOf(target) + 1, 0, ...moving);
     } else {
-      const fresh = [...group];
-      byTarget.set(target, fresh);
-      joined.push(fresh);
+      settled.splice(front, 0, ...moving);
+      front += moving.length;
     }
   }
-  return joined;
+  return settled;
+}
+
+// How deep below the base an autosquash rebase looks for the commits fixups name, in first-parent
+// commits.
+const TARGET_SEARCH_DEPTH = 1000;
+const TODO_LINE = /^(pick|fixup|squash)(?: -[cC])? ([0-9a-f]+)/;
+const AUTOSQUASH_PREFIXES = /^(?:(?:fixup|squash|amend)! )+/;
+
+// Git writes the todo of a rebase it starts with `args` and stops before running it.
+async function generatedTodo(
+  worktree: string,
+  config: string[],
+  args: string[],
+  path: string,
+  signal: AbortSignal,
+): Promise<{ todo: string | null; output: string }> {
+  await fs.rm(path, { force: true });
+  // Git adds the todo's path as the editor's last argument; failing here ends the rebase.
+  const listing = await runGit(worktree, [...config, 'rebase', ...args], {
+    env: {
+      GIT_EDITOR: 'true',
+      GIT_SEQUENCE_EDITOR: `f() { cp "$1" ${shellQuoted(path)}; return 1; }; f`,
+    },
+    signal,
+  });
+  return { todo: await fs.readFile(path, 'utf8').catch(() => null), output: listing.output };
+}
+
+// Each commit with the fixups, squashes and amends git's autosquash folds into it, in the order git
+// folds them. Fixups of the range git leaves unpaired, as when their target lies deeper, are chained
+// by name behind an empty target.
+async function fixupChains(
+  worktree: string,
+  config: string[],
+  dir: string,
+  { base, listed }: { base: string; listed: readonly TodoCommit[] },
+  signal: AbortSignal,
+): Promise<string[][] | Failure> {
+  const deep = await gitText(
+    worktree,
+    ['rev-list', '--first-parent', `--skip=${TARGET_SEARCH_DEPTH}`, '--max-count=1', base],
+    { signal },
+  );
+  const { todo, output } = await generatedTodo(
+    worktree,
+    config,
+    [
+      '--interactive',
+      '--autosquash',
+      '--no-rebase-merges',
+      '--no-autostash',
+      deep === '' ? '--root' : deep,
+    ],
+    join(dir, 'autosquash-todo'),
+    signal,
+  );
+  if (todo === null) return { ok: false, reason: 'commit-failed', output };
+  const chains: string[][] = [];
+  for (const line of todo.split('\n')) {
+    const [, command, sha] = TODO_LINE.exec(line) ?? [];
+    if (sha === undefined) continue;
+    if (command === 'pick') chains.push([sha]);
+    else chains.at(-1)?.push(sha);
+  }
+  const folding = chains.filter((chain) => chain.length > 1);
+  const full =
+    folding.length === 0
+      ? []
+      : (await gitText(worktree, ['rev-parse', ...folding.flat()], { signal })).split('\n');
+  let at = 0;
+  const paired = folding.map((chain) => chain.map(() => full[at++] ?? ''));
+  const folded = new Set(paired.flatMap(([, ...fixups]) => fixups));
+  const byName = new Map<string, string[]>();
+  for (const { sha, subject } of listed) {
+    const name = subject.replace(AUTOSQUASH_PREFIXES, '');
+    if (name === subject || folded.has(sha)) continue;
+    byName.set(name, [...(byName.get(name) ?? []), sha]);
+  }
+  const unpaired = [...byName.values()].filter((shas) => shas.length > 1);
+  return [...paired, ...unpaired.map((shas) => ['', ...shas])];
 }
 
 // A commit a side branch grows from carries the label git put after it, and the lines of that branch
@@ -343,7 +370,6 @@ async function readMessages(
 }
 
 const FULL_SHA = /\b[0-9a-f]{40}\b/g;
-const AUTOSQUASH_PREFIXES = /^(?:(?:fixup|squash|amend)! )+/;
 
 // The message each commit should end up with, once the commits before it have their new SHAs.
 function messagePlanner(listed: TodoCommit[], messages: HistoryRewrite['messages']) {
@@ -469,30 +495,10 @@ export async function rewriteHistory(
   const line = (await gitText(repoPath, ['rev-list', '--first-parent', '--reverse', range])).split(
     '\n',
   );
-  const lineWanted = request.order
-    ? lineInOrder(line, request.order, await orderingGroups(repoPath, request.base, listed))
-    : null;
-  if (request.order && lineWanted === null) {
+  const laid = request.order ? laidOut(line, request.order) : null;
+  if (request.order && laid === null) {
     return { ok: false, reason: 'commit-failed', output: 'A commit left the line of the review.' };
   }
-  const firstMoved = lineWanted?.findIndex((commit, index) => commit !== line[index]) ?? -1;
-  const oldest = (await gitText(repoPath, ['rev-list', '--topo-order', '--reverse', range]))
-    .split('\n')
-    .find((commit) => request.messages.has(commit) || commit === line[firstMoved]);
-  if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
-  const headBranch = await runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']);
-  const stack = await findStackedBranches(repoPath, {
-    oldest,
-    headBranch: headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null,
-    defaultBranch: request.defaultBranch,
-  });
-  const byLength = await Promise.all(
-    stack.moving.map(async (branch) => ({
-      ...branch,
-      length: Number(await gitText(repoPath, ['rev-list', '--count', `${oldest}^..${branch.tip}`])),
-    })),
-  );
-  byLength.sort((a, b) => b.length - a.length);
 
   const dir = await fs.mkdtemp(join(tmpdir(), REWRITE_DIR_PREFIX));
   let received: NodeJS.Signals | undefined;
@@ -504,15 +510,33 @@ export async function rewriteHistory(
   const hooks = join(dir, 'no-hooks');
   const worktree = join(dir, 'worktree');
   const config = rewriteConfig(hooks);
-  try {
-    await fs.writeFile(join(dir, OWNER_FILE), `${process.pid}\n`);
-    await fs.mkdir(hooks);
-    const added = await runGit(
-      repoPath,
-      [...config, 'worktree', 'add', '--quiet', '--detach', worktree, head],
-      { signal },
+  const addWorktree = () =>
+    runGit(repoPath, [...config, 'worktree', 'add', '--quiet', '--detach', worktree, head], {
+      signal,
+    });
+
+  const rewrite = async (lineWanted: string[] | null): Promise<HistoryRewriteResult> => {
+    const firstMoved = lineWanted?.findIndex((commit, index) => commit !== line[index]) ?? -1;
+    const oldest = (await gitText(repoPath, ['rev-list', '--topo-order', '--reverse', range]))
+      .split('\n')
+      .find((commit) => request.messages.has(commit) || commit === line[firstMoved]);
+    if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
+    const headBranch = await runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']);
+    const stack = await findStackedBranches(repoPath, {
+      oldest,
+      headBranch: headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null,
+      defaultBranch: request.defaultBranch,
+    });
+    const byLength = await Promise.all(
+      stack.moving.map(async (branch) => ({
+        ...branch,
+        length: Number(
+          await gitText(repoPath, ['rev-list', '--count', `${oldest}^..${branch.tip}`]),
+        ),
+      })),
     );
-    if (added.code !== 0) return { ok: false, reason: 'commit-failed', output: added.output };
+    byLength.sort((a, b) => b.length - a.length);
+
     const replay = new Replay(repoPath, worktree, dir, config, `${oldest}^`, signal);
     const replayed = await replay.run(messagePlanner(listed, request.messages), {
       order: lineWanted?.slice(firstMoved),
@@ -594,6 +618,29 @@ export async function rewriteHistory(
       };
     }
     return { ok: false, reason: await whatMoved(repoPath, head, moves), output: written.output };
+  };
+
+  try {
+    await fs.writeFile(join(dir, OWNER_FILE), `${process.pid}\n`);
+    await fs.mkdir(hooks);
+    const added = await addWorktree();
+    if (added.code !== 0) return { ok: false, reason: 'commit-failed', output: added.output };
+    if (laid === null) return await rewrite(null);
+
+    const chains = await fixupChains(worktree, config, dir, { base: request.base, listed }, signal);
+    if (!Array.isArray(chains)) return chains;
+    const inChainOrder = keptInChainOrder(laid.placed, chains);
+    const offLine = new Set(listed.map(({ sha }) => sha).filter((sha) => !line.includes(sha)));
+    const pulled = pulledToTargets(inChainOrder, chains, offLine);
+    const first = await rewrite([...laid.before, ...inChainOrder, ...laid.after]);
+    if (first.ok || first.reason !== 'conflict') return first;
+    if (pulled.every((commit, at) => commit === inChainOrder[at])) return first;
+
+    await runGit(repoPath, ['worktree', 'remove', '--force', worktree], { signal });
+    const readded = await addWorktree();
+    if (readded.code !== 0) return first;
+    const second = await rewrite([...laid.before, ...pulled, ...laid.after]);
+    return !second.ok && second.reason === 'conflict' ? first : second;
   } finally {
     await removeRewriteDir(repoPath, dir);
     for (const name of INTERRUPTING_SIGNALS) process.off(name, interrupt);
@@ -648,9 +695,7 @@ class Replay {
     placing: Parameters<typeof plannedTodo>[3] = {},
   ): Promise<{ ok: true } | Failure> {
     const { worktree, config, signal } = this;
-    const generatedPath = join(this.dir, 'generated-todo');
     const todoPath = join(this.dir, 'todo');
-    await fs.rm(generatedPath, { force: true });
     const rebase = (args: string[], sequenceEditor: string) =>
       runGit(worktree, [...config, 'rebase', ...args], {
         env: { GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: sequenceEditor },
@@ -664,13 +709,14 @@ class Replay {
       this.upstream,
     ];
 
-    // Git adds the todo's path as the editor's last argument; failing here ends this first rebase.
-    const listing = await rebase(
+    const { todo: generated, output } = await generatedTodo(
+      worktree,
+      config,
       start,
-      `f() { cp "$1" ${shellQuoted(generatedPath)}; return 1; }; f`,
+      join(this.dir, 'generated-todo'),
+      signal,
     );
-    const generated = await fs.readFile(generatedPath, 'utf8').catch(() => null);
-    if (generated === null) return { ok: false, reason: 'commit-failed', output: listing.output };
+    if (generated === null) return { ok: false, reason: 'commit-failed', output };
     const planned = await plannedTodo(worktree, generated, this.landedAt, placing, signal);
     if (planned === null) {
       return {

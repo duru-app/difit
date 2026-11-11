@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import {
   chmodSync,
   existsSync,
@@ -1019,6 +1020,201 @@ describe('rewriteHistory with a new order', () => {
         'p',
         's',
       ]);
+    });
+  });
+
+  describe('with fixups that git pairs by its own reading of their names', () => {
+    const LINES = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    const lines = (changed: Record<number, string>) =>
+      `${LINES.map((line, at) => changed[at + 1] ?? line).join('\n')}\n`;
+    const isFixup = (subject: string) => /^(?:fixup|squash|amend)! /.test(subject);
+
+    function history() {
+      const repo = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-'));
+      repos.push(repo);
+      git(repo, 'init', '-q');
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      commit(repo, 'root', { 'p.txt': lines({}), 'q.txt': lines({}) });
+      return repo;
+    }
+
+    async function expectMoved(repo: string, base: string, order: string[], { fold = true } = {}) {
+      const tree = git(repo, 'rev-parse', 'HEAD^{tree}');
+      const wanted = order.map((sha) => git(repo, 'log', '-1', '--format=%s', sha));
+
+      expectOk(await reorder(repo, base, order));
+
+      expect(subjects(repo, `${base}..HEAD`).filter((subject) => !isFixup(subject))).toEqual(
+        wanted,
+      );
+      expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+      if (!fold) return;
+      execFileSync('git', ['rebase', '-q', '-i', '--autosquash', '--root'], {
+        cwd: repo,
+        env: { ...process.env, GIT_SEQUENCE_EDITOR: 'true' },
+      });
+      expect(git(repo, 'rev-parse', 'HEAD^{tree}')).toBe(tree);
+    }
+
+    describe.each([
+      ['two spaces after the prefix', () => 'fixup!  add parser'],
+      [
+        'a tag',
+        (repo: string, target: string) => {
+          git(repo, 'tag', 'parser-v1', target);
+          return 'fixup! parser-v1';
+        },
+      ],
+      [
+        'an upper-case short SHA',
+        (_: string, target: string) => `fixup! ${target.slice(0, 10).toUpperCase()}`,
+      ],
+    ])('naming a commit below the base by %s', (_, name) => {
+      it('keeps it before a later fixup of that commit on the same line', async () => {
+        const repo = history();
+        const target = commit(repo, 'add parser', { 'p.txt': lines({ 5: 'p' }) });
+        const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+        commit(repo, name(repo, target), { 'p.txt': lines({ 5: 'a' }) });
+        const b = commit(repo, 'add b', { 'b.txt': 'b\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'b' }) });
+        const tail = commit(repo, 'add tail', { 't.txt': 't\n' });
+
+        await expectMoved(repo, target, [b, a, tail]);
+      });
+    });
+
+    it('pairs a fixup with the exact subject below the base over a subject in the range it starts', async () => {
+      const repo = history();
+      const target = commit(repo, 'add parser', { 'p.txt': lines({ 5: 'p' }) });
+      const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+      commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'a' }) });
+      const tests = commit(repo, 'add parser tests', { 'tests.txt': 't\n' });
+      commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'b' }) });
+      const x = commit(repo, 'add x', { 'x.txt': 'x\n' });
+
+      await expectMoved(repo, target, [tests, a, x]);
+    });
+
+    it('pairs a prefix naming two commits below the base with the oldest, apart from the fixup of the other', async () => {
+      const repo = history();
+      commit(repo, 'add parser', { 'p.txt': lines({ 2: 'p' }) });
+      const base = commit(repo, 'add parser tests', { 'q.txt': lines({ 2: 'q' }) });
+      const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+      commit(repo, 'fixup! add pars', { 'p.txt': lines({ 2: 'p', 5: 'f' }) });
+      const b = commit(repo, 'add b', { 'b.txt': 'b\n' });
+      commit(repo, 'fixup! add parser tests', { 'q.txt': lines({ 2: 'q', 8: 'f' }) });
+      const c = commit(repo, 'add c', { 'q.txt': lines({ 2: 'q', 8: 'c' }) });
+      const tail = commit(repo, 'add tail', { 't.txt': 't\n' });
+
+      await expectMoved(repo, base, [b, c, a, tail]);
+    });
+
+    it('leaves a fixup named by a short SHA that several commits start with where the commit before it goes', async () => {
+      const repo = history();
+      const base = git(repo, 'rev-parse', 'HEAD');
+      const x = commit(repo, 'add x', { 'x.txt': 'x\n' });
+      const c = commit(repo, 'add c', { 'c.txt': 'c\n' });
+      const prefix = x.slice(0, 4);
+      commit(repo, `fixup! ${prefix}`, { 'c.txt': 'c\nf\n' });
+      writeFileSync(join(repo, 'c.txt'), 'c\nF\n');
+      git(repo, 'add', '-A');
+      const tree = git(repo, 'write-tree');
+      const parent = git(repo, 'rev-parse', 'HEAD');
+      const ident = 'difit <difit@example.com> 1700000000 +0000';
+      let body = '';
+      let sha = '';
+      for (let nonce = 0; !sha.startsWith(prefix); nonce += 1) {
+        body = `tree ${tree}\nparent ${parent}\nauthor ${ident}\ncommitter ${ident}\n\nadd d\n\nNonce: ${nonce}\n`;
+        sha = createHash('sha1')
+          .update(`commit ${Buffer.byteLength(body)}\0${body}`)
+          .digest('hex');
+      }
+      const d = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
+        cwd: repo,
+        input: body,
+        encoding: 'utf8',
+      }).trim();
+      expect(d).toBe(sha);
+      git(repo, 'reset', '-q', '--hard', d);
+
+      await expectMoved(repo, base, [c, d, x]);
+    });
+
+    describe.each([
+      ['within', 999],
+      ['beyond', 1000],
+    ])('naming a commit %s 1000 first-parent commits below the base', (_, depth) => {
+      it('keeps it before a later fixup of that commit on the same line', async () => {
+        const repo = history();
+        const target = commit(repo, 'add parser', { 'p.txt': lines({ 5: 'p' }) });
+        const stream = Array.from(
+          { length: depth },
+          (_, at) =>
+            `commit refs/heads/feature\ncommitter difit <difit@example.com> 1700000000 +0000\ndata ${`filler ${at}`.length}\nfiller ${at}\n${at === 0 ? `from ${target}\n` : ''}\n`,
+        ).join('');
+        execFileSync('git', ['fast-import', '--quiet', '--force'], { cwd: repo, input: stream });
+        git(repo, 'reset', '-q', '--hard', 'feature');
+        const base = git(repo, 'rev-parse', 'HEAD');
+        const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'a' }) });
+        const b = commit(repo, 'add b', { 'b.txt': 'b\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'b' }) });
+        const tail = commit(repo, 'add tail', { 't.txt': 't\n' });
+
+        await expectMoved(repo, base, [b, a, tail], { fold: false });
+      });
+    });
+
+    describe('when a later commit edits what the second fixup of a commit wrote', () => {
+      it.each([
+        ['the same line', 5],
+        ['another line', 8],
+      ])('moves both fixups up to a commit below the base, the second on %s', async (_, line) => {
+        const repo = history();
+        const target = commit(repo, 'add parser', { 'p.txt': lines({ 5: 'p' }) });
+        const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'a' }) });
+        const b = commit(repo, 'add b', { 'b.txt': 'b\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'a', [line]: 'b' }) });
+        const c = commit(repo, 'add c', { 'p.txt': lines({ 5: 'a', [line]: 'c' }) });
+        const tail = commit(repo, 'add tail', { 't.txt': 't\n' });
+
+        await expectMoved(repo, target, [b, c, a, tail]);
+      });
+
+      it('moves both fixups up behind their target in the range', async () => {
+        const repo = history();
+        const base = git(repo, 'rev-parse', 'HEAD');
+        const target = commit(repo, 'add parser', { 'p.txt': lines({ 5: 'p' }) });
+        const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'a' }) });
+        const b = commit(repo, 'add b', { 'b.txt': 'b\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'b' }) });
+        const c = commit(repo, 'add c', { 'p.txt': lines({ 5: 'c' }) });
+        const tail = commit(repo, 'add tail', { 't.txt': 't\n' });
+
+        await expectMoved(repo, base, [target, b, c, a, tail]);
+      });
+
+      it('gives up when that commit moves ahead of the target, and leaves everything as it was', async () => {
+        const repo = history();
+        const base = git(repo, 'rev-parse', 'HEAD');
+        const target = commit(repo, 'add parser', { 'p.txt': lines({ 5: 'p' }) });
+        const a = commit(repo, 'add a', { 'a.txt': 'a\n' });
+        commit(repo, 'fixup! add parser', { 'p.txt': lines({ 5: 'a' }) });
+        const c = commit(repo, 'add c', { 'p.txt': lines({ 5: 'c' }) });
+        const head = git(repo, 'rev-parse', 'HEAD');
+        process.env.TMPDIR = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-tmp-'));
+        repos.push(process.env.TMPDIR);
+
+        const result = await reorder(repo, base, [c, target, a]);
+
+        expect(result).toMatchObject({ ok: false, reason: 'conflict' });
+        expect(git(repo, 'rev-parse', 'HEAD')).toBe(head);
+        expect(git(repo, 'status', '--porcelain')).toBe('');
+        expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+        expect(readdirSync(process.env.TMPDIR)).toEqual([]);
+      });
     });
   });
 
