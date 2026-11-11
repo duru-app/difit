@@ -42,9 +42,7 @@ describe('SymbolIndexStatusLine', () => {
     vi.useFakeTimers();
     line({ status: 'building', startedAt: Date.now() - 84_000 });
 
-    expect(status()).toHaveTextContent(
-      '색인을 만드는 중 · 1분 24초 · 끝나면 결과가 저절로 바뀝니다',
-    );
+    expect(status()).toHaveTextContent(/^색인을 만드는 중 · 1분 24초$/);
     act(() => vi.advanceTimersByTime(1000));
     expect(status()).toHaveTextContent('1분 25초');
   });

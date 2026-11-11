@@ -62,8 +62,7 @@ function IndexStateLine({ commit, state }: { commit: string; state: SymbolIndexS
           tone="build"
           icon={<LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" />}
         >
-          색인을 만드는 중 · <Elapsed since={state.startedAt} />{' '}
-          <span className="text-github-text-secondary">· 끝나면 결과가 저절로 바뀝니다</span>
+          색인을 만드는 중 · <Elapsed since={state.startedAt} />
         </StatusRow>
       );
     case 'unavailable':
