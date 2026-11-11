@@ -209,6 +209,87 @@ describe('StorageService - moving records after a history rewrite', () => {
   });
 });
 
+describe('StorageService - moving records into a reopened review', () => {
+  const BASE = 'a'.repeat(40);
+  const OLD_TIP = 'b'.repeat(40);
+  const NEW_TIP = 'c'.repeat(40);
+  const NEWEST_TIP = 'd'.repeat(40);
+  const at = '2026-01-01T00:00:00Z';
+  const save = (service: StorageService, target: string, threadIds: string[]) =>
+    service.saveDiffContextData(
+      BASE,
+      target,
+      {
+        version: 2,
+        baseCommitish: BASE,
+        targetCommitish: target,
+        createdAt: at,
+        lastModifiedAt: at,
+        threads: threadIds.map((id) => ({
+          id,
+          filePath: 'a.ts',
+          createdAt: at,
+          updatedAt: at,
+          position: { side: 'new', line: 2 },
+          fixupTarget: OLD_TIP,
+          messages: [{ id, body: 'x', createdAt: at, updatedAt: at }],
+        })),
+        viewedFiles: [{ filePath: 'a.ts', viewedAt: at, diffContentHash: 'h' }],
+        appliedCommentImportIds: [],
+        decisions: [{ threadId: 't1', kind: 'resolved', fixupSha: '', at }],
+      },
+      undefined,
+      undefined,
+      'repo',
+    );
+  const get = (service: StorageService, target: string) =>
+    service.getDiffContextData(BASE, target, undefined, undefined, 'repo');
+  const move = (from: string, to: string) => ({
+    from: { baseCommitish: BASE, targetCommitish: from },
+    to: { baseCommitish: BASE, targetCommitish: to },
+  });
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it('moves a record to the newer review as it is, and leaves nothing under the older', () => {
+    const service = new StorageService();
+    save(service, OLD_TIP, ['t1']);
+
+    service.moveReopenedRecords([move(OLD_TIP, NEW_TIP)], 'repo');
+
+    expect(get(service, OLD_TIP)).toBeNull();
+    expect(get(service, NEW_TIP)).toMatchObject({
+      targetCommitish: NEW_TIP,
+      threads: [{ id: 't1', fixupTarget: OLD_TIP }],
+      decisions: [{ threadId: 't1', kind: 'resolved' }],
+      viewedFiles: [{ filePath: 'a.ts' }],
+    });
+  });
+
+  it('follows a review reopened twice to the newest one', () => {
+    const service = new StorageService();
+    save(service, OLD_TIP, ['t1']);
+
+    service.moveReopenedRecords([move(OLD_TIP, NEW_TIP), move(NEW_TIP, NEWEST_TIP)], 'repo');
+
+    expect(get(service, OLD_TIP)).toBeNull();
+    expect(get(service, NEW_TIP)).toBeNull();
+    expect(get(service, NEWEST_TIP)).toMatchObject({ threads: [{ id: 't1' }] });
+  });
+
+  it('keeps a record written under the newer review and drops the older one', () => {
+    const service = new StorageService();
+    save(service, OLD_TIP, ['t1']);
+    save(service, NEW_TIP, ['t1', 't2']);
+
+    service.moveReopenedRecords([move(OLD_TIP, NEW_TIP)], 'repo');
+
+    expect(get(service, OLD_TIP)).toBeNull();
+    expect(get(service, NEW_TIP)?.threads.map(({ id }) => id)).toEqual(['t1', 't2']);
+  });
+});
+
 describe('StorageService - Repository Isolation', () => {
   let service: StorageService;
 
