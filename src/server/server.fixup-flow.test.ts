@@ -2166,3 +2166,135 @@ it('hands a reword over when rebuilding a merge conflicts', async () => {
   leaving.abort();
   await waiting.body?.cancel().catch(() => undefined);
 });
+
+it.each([
+  { reported: 'the review commits', withFixup: false, preferredPort: 9292 },
+  { reported: "git's list of rewritten commits", withFixup: true, preferredPort: 9293 },
+])(
+  'follows a fold reported as $reported and records where the fixup went',
+  async ({ withFixup, preferredPort }) => {
+    const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+    cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+    git(repo, ['init', '-q']);
+    git(repo, ['checkout', '-q', '-b', 'feature']);
+    const base = commit(repo, 'base', { 'a.js': '1\n' });
+    const first = commit(repo, 'first', { 'a.js': '1\n2\n' });
+    const second = commit(repo, 'second', { 'b.js': 'b\n' });
+    const third = commit(repo, 'third', { 'c.js': 'c\n' });
+    const fixup = commit(repo, `fixup! ${first}\n\nReview-Thread: t1`, { 'a.js': '1\ntwo\n' });
+
+    const { port, server } = await startServer({
+      selection: createDiffSelection(base, third),
+      repoPath: repo,
+      preferredPort,
+      followedRef: 'refs/heads/feature',
+    });
+    cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+    const api = (path: string) => `http://localhost:${port}${path}`;
+    await fetch(api('/api/diff'));
+    const post = (path: string, body: unknown) =>
+      fetch(api(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const query = `?base=${base}&target=${third}`;
+    const at = '2026-11-01T00:00:00.000Z';
+    const message = (id: string, author: string, body: string) => ({
+      id,
+      body,
+      author,
+      createdAt: at,
+      updatedAt: at,
+    });
+    await post(`/api/comments${query}`, {
+      threads: [
+        {
+          id: 't1',
+          filePath: 'a.js',
+          position: { side: 'new', line: 2 },
+          view: { baseCommitish: base, targetCommitish: first },
+          fixupTarget: first,
+          codeSnapshot: { content: '2', commit: first },
+          createdAt: at,
+          updatedAt: at,
+          messages: [message('t1-m', 'User', '2 대신 two')],
+        },
+        {
+          id: 't2',
+          position: { scope: 'commit' },
+          view: { baseCommitish: first, targetCommitish: second },
+          fixupTarget: second,
+          createdAt: at,
+          updatedAt: at,
+          messages: [
+            message('t2-m', 'User', '왜?'),
+            message('t2-a', 'Agent', '이유는 이렇습니다.'),
+          ],
+        },
+      ],
+    });
+    await post(`/api/decisions${query}`, [
+      { threadId: 't1', kind: 'approved', fixupSha: fixup, at },
+    ]);
+
+    git(repo, ['rebase', '-q', '-i', '--autosquash', base], { GIT_SEQUENCE_EDITOR: ':' });
+    const [newFirst, newSecond, newThird] = git(repo, ['rev-list', '--reverse', `${base}..HEAD`])
+      .split('\n')
+      .map((sha) => sha.trim());
+    expect(git(repo, ['show', `${newFirst}:a.js`])).toBe('1\ntwo');
+    const stale = (await (await fetch(api(`/api/fixups${query}`))).json()) as {
+      newerTarget?: unknown;
+    };
+    expect(stale.newerTarget).toBeDefined();
+
+    const rewritten = {
+      [first]: newFirst,
+      [second]: newSecond,
+      [third]: newThird,
+      ...(withFixup ? { [fixup]: newFirst } : {}),
+    };
+    const followed = await post(`/api/history-rewritten${query}`, { rewritten });
+    expect(followed.status).toBe(200);
+
+    const newQuery = `?base=${base}&target=${newThird}`;
+    const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+    expect(review!.commits.map(({ sha }) => sha)).toEqual([newFirst, newSecond, newThird]);
+    const fixups = (await (await fetch(api(`/api/fixups${newQuery}`))).json()) as {
+      fixups: unknown[];
+      newerTarget?: unknown;
+    };
+    expect(fixups).toEqual({ fixups: [] });
+
+    type Stored = {
+      threads: Array<{ id: string; fixupTarget?: string; codeSnapshot?: { commit?: string } }>;
+      decisions: Array<{ threadId: string; kind: string; fixupSha: string; targetSha?: string }>;
+    };
+    const stored = async () =>
+      (await (await fetch(api(`/api/comments-json${newQuery}`))).json()) as Stored;
+    const afterFold = await stored();
+    expect(afterFold.threads.find(({ id }) => id === 't1')).toMatchObject({
+      fixupTarget: newFirst,
+      codeSnapshot: { commit: newFirst },
+    });
+    expect(afterFold.threads.find(({ id }) => id === 't2')?.fixupTarget).toBe(newSecond);
+    expect(
+      afterFold.decisions.map(({ threadId, kind, fixupSha, targetSha }) => ({
+        threadId,
+        kind,
+        fixupSha,
+        ...(targetSha ? { targetSha } : {}),
+      })),
+    ).toEqual([
+      { threadId: 't1', kind: 'approved', fixupSha: fixup },
+      { threadId: 't1', kind: 'folded', fixupSha: fixup, targetSha: newFirst },
+    ]);
+    const output = await (await fetch(api(`/api/comments-output${newQuery}`))).text();
+    expect(output).toContain('a.js:L2 [접힘]');
+    expect(output).toContain('[답변 완료]');
+
+    const again = await post(`/api/history-rewritten${newQuery}`, { rewritten });
+    expect(again.status).toBe(200);
+    expect((await stored()).decisions).toEqual(afterFold.decisions);
+  },
+);
