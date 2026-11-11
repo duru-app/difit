@@ -55,6 +55,8 @@ interface SymbolPeekModalProps {
   canGoBack: boolean;
   onBack: () => void;
   onClose: () => void;
+  // Returns true when the diff took the picked place and the window can close.
+  onPickInDiff?: (match: SymbolMatch, ref: string) => boolean;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   indexUpdates?: SymbolIndexUpdates;
 }
@@ -71,6 +73,7 @@ export function SymbolPeekModal({
   canGoBack,
   onBack,
   onClose,
+  onPickInDiff,
   syntaxTheme,
   indexUpdates = NO_INDEX_UPDATES,
 }: SymbolPeekModalProps) {
@@ -199,6 +202,10 @@ export function SymbolPeekModal({
                 gitRef={request.ref}
                 selected={selected}
                 onSelect={(selection) => {
+                  if (!isLibraryDeclaration(selection) && onPickInDiff?.(selection, request.ref)) {
+                    onClose();
+                    return;
+                  }
                   autoPicked.current = false;
                   setSelected(selection);
                 }}

@@ -24,7 +24,9 @@ import {
   type DirectEditResponse,
   type ReviewDecision,
   type ReviewerReplyFields,
+  type DiffFile,
   type DiffSide,
+  type SymbolMatch,
   type ExtraCommentLines,
   type LineNumber,
   type SidedLine,
@@ -113,7 +115,12 @@ import { WordHighlightProvider } from './contexts/WordHighlightContext';
 import { useAppearanceSettings } from './hooks/useAppearanceSettings';
 import { useCanHover } from './hooks/useCanHover';
 import { useDiffComments } from './hooks/useDiffComments';
-import { rangesAroundNewLines, useExpandedLines, type MergedChunk } from './hooks/useExpandedLines';
+import {
+  rangesAroundNewLines,
+  rangesAroundOldLines,
+  useExpandedLines,
+  type MergedChunk,
+} from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation';
 import { useChunkChangeKinds } from './hooks/useChunkChangeKinds';
@@ -132,6 +139,7 @@ import { useViewport } from './hooks/useViewport';
 import { storageService } from './services/StorageService';
 import { fetchClientSettings, saveClientSettings } from './services/userSettings';
 import { hasMultipleCommentAuthors } from './utils/commentAuthors';
+import { diffPlaceOfMatch } from './utils/symbolPeek';
 import { copyTextToClipboard } from './utils/clipboard';
 import { createDiffPathResolver, type DiffLineTarget, linesOf } from './utils/diffLineLinks';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
@@ -2478,10 +2486,7 @@ function App() {
     side: DiffSide;
   } | null>(null);
   const [lineLinkRequest, setLineLinkRequest] = useState(0);
-  const openDiffLineLink = (target: DiffLineTarget) => {
-    const file = diffData?.files.find(({ path }) => path === target.file);
-    if (!file) return;
-    const side: DiffSide = file.status === 'deleted' ? 'old' : 'new';
+  const openDiffLine = (target: DiffLineTarget, file: DiffFile, side: DiffSide) => {
     jumpWithinReview({
       kind: 'line',
       file: file.path,
@@ -2507,7 +2512,24 @@ function App() {
       }, LINE_LINK_WAIT_MS);
     };
     const shown = linesOf(target, LINE_LINK_MAX_LINES);
-    openLines(file, rangesAroundNewLines(file, shown, LINE_LINK_CONTEXT)).then(giveUp, giveUp);
+    const around = side === 'old' ? rangesAroundOldLines : rangesAroundNewLines;
+    openLines(file, around(file, shown, LINE_LINK_CONTEXT)).then(giveUp, giveUp);
+  };
+  const openDiffLineLink = (target: DiffLineTarget) => {
+    const file = diffData?.files.find(({ path }) => path === target.file);
+    if (file) openDiffLine(target, file, file.status === 'deleted' ? 'old' : 'new');
+  };
+  const pickPeekInDiff = (match: SymbolMatch, ref: string): boolean => {
+    const place = diffPlaceOfMatch(
+      match,
+      ref,
+      { base: diffData?.baseCommitish, target: diffData?.targetCommitish },
+      diffData?.files ?? [],
+    );
+    const file = diffData?.files.find(({ path }) => path === place?.file);
+    if (!place || !file) return false;
+    openDiffLine({ file: file.path, line: match.line, endLine: match.line }, file, place.side);
+    return true;
   };
   const openDiffLineLinkRef = useRef(openDiffLineLink);
   openDiffLineLinkRef.current = openDiffLineLink;
@@ -3375,6 +3397,7 @@ function App() {
             canGoBack={depth > 0}
             onBack={symbolPeek.back}
             onClose={symbolPeek.close}
+            onPickInDiff={pickPeekInDiff}
             syntaxTheme={settings.syntaxTheme}
             indexUpdates={symbolPeek.indexUpdates}
           />

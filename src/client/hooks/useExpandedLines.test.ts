@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DiffFile } from '../../types/diff';
 
-import { rangesAroundNewLines, useExpandedLines } from './useExpandedLines';
+import { rangesAroundNewLines, rangesAroundOldLines, useExpandedLines } from './useExpandedLines';
 
 function createMockDiffFile(): DiffFile {
   return {
@@ -357,6 +357,12 @@ describe('useExpandedLines lines opened inside a gap', () => {
     expect(rangesAroundNewLines(file, [1, 3, 32], 3)).toEqual([{ start: 1, end: 1 }]);
     expect(rangesAroundNewLines(file, [40], 3)).toEqual([{ start: 35, end: 41 }]);
     expect(rangesAroundNewLines({ ...file, status: 'added' }, [17], 3)).toEqual([]);
+  });
+
+  it('opens three lines on each side of a hidden old line as it stands', () => {
+    expect(rangesAroundOldLines(file, [17], 3)).toEqual([{ start: 14, end: 20 }]);
+    expect(rangesAroundOldLines(file, [1, 2], 3)).toEqual([{ start: 1, end: 1 }]);
+    expect(rangesAroundOldLines({ ...file, status: 'added' }, [17], 3)).toEqual([]);
   });
 
   it('shows the opened lines as their own chunk and keeps the hidden counts around it', async () => {
