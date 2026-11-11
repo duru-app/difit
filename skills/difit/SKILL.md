@@ -233,7 +233,7 @@ git rev-parse HEAD   # note this SHA as <pre-fold SHA>
 GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash <review base>
 ```
 
-An `amend!` commit replaces its target's message with everything below its first paragraph, `Review-Thread` trailer included. On git 2.32 or later, right after folding and before recording where the fixups went, remove those lines; a commit left with one reads as a fixup in a later review and drops out of its commit list. This rewrites only the commits that carry the line:
+An `amend!` commit replaces its target's message with everything below its first paragraph, `Review-Thread` trailer included. On git 2.32 or later, right after folding and before reporting the fold, remove those lines; a commit left with one reads as a fixup in a later review and drops out of its commit list. This rewrites only the commits that carry the line:
 
 ```bash
 git rebase <review base> --exec 'git log -1 --format=%B | grep -q "^Review-Thread: " || exit 0; git log -1 --format=%B | sed "/^Review-Thread: /d" | git commit -q --amend --allow-empty --no-verify --cleanup=whitespace -F -'
@@ -252,15 +252,15 @@ Folding `amend!` commits needs git 2.32 or later. An older git does not recogniz
 
   For a leftover fixup, its target is the comment's `fixupTarget` when it has one; otherwise find it with `git show <fixup SHA>` and `git blame <fixup SHA>^ -- <file>` (a commit older than the range means the review target), move it under that commit in `git rebase -i`, and mark it `fixup`.
 
-Folding removes the fixup commits, so record where each fix went on the running server, pairing the old fixup SHA with the commit it folded into. With no merge commits in the range, folding drops only the fixups and keeps the order, so the folded commit sits on the same line of `git rev-list --reverse <review base>..HEAD` as its target does in `git rev-list --reverse <review base>..<review target SHA>`:
+Folding gives each reviewed commit a new SHA and removes the fixup commits. Once every rewrite of the fold is done, the `Review-Thread` line removal included, report it to the running server as after a reorder: one pair per commit the review lists, its SHA before folding with its SHA now. With no merge commits in the range, folding drops only the fixups and keeps the order, so each line of `git rev-list --reverse <review base>..<review target SHA>` pairs with the same line of `git rev-list --reverse <review base>..HEAD`:
 
 ```bash
-curl -X POST "http://localhost:<port>/api/decisions" \
+curl -X POST "http://localhost:<port>/api/history-rewritten" \
   -H 'Content-Type: application/json' \
-  -d '[{"threadId":"<threadId>","kind":"folded","fixupSha":"<old fixup SHA>","targetSha":"<folded commit SHA>","at":"<ISO 8601 time>"}]'
+  -d '{"rewritten":{"<pre-fold SHA>":"<folded SHA>","<pre-fold SHA>":"<folded SHA>"}}'
 ```
 
-`{"success":true,"changed":true,...}` means it was stored. Resending the same record does not duplicate it; a non-array body or a record with a missing field stores nothing and returns 400.
+difit moves the review, the comments and the decisions to the new SHAs, and records each approved fixup that HEAD no longer holds as folded into the new commit of its target, so the comment shows `[접힘]`. Do not copy comments or post `folded` records yourself. A pair naming a fixup with the commit it went into, as in git's own list of rewritten commits, is accepted and moves nothing, and sending the same report again changes nothing. The 409 `stale-view` refusals are those in "Taking over a reorder or a reword".
 
 ### Folding into a commit in the middle of the range
 
@@ -273,7 +273,7 @@ When a fixup targets a commit in the middle of the range and a later commit chan
 
 ### Moving comments to the folded commit
 
-Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. A reorder or a reword within a running review needs none of this, because difit moves the comments, and neither does a review the user reopened on newer commits stacked on the old target. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
+Reporting the fold keeps the comments in the running review, so nothing is copied. Neither a reorder or reword within a running review nor a review the user reopened on newer commits stacked on the old target needs this either. Only when the fold went unreported and the review was reopened on a new server with the new SHA does the new review start without the comments. Copy them from the old server while it still runs, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
 
 ```bash
 difit comment get --port <old port> --format json > old.json
@@ -289,6 +289,16 @@ difit comment add --port <new port> "$(jq '[.threads[] | . as $t
 jq '.decisions' old.json | curl -X POST "http://localhost:<new port>/api/decisions" \
   -H 'Content-Type: application/json' -d @-
 ```
+
+No server saw the fold, so record where each approved fixup went, pairing its SHA with the folded commit on the same `git rev-list` line as its target:
+
+```bash
+curl -X POST "http://localhost:<new port>/api/decisions" \
+  -H 'Content-Type: application/json' \
+  -d '[{"threadId":"<threadId>","kind":"folded","fixupSha":"<old fixup SHA>","targetSha":"<folded commit SHA>","at":"<ISO 8601 time>"}]'
+```
+
+`{"success":true,"changed":true,...}` means it was stored. Resending the same record does not duplicate it; a non-array body or a record with a missing field stores nothing and returns 400.
 
 The copied `view` and `fixupTarget` still name pre-fold SHAs, so in the new review such a comment shows only on the whole view, and its commit line shows the short SHA alone. For one you have not answered yet, fix up the commit on the same `git rev-list` line as above.
 

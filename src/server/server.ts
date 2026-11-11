@@ -38,6 +38,7 @@ import { createId } from '../utils/createId.js';
 import { getFileExtension } from '../utils/fileUtils.js';
 import { isSymbolName } from '../utils/symbolName.js';
 import {
+  approvalAwaitingFold,
   deriveThreadReviewState,
   isAgentResponding,
   isAnswerableByEdit,
@@ -2447,7 +2448,7 @@ export async function startServer(options: ServerOptions): Promise<{
       order,
     });
     if (!result.ok) return refuseFailedRewrite(result);
-    return followOrder(selection, commits, order, result);
+    return rewrittenBody(await followOrder(selection, commits, order, result), result);
   }
 
   // `order` holds the old SHAs of the review's commits in the order they now stand.
@@ -2455,9 +2456,8 @@ export async function startServer(options: ServerOptions): Promise<{
     selection: DiffSelection,
     commits: ReviewCommit[],
     order: readonly string[],
-    result: Rewritten,
-  ): Promise<{ status: number; body: RewordResponse }> {
-    const { rewritten } = result;
+    { rewritten }: Rewritten,
+  ): Promise<DiffSelection> {
     const newTop = order.at(-1) ?? '';
     const target = isSameCommit(selection.targetCommitish, commits.at(-1)?.sha ?? '')
       ? (rewritten[newTop] ?? newTop)
@@ -2468,7 +2468,7 @@ export async function startServer(options: ServerOptions): Promise<{
     const place = ({ sha, parentSha }: ReviewCommit) => ({ sha, parentSha });
     const move = { rewritten, reorder: { before: commits.map(place), after: after.map(place) } };
     await followRewrite(move);
-    return rewrittenBody(selectionAfterMoves(selection, [move]), result);
+    return selectionAfterMoves(selection, [move]);
   }
 
   function parseHistoryRewrittenRequest(body: unknown): RewrittenShas | null {
@@ -2482,17 +2482,25 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   // An agent rewrote the history itself: it says what became of each commit, and the review follows.
+  // A pair naming a commit outside the review that went into a reviewed one, as git's list of
+  // rewritten commits does for a folded fixup, is no move: the fixup keeps its SHA in the records.
   async function applyAgentRewrite(
     { selection, commits }: ReviewScope,
-    rewritten: RewrittenShas,
+    reported: RewrittenShas,
   ): Promise<{ status: number; body: RewordResponse }> {
-    const newShas = Object.values(rewritten);
     const reachable = await Promise.all(
-      newShas.map((sha) => runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD'])),
+      Object.values(reported).map((sha) =>
+        runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD']),
+      ),
     );
     if (reachable.some(({ code }) => code !== 0)) {
       return refuseRewrite('stale-view', 'A new SHA is not in the history of HEAD.');
     }
+    const listed = new Set(commits.map(({ sha }) => sha));
+    const reviewed = new Set(commits.map(({ sha }) => reported[sha] ?? sha));
+    const rewritten = Object.fromEntries(
+      Object.entries(reported).filter(([old, sha]) => listed.has(old) || !reviewed.has(sha)),
+    );
     const lineRun = await runGit(repositoryPath, [
       'rev-list',
       '--first-parent',
@@ -2518,11 +2526,52 @@ export async function startServer(options: ServerOptions): Promise<{
         'A commit from above the review now stands inside it. Leave it above the last reviewed commit.',
       );
     }
+    const result = { rewritten, branches: { moved: [], left: [] } };
+    if (Object.keys(rewritten).length === 0) return rewrittenBody(selection, result);
     const order = [...commits].sort((a, b) => placeOf(a) - placeOf(b)).map(({ sha }) => sha);
-    return followOrder(selection, commits, order, {
-      rewritten,
-      branches: { moved: [], left: [] },
+    const moved = await followOrder(selection, commits, order, result);
+    await recordFolds(moved, rewritten);
+    return rewrittenBody(moved, result);
+  }
+
+  async function recordFolds(selection: DiffSelection, rewritten: RewrittenShas) {
+    const fixupsByThread = await fixupsByThreadOrNone(selection);
+    if (!fixupsByThread) return;
+    const { threads, decisions } = getOrCreateCommentSession(selection);
+    const approvals = threads.flatMap(({ id }) =>
+      approvalAwaitingFold(id, fixupsByThread.get(id) ?? [], decisions),
+    );
+    const shas = [...new Set(approvals.map(({ fixupSha }) => fixupSha))];
+    const held = await Promise.all(
+      shas.map(
+        async (sha) =>
+          (await runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD'])).code === 0,
+      ),
+    );
+    const gone = shas.filter((_, index) => !held[index]);
+    let roots: Map<string, string>;
+    try {
+      roots = await parser.findFoldRoots(selection, gone);
+    } catch (error) {
+      console.error('Error finding where the fixups folded:', error);
+      return;
+    }
+    const at = new Date().toISOString();
+    const folded = approvals.flatMap(({ threadId, fixupSha, patchId }): ReviewDecision[] => {
+      const root = roots.get(fixupSha);
+      const targetSha = root === undefined ? undefined : rewritten[root];
+      if (targetSha === undefined) return [];
+      return [
+        { threadId, kind: 'folded', fixupSha, ...(patchId ? { patchId } : {}), targetSha, at },
+      ];
     });
+    if (folded.length === 0) return;
+    const session = getOrCreateCommentSession(selection);
+    updateCommentSession(
+      selection,
+      session.threads,
+      mergeReviewDecisions(session.decisions, folded),
+    );
   }
 
   function historyRoute(

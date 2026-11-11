@@ -248,6 +248,15 @@ function approvalCovering(
   return covered ? approved[0] : undefined;
 }
 
+export function approvalAwaitingFold(
+  threadId: string,
+  fixups: ThreadFixup[],
+  decisions: ReviewDecision[],
+): ReviewDecision[] {
+  if (fixups.length > 0 || isThreadFolded(threadId, decisions)) return [];
+  return standingApproval(decisions.filter((decision) => decision.threadId === threadId));
+}
+
 // Whether the card shows the thread as resolved: the later of an approval or fold and the
 // reviewer's own resolve or reopen decides. What goes to the agent reads isThreadResolved instead.
 export function appearsResolved(
