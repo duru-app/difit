@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createElement, memo, useCallback, type ComponentProps } from 'react';
 import { HotkeysProvider } from 'react-hotkeys-hook';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import '@testing-library/jest-dom';
 
 import { mockFetch } from '../../vitest.setup';
@@ -34,6 +35,18 @@ vi.mock('./utils/fixupSpread', async (importOriginal) => {
   return { ...actual, spreadFixups: vi.fn(actual.spreadFixups) };
 });
 
+let diffViewerRenders = 0;
+vi.mock('./components/DiffViewer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./components/DiffViewer')>();
+  return {
+    ...actual,
+    DiffViewer: memo(function CountedDiffViewer(props: ComponentProps<typeof actual.DiffViewer>) {
+      diffViewerRenders += 1;
+      return createElement(actual.DiffViewer, props);
+    }),
+  };
+});
+
 let forcedFileScrolledPast: boolean | undefined;
 const mockScrollFileIntoDiffContainer = vi.fn();
 vi.mock('./hooks/useLazyDiffRendering', async (importOriginal) => {
@@ -42,16 +55,20 @@ vi.mock('./hooks/useLazyDiffRendering', async (importOriginal) => {
     ...actual,
     useLazyDiffRendering: (...args: Parameters<typeof actual.useLazyDiffRendering>) => {
       const real = actual.useLazyDiffRendering(...args);
+      const { isFileScrolledPastContainerTop, scrollFileIntoDiffContainer } = real;
       return {
         ...real,
-        isFileScrolledPastContainerTop: (filePath: string) =>
-          forcedFileScrolledPast ?? real.isFileScrolledPastContainerTop(filePath),
-        scrollFileIntoDiffContainer: (
-          ...scrollArgs: Parameters<typeof real.scrollFileIntoDiffContainer>
-        ) => {
-          mockScrollFileIntoDiffContainer(...scrollArgs);
-          real.scrollFileIntoDiffContainer(...scrollArgs);
-        },
+        isFileScrolledPastContainerTop: useCallback(
+          (filePath: string) => forcedFileScrolledPast ?? isFileScrolledPastContainerTop(filePath),
+          [isFileScrolledPastContainerTop],
+        ),
+        scrollFileIntoDiffContainer: useCallback(
+          (...scrollArgs: Parameters<typeof scrollFileIntoDiffContainer>) => {
+            mockScrollFileIntoDiffContainer(...scrollArgs);
+            scrollFileIntoDiffContainer(...scrollArgs);
+          },
+          [scrollFileIntoDiffContainer],
+        ),
       };
     },
   };
@@ -268,7 +285,7 @@ const linedFile = (path: string, count: number): DiffResponse['files'][number] =
 const commentsPanel = () => document.getElementById('comments-panel');
 const commentsPanelBox = () => document.querySelector<HTMLElement>('[data-comments-panel-box]')!;
 const fileListBox = () => document.getElementById('file-tree-panel')!.parentElement!;
-const diffColumn = () => document.querySelector('main')!;
+const diffColumn = () => document.querySelector('main')!.parentElement!;
 // happy-dom does no layout, so a test states the widths the browser would give.
 const layOut = (widths: { row: number; diff: number; fileList?: number; comments?: number }) => {
   const set = (element: Element, width: number) =>
@@ -3560,11 +3577,14 @@ describe('App Component - Commits of the review', () => {
       String(input).startsWith('/api/diff') ? new Promise<Response>(() => {}) : answer(input, init),
     );
 
+    const mainClass = screen.getByRole('main').className;
+
     fireEvent.click(commitButton(/1111111/));
 
     await waitFor(() => expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true'));
     expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true');
-    expect(screen.getByRole('main')).toHaveClass('opacity-50');
+    expect(document.querySelector('[data-diff-cover]')).not.toHaveClass('opacity-0');
+    expect(screen.getByRole('main').className).toBe(mainClass);
     expect(shownFile).toBeInTheDocument();
     expect(screen.queryByText('Loading diff...')).not.toBeInTheDocument();
   });
@@ -3575,6 +3595,31 @@ describe('App Component - Commits of the review', () => {
       String(input).startsWith('/api/diff') ? new Promise<Response>(() => {}) : answer(input, init),
     );
   };
+
+  it('marks the commit and dims the diff without drawing the shown files again', async () => {
+    const comments = vi.mocked(useDiffComments).getMockImplementation()!;
+    const viewed = vi.mocked(useViewedFiles).getMockImplementation()!;
+    vi.mocked(useDiffComments).mockReturnValue(comments());
+    vi.mocked(useViewedFiles).mockReturnValue(viewed());
+    onTestFinished(() => {
+      vi.mocked(useDiffComments).mockImplementation(comments);
+      vi.mocked(useViewedFiles).mockImplementation(viewed);
+    });
+    renderApp();
+    await screen.findByRole('region', { name: '리뷰 범위의 커밋' });
+    holdDiffAnswers();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const rendersBefore = diffViewerRenders;
+    expect(rendersBefore).toBeGreaterThan(0);
+
+    fireEvent.click(commitButton(/1111111/));
+
+    expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true');
+    expect(diffViewerRenders).toBe(rendersBefore);
+  });
 
   it('picks a run from the commit the list marks while that commit still loads', async () => {
     review = THREE_COMMITS;

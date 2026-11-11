@@ -466,6 +466,7 @@ function App() {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const collapsedInitializedRef = useRef(false);
   const diffScrollContainerRef = useRef<HTMLElement | null>(null);
+  const diffBoxRef = useRef<HTMLDivElement>(null);
 
   // Revision selector state
   const [revisionOptions, setRevisionOptions] = useState<RevisionsResponse | null>(null);
@@ -1393,7 +1394,7 @@ function App() {
         panel === 'fileList'
           ? [fileListBoxRef.current, isFileTreeOpen, SIDEBAR_MIN_WIDTH]
           : [commentsPanelBoxRef.current, isCommentsPanelOpen, COMMENTS_PANEL_MIN_WIDTH];
-      const row = diffScrollContainerRef.current?.parentElement;
+      const row = diffBoxRef.current?.parentElement;
       e.preventDefault();
       if (!box || !row || !isOpen) return;
       setIsDragging(true);
@@ -1799,6 +1800,14 @@ function App() {
     },
     [review, listedView, listedAnchor, rangeStart, showDiff],
   );
+  const selectViewRef = useRef(selectView);
+  selectViewRef.current = selectView;
+  const showDiffRef = useRef(showDiff);
+  showDiffRef.current = showDiff;
+  const showView = useCallback(
+    (selection: DiffSelection, place?: ReviewPlace | null) => showDiffRef.current(selection, place),
+    [],
+  );
   const closeCommitDrawer = useCallback(() => {
     selectView({ kind: 'cancel' });
     setIsCommitDrawerOpen(false);
@@ -1808,8 +1817,8 @@ function App() {
     enabled: isMobile && isCommitDrawerOpen,
   });
   const openReviewAt = useCallback(
-    (commit: string) => showDiff(selectionAtCommit(selectedRevision, commit)),
-    [selectedRevision, showDiff],
+    (commit: string) => showDiffRef.current(selectionAtCommit(selectedRevisionRef.current, commit)),
+    [],
   );
   const submitDirectEdit = useCallback(
     async (request: DirectEditRequest): Promise<DirectEditFailure | null> => {
@@ -1936,14 +1945,14 @@ function App() {
     (fixupSha: string, path: string) => {
       const place: ReviewPlace = { kind: 'fixup', fixupSha, path };
       if (showsPartOfReview) {
-        selectView({ kind: 'all' }, place);
+        selectViewRef.current({ kind: 'all' }, place);
         return;
       }
       if (!fixupSpread.places.has(fixupFileKey(place))) return;
       jumpWithinReview(place);
       showFixupFileRef.current(place, false);
     },
-    [showsPartOfReview, selectView, fixupSpread, jumpWithinReview],
+    [showsPartOfReview, fixupSpread, jumpWithinReview],
   );
   const replyFromOverlay = useCallback(
     (threadId: string, body: string, fields?: ReviewerReplyFields) =>
@@ -1979,7 +1988,7 @@ function App() {
       decideFixups: recordFixupDecisions,
       undoApproval,
       openReviewAt,
-      showView: showDiff,
+      showView,
       directEdit,
       boxesByFile: fixupSpread.boxesByFile,
       fixupPlaces: fixupSpread.places,
@@ -2005,7 +2014,7 @@ function App() {
       recordFixupDecisions,
       undoApproval,
       openReviewAt,
-      showDiff,
+      showView,
       directEdit,
       fixupSpread,
       reachableFixupFiles,
@@ -3168,10 +3177,9 @@ function App() {
 
           <PickedThreadProvider value={pickedThread?.id ?? null}>
             <DiffLineLinkProvider value={diffLineLinks}>
-              <main
-                ref={diffScrollContainerRef}
-                aria-busy={loading}
-                className={`flex-1 overflow-y-auto transition-opacity ${showMobileCommentsBar ? 'pb-16' : ''} ${loading ? 'opacity-50 pointer-events-none' : ''}`}
+              <div
+                ref={diffBoxRef}
+                className="relative flex flex-1 min-w-0"
                 style={
                   isMobile
                     ? undefined
@@ -3180,125 +3188,136 @@ function App() {
                       }
                 }
               >
-                {review && (
-                  <CommitCommentsSection
-                    key={`commits\0${diffRevision}`}
-                    commits={viewCommits}
-                    threads={drawnCommitThreads}
-                    onAddComment={takesComments ? handleAddCommitComment : undefined}
+                <main
+                  ref={diffScrollContainerRef}
+                  aria-busy={loading}
+                  className={`flex-1 overflow-y-auto ${showMobileCommentsBar ? 'pb-16' : ''}`}
+                >
+                  {review && (
+                    <CommitCommentsSection
+                      key={`commits\0${diffRevision}`}
+                      commits={viewCommits}
+                      threads={drawnCommitThreads}
+                      onAddComment={takesComments ? handleAddCommitComment : undefined}
+                      fixupOverlay={fixupOverlay}
+                      showAuthorBadges={showAuthorBadges}
+                      syntaxTheme={settings.syntaxTheme}
+                      onResolveThread={resolveThread}
+                      onReplyToThread={handleReplyToThread}
+                      onRemoveMessage={removeMessage}
+                      onUpdateMessage={updateMessage}
+                    />
+                  )}
+                  {diffData.files.map((file, fileIndex) => {
+                    const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
+                    const mergedChunks =
+                      getMergedChunksForVersion(mergedChunksState, diffDataVersion, file.path) ??
+                      EMPTY_MERGED_CHUNKS;
+                    const isRendered = renderedFilePaths.has(file.path);
+                    return (
+                      <div
+                        key={`file\0${diffRevision}\0${file.path}`}
+                        id={getFileElementId(file.path)}
+                        data-file-path={file.path}
+                        data-rendered={isRendered ? 'true' : 'false'}
+                        ref={(node) => registerLazyFileContainer(file.path, node)}
+                        className="mb-6"
+                        onMouseEnter={() => {
+                          hoveredFileIndexRef.current = fileIndex;
+                        }}
+                        onMouseLeave={() => {
+                          if (hoveredFileIndexRef.current === fileIndex) {
+                            hoveredFileIndexRef.current = null;
+                          }
+                        }}
+                      >
+                        {isRendered ? (
+                          <DiffViewer
+                            file={file}
+                            threads={fileThreads}
+                            showAuthorBadges={showAuthorBadges}
+                            diffMode={diffMode}
+                            reviewedFiles={viewedFiles}
+                            isChangedSinceViewed={changedSinceViewedFiles.has(file.path)}
+                            onToggleReviewed={handleViewedButtonToggle}
+                            collapsedFiles={collapsedFiles}
+                            onToggleCollapsed={toggleFileCollapsed}
+                            onToggleAllCollapsed={toggleAllFilesCollapsed}
+                            onAddComment={takesComments ? handleAddComment : undefined}
+                            onAddFileComment={takesComments ? handleAddFileComment : undefined}
+                            onResolveThread={resolveThread}
+                            onReplyToThread={handleReplyToThread}
+                            onRemoveMessage={removeMessage}
+                            onUpdateMessage={updateMessage}
+                            onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
+                            syntaxTheme={settings.syntaxTheme}
+                            baseCommitish={diffData.baseCommitish}
+                            targetCommitish={diffData.targetCommitish}
+                            cursor={cursor?.fileIndex === fileIndex ? cursor : null}
+                            isFocused={cursor?.fileIndex === fileIndex}
+                            fileIndex={fileIndex}
+                            onLineClick={handleLineClick}
+                            commentTrigger={
+                              commentTrigger?.fileIndex === fileIndex ? commentTrigger : null
+                            }
+                            onCommentTriggerHandled={handleCommentTriggerHandled}
+                            mergedChunks={mergedChunks}
+                            openLines={openLines}
+                            readLines={readLines}
+                            prefetchFileContent={prefetchFileContent}
+                            isExpandLoading={isExpandLoading}
+                            diffVersion={diffDataVersion}
+                            fixupOverlay={fixupOverlay}
+                            foldCommentChanges={foldCommentChanges}
+                          />
+                        ) : (
+                          <div className="bg-github-bg-secondary border border-github-border rounded-md px-4 py-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-xs uppercase tracking-wide text-github-text-muted">
+                                  Deferred Rendering
+                                </div>
+                                <FilePathText
+                                  path={file.path}
+                                  className="text-sm font-mono text-github-text-primary"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => ensureFileRendered(file.path)}
+                                className="px-3 py-1.5 text-xs rounded border border-github-border text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary"
+                              >
+                                Load now
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <FixupOnlySections
+                    key={`fixup-only\0${diffRevision}`}
+                    groups={fixupSpread.fixupOnly}
+                    threadsByFixupFile={threadsByFixupOnlyFile}
+                    firstFileIndex={diffData.files.length}
                     fixupOverlay={fixupOverlay}
+                    diffMode={diffMode}
                     showAuthorBadges={showAuthorBadges}
                     syntaxTheme={settings.syntaxTheme}
+                    onAddComment={takesComments ? handleAddFixupOnlyComment : undefined}
                     onResolveThread={resolveThread}
                     onReplyToThread={handleReplyToThread}
                     onRemoveMessage={removeMessage}
                     onUpdateMessage={updateMessage}
+                    onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
                   />
-                )}
-                {diffData.files.map((file, fileIndex) => {
-                  const fileThreads = threadsByFile.get(file.path) ?? EMPTY_COMMENT_THREADS;
-                  const mergedChunks =
-                    getMergedChunksForVersion(mergedChunksState, diffDataVersion, file.path) ??
-                    EMPTY_MERGED_CHUNKS;
-                  const isRendered = renderedFilePaths.has(file.path);
-                  return (
-                    <div
-                      key={`file\0${diffRevision}\0${file.path}`}
-                      id={getFileElementId(file.path)}
-                      data-file-path={file.path}
-                      data-rendered={isRendered ? 'true' : 'false'}
-                      ref={(node) => registerLazyFileContainer(file.path, node)}
-                      className="mb-6"
-                      onMouseEnter={() => {
-                        hoveredFileIndexRef.current = fileIndex;
-                      }}
-                      onMouseLeave={() => {
-                        if (hoveredFileIndexRef.current === fileIndex) {
-                          hoveredFileIndexRef.current = null;
-                        }
-                      }}
-                    >
-                      {isRendered ? (
-                        <DiffViewer
-                          file={file}
-                          threads={fileThreads}
-                          showAuthorBadges={showAuthorBadges}
-                          diffMode={diffMode}
-                          reviewedFiles={viewedFiles}
-                          isChangedSinceViewed={changedSinceViewedFiles.has(file.path)}
-                          onToggleReviewed={handleViewedButtonToggle}
-                          collapsedFiles={collapsedFiles}
-                          onToggleCollapsed={toggleFileCollapsed}
-                          onToggleAllCollapsed={toggleAllFilesCollapsed}
-                          onAddComment={takesComments ? handleAddComment : undefined}
-                          onAddFileComment={takesComments ? handleAddFileComment : undefined}
-                          onResolveThread={resolveThread}
-                          onReplyToThread={handleReplyToThread}
-                          onRemoveMessage={removeMessage}
-                          onUpdateMessage={updateMessage}
-                          onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
-                          syntaxTheme={settings.syntaxTheme}
-                          baseCommitish={diffData.baseCommitish}
-                          targetCommitish={diffData.targetCommitish}
-                          cursor={cursor?.fileIndex === fileIndex ? cursor : null}
-                          isFocused={cursor?.fileIndex === fileIndex}
-                          fileIndex={fileIndex}
-                          onLineClick={handleLineClick}
-                          commentTrigger={
-                            commentTrigger?.fileIndex === fileIndex ? commentTrigger : null
-                          }
-                          onCommentTriggerHandled={handleCommentTriggerHandled}
-                          mergedChunks={mergedChunks}
-                          openLines={openLines}
-                          readLines={readLines}
-                          prefetchFileContent={prefetchFileContent}
-                          isExpandLoading={isExpandLoading}
-                          diffVersion={diffDataVersion}
-                          fixupOverlay={fixupOverlay}
-                          foldCommentChanges={foldCommentChanges}
-                        />
-                      ) : (
-                        <div className="bg-github-bg-secondary border border-github-border rounded-md px-4 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-xs uppercase tracking-wide text-github-text-muted">
-                                Deferred Rendering
-                              </div>
-                              <FilePathText
-                                path={file.path}
-                                className="text-sm font-mono text-github-text-primary"
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => ensureFileRendered(file.path)}
-                              className="px-3 py-1.5 text-xs rounded border border-github-border text-github-text-secondary hover:text-github-text-primary hover:bg-github-bg-tertiary"
-                            >
-                              Load now
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                <FixupOnlySections
-                  key={`fixup-only\0${diffRevision}`}
-                  groups={fixupSpread.fixupOnly}
-                  threadsByFixupFile={threadsByFixupOnlyFile}
-                  firstFileIndex={diffData.files.length}
-                  fixupOverlay={fixupOverlay}
-                  diffMode={diffMode}
-                  showAuthorBadges={showAuthorBadges}
-                  syntaxTheme={settings.syntaxTheme}
-                  onAddComment={takesComments ? handleAddFixupOnlyComment : undefined}
-                  onResolveThread={resolveThread}
-                  onReplyToThread={handleReplyToThread}
-                  onRemoveMessage={removeMessage}
-                  onUpdateMessage={updateMessage}
-                  onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
+                </main>
+                {/* Dims from above: a style change on <main> would restyle every drawn line. */}
+                <div
+                  data-diff-cover
+                  className={`absolute inset-0 z-10 bg-github-bg-primary/50 transition-opacity ${loading ? '' : 'opacity-0 pointer-events-none'}`}
                 />
-              </main>
+              </div>
             </DiffLineLinkProvider>
           </PickedThreadProvider>
 
