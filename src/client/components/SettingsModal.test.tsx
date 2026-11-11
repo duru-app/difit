@@ -30,6 +30,7 @@ const baseSettings = {
   },
   colorVision: 'normal' as const,
   autoViewedPatterns: [],
+  replyNotifications: true,
 };
 
 describe('SettingsModal', () => {
@@ -300,5 +301,23 @@ describe('SettingsModal', () => {
       ...baseSettings,
       autoViewedPatterns: ['*.test.ts', 'src/generated/**'],
     });
+  });
+
+  it('turns reply notifications off from the system section', () => {
+    const onSettingsChange = vi.fn();
+    render(
+      <SettingsModal
+        isOpen={true}
+        onClose={vi.fn()}
+        settings={baseSettings}
+        onSettingsChange={onSettingsChange}
+      />,
+      { wrapper },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^System/ }));
+    fireEvent.click(screen.getByLabelText('Reply Notifications'));
+
+    expect(onSettingsChange).toHaveBeenCalledWith({ ...baseSettings, replyNotifications: false });
   });
 });

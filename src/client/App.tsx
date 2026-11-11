@@ -127,6 +127,7 @@ import {
 import { useScrollVisibleFile } from './hooks/useScrollVisibleFile';
 import { useSymbolPeek } from './hooks/useSymbolPeek';
 import { useViewedFiles } from './hooks/useViewedFiles';
+import { useReplyNotifications } from './hooks/useReplyNotifications';
 import { useThreadFixups } from './hooks/useThreadFixups';
 import { useViewport } from './hooks/useViewport';
 import { storageService } from './services/StorageService';
@@ -163,6 +164,7 @@ import {
   sameAnsweredThread,
   spreadFixups,
 } from './utils/fixupSpread';
+import { reviewerTurnOf } from './utils/replyNotifications';
 import { fetchFixupTarget } from './utils/fixupTarget';
 import { keepWhileSame } from './utils/keepWhileSame';
 import {
@@ -1924,6 +1926,29 @@ function App() {
   const [focusedFixupFile, setFocusedFixupFile] = useState<FixupFileRef | null>(null);
   const pickThreadRef = useRef<(threadId: string) => void>(() => {});
   const pickThread = useCallback((threadId: string) => pickThreadRef.current(threadId), []);
+  const reviewerTurns = useMemo(
+    () =>
+      threads.flatMap((thread) => {
+        const turn = reviewerTurnOf(
+          {
+            id: thread.id,
+            messages: thread.messages,
+            file: 'filePath' in thread ? thread.filePath : undefined,
+          },
+          fixupsByThread.get(thread.id) ?? [],
+          decisions,
+        );
+        return turn ? [turn] : [];
+      }),
+    [threads, fixupsByThread, decisions],
+  );
+  useReplyNotifications({
+    contextKey: commentsContextKey,
+    ready: hasLoadedComments && fixupsLoaded,
+    enabled: settings.replyNotifications,
+    turns: reviewerTurns,
+    onOpenThread: pickThread,
+  });
   const showThreadCardRef = useRef<(threadId: string) => void>(() => {});
   const showThreadCard = useCallback((threadId: string) => showThreadCardRef.current(threadId), []);
   const showFixupFileRef = useRef<(ref: FixupFileRef, restoring: boolean) => void>(() => {});
