@@ -139,8 +139,7 @@ export interface DiffResponse {
   reviewMoves?: ReviewMove[];
 }
 
-// A review whose target is an ancestor of a newer review's target with the same base hands
-// its comments and decisions over to that review.
+// From a review whose target is an ancestor of the newer review's target, with the same base.
 export interface ReviewMove {
   from: DiffSelection;
   to: DiffSelection;

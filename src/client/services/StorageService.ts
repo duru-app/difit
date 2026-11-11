@@ -334,7 +334,6 @@ export class StorageService {
     }
   }
 
-  // As with a rewrite, a record already under the newer review's key stays.
   moveReopenedRecords(moves: readonly ReviewMove[], repositoryId: string | undefined): void {
     if (!repositoryId) return;
     const keyOf = ({ baseCommitish, targetCommitish, baseMode }: ReviewMove['from']) =>

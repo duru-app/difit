@@ -2213,10 +2213,9 @@ export async function startServer(options: ServerOptions): Promise<{
     for (const wait of commentWaits) void wait.check();
   }
 
-  // Every thread goes along with every decision, so a resolved or approved thread stays settled; the
-  // superseded reviews leave, so their views open as views of the newer one. Tabs are not told: a
-  // tab on a superseded review reads the same threads through the newer one, and the tab that
-  // reopened would save them back under the superseded key before its new diff arrives.
+  // Tabs are not told: a tab on a superseded review reads the same threads through the newer one,
+  // and the tab that reopened would save them back under the superseded key before its new diff
+  // arrives.
   function takeOverReviews(review: ReviewScope, superseded: readonly ReviewScope[]) {
     const key = createCommentSessionKey(review.selection);
     const sessions = [...superseded.map(({ selection }) => selection), review.selection].flatMap(
