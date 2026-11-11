@@ -111,18 +111,18 @@ function gapShift(file: DiffFile, index: number): number {
   return last ? last.newStart + last.newLines - (last.oldStart + last.oldLines) : 0;
 }
 
-// `context` old lines on each side of every hidden new-side line, kept inside its gap.
-export function rangesAroundNewLines(
+function rangesAround(
   file: DiffFile,
-  newLines: readonly number[],
+  lines: readonly number[],
   context: number,
+  toOldLine: (line: number, shift: number) => number,
 ): ExpandedRange[] {
   return Array.from({ length: file.chunks.length + 1 }, (_, index) => index).flatMap((index) => {
     const gap = gapBeforeChunk(file, index);
     if (!gap) return [];
     const shift = gapShift(file, index);
-    return newLines.flatMap((newLine) => {
-      const oldLine = newLine - shift;
+    return lines.flatMap((line) => {
+      const oldLine = toOldLine(line, shift);
       if (oldLine < gap.start || oldLine > gap.end) return [];
       return [
         {
@@ -132,6 +132,23 @@ export function rangesAroundNewLines(
       ];
     });
   });
+}
+
+// `context` old lines on each side of every hidden new-side line, kept inside its gap.
+export function rangesAroundNewLines(
+  file: DiffFile,
+  newLines: readonly number[],
+  context: number,
+): ExpandedRange[] {
+  return rangesAround(file, newLines, context, (line, shift) => line - shift);
+}
+
+export function rangesAroundOldLines(
+  file: DiffFile,
+  oldLines: readonly number[],
+  context: number,
+): ExpandedRange[] {
+  return rangesAround(file, oldLines, context, (line) => line);
 }
 
 function withRanges(

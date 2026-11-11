@@ -143,6 +143,34 @@ describe('SymbolPeekModal', () => {
     expect(await screen.findByText('src/use.ts')).toBeInTheDocument();
   });
 
+  it('closes and hands the pick to the diff when the diff takes it', async () => {
+    respond(found);
+    const onClose = vi.fn();
+    const onPickInDiff = vi.fn().mockReturnValue(true);
+    renderModal({ onClose, onPickInDiff });
+    await shownRows();
+
+    fireEvent.click(screen.getByText('src/use.ts:1'));
+
+    expect(onPickInDiff).toHaveBeenCalledWith(found.references[0], 'abc1234');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/blob/src%2Fuse.ts?ref=abc1234', {
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('keeps showing the pick in the window when the diff does not take it', async () => {
+    respond(found);
+    const onClose = vi.fn();
+    renderModal({ onClose, onPickInDiff: vi.fn().mockReturnValue(false) });
+    await shownRows();
+
+    fireEvent.click(screen.getByText('src/use.ts:1'));
+
+    expect(await screen.findByText('src/use.ts')).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('marks the uses that go through a getter or a builder method', async () => {
     respond({
       ...found,
