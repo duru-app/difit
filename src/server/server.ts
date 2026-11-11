@@ -1481,14 +1481,15 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   }
 
-  // A thread passed again within the same turn keeps its first handover.
+  // A thread passed again within the same turn keeps its first handover. `at` is when the threads
+  // went out, so a deletion made while they were on their way still comes after the handover.
   function recordHandover(
     selection: DiffSelection,
     waiting: ThreadAwaitingAgent[],
     fixupsByThread: Map<string, ThreadFixup[]> | undefined,
+    at: string,
   ) {
     const session = getOrCreateCommentSession(selection);
-    const at = new Date().toISOString();
     const handovers = waiting.flatMap(({ threadId }): ReviewDecision[] => {
       const thread = session.threads.find((candidate) => candidate.id === threadId);
       if (!thread || isAgentResponding(thread, fixupsByThread, session.decisions)) return [];
@@ -1516,15 +1517,17 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   // Only what the reviewer saves from the page is told: threads the agent itself added or copied
-  // over, and fixups the reviewer committed by editing, need no answer.
+  // over, and fixups the reviewer committed by editing, need no answer. Messages go out one after
+  // another, so each tells the threads its save changed as they stand when it goes out.
   let sessionMessages: Promise<void> = Promise.resolve();
+  const versionWhenTold = new Map<string, number>();
   function tellClaudeSession(
     selection: DiffSelection,
-    before: Pick<CommentSessionState, 'threads' | 'decisions'>,
+    before: Pick<CommentSessionState, 'threads' | 'decisions' | 'version'>,
   ) {
     if (!process.env.CLAUDE_CODE_MESSAGING_SOCKET) return;
     const session = getOrCreateCommentSession(selection);
-    const after = { threads: session.threads, decisions: session.decisions };
+    const saved = { threads: session.threads, decisions: session.decisions };
     sessionMessages = sessionMessages.then(async () => {
       let fixupsByThread: Map<string, ThreadFixup[]> | undefined;
       try {
@@ -1543,18 +1546,42 @@ export async function startServer(options: ServerOptions): Promise<{
           waiting.rejectedFixupShas,
         ]);
       };
-      const known = new Set(
-        selectThreadsAwaitingAgent(before.threads, fixupsByThread, before.decisions).map(
-          (waiting) => turnKey(before.threads, waiting),
-        ),
-      );
+      const turnsIn = ({
+        threads,
+        decisions,
+      }: Pick<CommentSessionState, 'threads' | 'decisions'>) =>
+        new Map(
+          selectThreadsAwaitingAgent(threads, fixupsByThread, decisions).map((waiting) => [
+            waiting.threadId,
+            turnKey(threads, waiting),
+          ]),
+        );
+      const turnsBefore = turnsIn(before);
+      const turnsSaved = turnsIn(saved);
+      const changedBySave = (threadId: string) =>
+        turnsBefore.get(threadId) !== turnsSaved.get(threadId);
+
+      const current = { threads: session.threads, decisions: session.decisions };
+      const version = session.version;
+      const toldKey = (waiting: ThreadAwaitingAgent) =>
+        `${createCommentSessionKey(selection)}\n${turnKey(current.threads, waiting)}`;
+      const toldSinceSave = (waiting: ThreadAwaitingAgent) =>
+        (versionWhenTold.get(toldKey(waiting)) ?? -1) > before.version;
       const fresh = selectThreadsAwaitingAgent(
-        after.threads,
+        current.threads,
         fixupsByThread,
-        after.decisions,
-      ).filter((waiting) => !known.has(turnKey(after.threads, waiting)));
-      if (fresh.length > 0 && (await sendToClaudeSession(sessionMessageFor(port, fresh)))) {
-        recordHandover(selection, fresh, fixupsByThread);
+        current.decisions,
+      ).filter(
+        (waiting) =>
+          changedBySave(waiting.threadId) &&
+          turnsBefore.get(waiting.threadId) !== turnKey(current.threads, waiting) &&
+          !toldSinceSave(waiting),
+      );
+      if (fresh.length === 0) return;
+      const sentAt = new Date().toISOString();
+      if (await sendToClaudeSession(sessionMessageFor(port, fresh))) {
+        for (const waiting of fresh) versionWhenTold.set(toldKey(waiting), version);
+        recordHandover(selection, fresh, fixupsByThread, sentAt);
       }
     });
   }
@@ -1568,7 +1595,11 @@ export async function startServer(options: ServerOptions): Promise<{
       const nextDecisions = parseDecisionsPayload(body);
       const baseVersion = parseBaseVersion(body);
       const session = getOrCreateCommentSession(selection);
-      const before = { threads: session.threads, decisions: session.decisions };
+      const before = {
+        threads: session.threads,
+        decisions: session.decisions,
+        version: session.version,
+      };
 
       // Stale baseVersion means another writer (e.g. an agent) changed comments since the
       // client's last read, so merge rather than overwrite. A matching/absent version replaces.
@@ -2400,8 +2431,9 @@ export async function startServer(options: ServerOptions): Promise<{
       check: async () => {
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(selection);
         if (waiting.length > 0 && commentWaits.has(wait)) {
+          const sentAt = new Date().toISOString();
           await wait.finish(`event: threads\ndata: ${JSON.stringify(waiting)}\n\n`);
-          recordHandover(selection, waiting, fixupsByThread);
+          recordHandover(selection, waiting, fixupsByThread, sentAt);
         }
       },
       finish: (event) => {
