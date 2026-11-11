@@ -3878,19 +3878,29 @@ describe('Server Integration Tests', () => {
       return response.text();
     }
 
-    async function listenOnSocket(token?: string) {
+    async function listenOnSocket(token?: string, { hold = false } = {}) {
       socketDir = await fs.mkdtemp(join(tmpdir(), 'difit-session-'));
       const path = join(socketDir, 'inbox.sock');
       received = [];
-      socketServer = createNetServer((connection) => {
+      let holding = hold;
+      const held: Array<() => void> = [];
+      socketServer = createNetServer({ allowHalfOpen: true }, (connection) => {
         let data = '';
         connection.on('data', (chunk) => (data += chunk));
-        connection.on('end', () => received.push(data));
+        connection.on('end', () => {
+          received.push(data);
+          if (holding) held.push(() => connection.end());
+          else connection.end();
+        });
       });
       await new Promise<void>((resolve) => socketServer!.listen(path, resolve));
       process.env.CLAUDE_CODE_MESSAGING_SOCKET = path;
       if (token) process.env.CLAUDE_CODE_MESSAGING_TOKEN = token;
       else delete process.env.CLAUDE_CODE_MESSAGING_TOKEN;
+      return () => {
+        holding = false;
+        for (const end of held.splice(0)) end();
+      };
     }
 
     const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
@@ -4470,6 +4480,83 @@ describe('Server Integration Tests', () => {
 
       expect(await handovers(port)).toEqual([]);
       errors.mockRestore();
+    });
+
+    describe('while an earlier session message is still on its way', () => {
+      const headline = (sent: string) =>
+        (JSON.parse(sent.trim().split('\n').at(-1)!).message.content as string).split('\n')[0];
+
+      async function deleteFromPage(port: number, threads: unknown[], threadId: string) {
+        const { decisions } = (await (
+          await fetch(`http://localhost:${port}/api/comments-json${PINNED}`)
+        ).json()) as { decisions: unknown[] };
+        await postFromPage(port, {
+          threads,
+          decisions: [
+            ...decisions,
+            { threadId, kind: 'deleted', fixupSha: '', at: new Date().toISOString() },
+          ],
+        });
+      }
+
+      it('tells the session that the thread it was just handed is deleted', async () => {
+        const release = await listenOnSocket(undefined, { hold: true });
+        const { port } = await startPinned();
+
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+        await vi.waitFor(() => expect(received).toHaveLength(1));
+        await deleteFromPage(port, [reviewerThread('c1')], 'c1');
+        release();
+
+        await vi.waitFor(() => expect(received).toHaveLength(2));
+        expect(received.map(headline)).toEqual([
+          expect.stringContaining('your turn on c1 [답변 대기]'),
+          expect.stringContaining('your turn on c1 [지움]'),
+        ]);
+      });
+
+      it('never hands over a thread deleted before its own message went out', async () => {
+        const release = await listenOnSocket(undefined, { hold: true });
+        const { port } = await startPinned();
+
+        await postFromPage(port, { threads: [reviewerThread('c0')] });
+        await vi.waitFor(() => expect(received).toHaveLength(1));
+        const threads = [reviewerThread('c0'), reviewerThread('c1')];
+        await postFromPage(port, { threads });
+        await deleteFromPage(port, threads, 'c1');
+        release();
+        await settle();
+
+        expect(received.map(headline)).toEqual([
+          expect.stringContaining('your turn on c0 [답변 대기]'),
+        ]);
+        expect((await handovers(port)).map(({ threadId }) => threadId)).toEqual(['c0']);
+      });
+
+      it('sends a comment edited before its message went out once, as edited', async () => {
+        const release = await listenOnSocket(undefined, { hold: true });
+        const { port } = await startPinned();
+        const thread = reviewerThread('c1');
+        const edited = {
+          ...thread,
+          messages: [
+            { ...thread.messages[0]!, body: 'fix c1 고침', updatedAt: '2026-01-01T00:00:08Z' },
+          ],
+        };
+
+        await postFromPage(port, { threads: [reviewerThread('c0')] });
+        await vi.waitFor(() => expect(received).toHaveLength(1));
+        await postFromPage(port, { threads: [reviewerThread('c0'), thread] });
+        await postFromPage(port, { threads: [reviewerThread('c0'), edited] });
+        release();
+        await settle();
+
+        expect(received).toHaveLength(2);
+        const [, json] = (
+          JSON.parse(received[1]!.trim().split('\n').at(-1)!).message.content as string
+        ).split('\n');
+        expect(JSON.parse(json!)).toMatchObject({ threadId: 'c1', message: 'fix c1 고침' });
+      });
     });
   });
 });
