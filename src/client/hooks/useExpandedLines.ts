@@ -143,7 +143,6 @@ export function rangesAroundNewLines(
   return rangesAround(file, newLines, context, (line, shift) => line - shift);
 }
 
-// The same for hidden old-side lines.
 export function rangesAroundOldLines(
   file: DiffFile,
   oldLines: readonly number[],
