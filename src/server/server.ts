@@ -117,6 +117,7 @@ import {
   type RevisionsResponse,
   type ReviewCommit,
   type ReviewScope,
+  type ReviewMove,
   type RewordRejection,
   type RewordRequest,
   type RewordResponse,
@@ -381,6 +382,26 @@ export async function startServer(options: ServerOptions): Promise<{
       newestFirst.find((review) => isViewOfReview(view, review))
     );
   };
+  const reviewsBehind = async (selection: DiffSelection): Promise<ReviewScope[]> => {
+    const sameBase = pinnedReviews.filter(
+      (review) =>
+        normalizeBaseMode(review.selection.baseMode) === normalizeBaseMode(selection.baseMode) &&
+        isSameCommit(review.selection.baseCommitish, selection.baseCommitish) &&
+        !isSameCommit(review.selection.targetCommitish, selection.targetCommitish),
+    );
+    const behind = await Promise.all(
+      sameBase.map(async (review) => {
+        const result = await runGit(repositoryPath, [
+          'merge-base',
+          '--is-ancestor',
+          review.selection.targetCommitish,
+          selection.targetCommitish,
+        ]);
+        return result.code === 0;
+      }),
+    );
+    return sameBase.filter((_, index) => behind[index]);
+  };
   const reviewOf = async (
     requested: DiffSelection,
     resolved: DiffSelection,
@@ -388,17 +409,23 @@ export async function startServer(options: ServerOptions): Promise<{
     if (options.stdinDiff) return undefined;
     const known = findReviewOf(resolved);
     if (known || !isCommitHash(requested.targetCommitish)) return known;
-    let commits: ReviewScope['commits'] = [];
-    try {
-      commits = await parser.listReviewCommits(resolved);
-    } catch (error) {
-      console.error('Error listing review commits:', error);
-    }
+    const [commits, earlier] = await Promise.all([
+      parser.listReviewCommits(resolved).catch((error: unknown): ReviewScope['commits'] => {
+        console.error('Error listing review commits:', error);
+        return [];
+      }),
+      reviewsBehind(resolved).catch((error: unknown): ReviewScope[] => {
+        console.error('Error finding the reviews behind a new one:', error);
+        return [];
+      }),
+    ]);
     const raced = findReviewOf(resolved);
     if (raced) return raced;
     const review = { selection: resolved, requested, commits };
     pinnedCommentSessionKeys.add(createCommentSessionKey(resolved));
     pinnedReviews.push(review);
+    const superseded = earlier.filter((pinned) => pinnedReviews.includes(pinned));
+    if (superseded.length > 0) takeOverReviews(review, superseded);
     return review;
   };
   await reviewOf(initialSelection, currentCommentSelection);
@@ -608,6 +635,7 @@ export async function startServer(options: ServerOptions): Promise<{
   // What a tab or an agent still holding old SHAs says lands on the commits that replaced them.
   let rewrittenShas: RewrittenShas = {};
   let historyMoves: HistoryMove[] = [];
+  let reviewMoves: ReviewMove[] = [];
   const initialCommentThreads = mergeCommentImports([], initialCommentImports).threads;
   if (initialCommentThreads.length > 0) {
     commentSessions.set(createCommentSessionKey(currentCommentSelection), {
@@ -751,6 +779,7 @@ export async function startServer(options: ServerOptions): Promise<{
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,
       review,
       ...(Object.keys(rewrittenShas).length > 0 ? { rewritten: rewrittenShas, historyMoves } : {}),
+      ...(reviewMoves.length > 0 ? { reviewMoves } : {}),
     });
   });
 
@@ -2166,6 +2195,10 @@ export async function startServer(options: ServerOptions): Promise<{
     initialSelection = selectionAfterMoves(initialSelection, moves);
     currentSelection = selectionAfterMoves(currentSelection, moves);
     currentCommentSelection = selectionAfterMoves(currentCommentSelection, moves);
+    reviewMoves = reviewMoves.map(({ from, to }) => ({
+      from: selectionAfterMoves(from, moves),
+      to: selectionAfterMoves(to, moves),
+    }));
     for (const [key, session] of [...commentSessions]) {
       const selection = selectionAfterMoves(session.selection, moves);
       commentSessions.delete(key);
@@ -2177,6 +2210,44 @@ export async function startServer(options: ServerOptions): Promise<{
       });
     }
     fileWatcher.broadcast({ type: 'historyRewritten', timestamp: new Date().toISOString() });
+    for (const wait of commentWaits) void wait.check();
+  }
+
+  // Tabs are not told: a tab on a superseded review reads the same threads through the newer one,
+  // and the tab that reopened would save them back under the superseded key before its new diff
+  // arrives.
+  function takeOverReviews(review: ReviewScope, superseded: readonly ReviewScope[]) {
+    const key = createCommentSessionKey(review.selection);
+    const sessions = [...superseded.map(({ selection }) => selection), review.selection].flatMap(
+      (selection) => commentSessions.get(createCommentSessionKey(selection)) ?? [],
+    );
+    for (const { selection } of superseded) {
+      commentSessions.delete(createCommentSessionKey(selection));
+      pinnedCommentSessionKeys.delete(createCommentSessionKey(selection));
+    }
+    pinnedReviews.splice(
+      0,
+      pinnedReviews.length,
+      ...pinnedReviews.filter((pinned) => !superseded.includes(pinned)),
+    );
+    reviewMoves = [
+      ...reviewMoves,
+      ...superseded.map(({ selection }) => ({ from: selection, to: review.selection })),
+    ];
+    if (sessions.length === 0) return;
+    const version = Math.max(...sessions.map((session) => session.version)) + 1;
+    commentSessions.set(key, {
+      selection: review.selection,
+      threads: sessions.reduce<DiffCommentThread[]>(
+        (threads, session) => mergeCommentThreads(threads, session.threads).threads,
+        [],
+      ),
+      decisions: sessions.reduce<ReviewDecision[]>(
+        (decisions, session) => mergeReviewDecisions(decisions, session.decisions),
+        [],
+      ),
+      version,
+    });
     for (const wait of commentWaits) void wait.check();
   }
 
@@ -2746,7 +2817,8 @@ export async function startServer(options: ServerOptions): Promise<{
     const ping = setInterval(() => res.write(': ping\n\n'), 30_000);
     const wait: CommentWait = {
       check: async () => {
-        const moved = selectionAfterMoves(selection, historyMoves);
+        const afterRewrites = selectionAfterMoves(selection, historyMoves);
+        const moved = findReviewOf(afterRewrites)?.selection ?? afterRewrites;
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(moved);
         if (waiting.length > 0 && commentWaits.has(wait)) {
           await wait.finish(`event: threads\ndata: ${JSON.stringify(waiting)}\n\n`);

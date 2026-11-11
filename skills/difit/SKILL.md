@@ -273,7 +273,7 @@ When a fixup targets a commit in the middle of the range and a later commit chan
 
 ### Moving comments to the folded commit
 
-Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. A reorder or a reword within a running review needs none of this, because difit moves the comments. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
+Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. A reorder or a reword within a running review needs none of this, because difit moves the comments, and neither does a review the user reopened on newer commits stacked on the old target. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
 
 ```bash
 difit comment get --port <old port> --format json > old.json

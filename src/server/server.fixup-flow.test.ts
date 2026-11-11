@@ -8,7 +8,7 @@ import { fetch } from 'undici';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer } from './server.js';
-import type { DiffResponse, RewriteBlockingThread, RewordResponse } from '../types/diff.js';
+import type { DiffResponse, RewriteBlockingThread } from '../types/diff.js';
 import { bindingForView, createDiffSelection } from '../utils/diffSelection.js';
 
 let home: string;
@@ -936,14 +936,14 @@ it("blocks rewording while a thread of another selection on the server is the ag
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(tip);
 });
 
-it('says where a comment of an earlier review holds a reword up after the review reopened', async () => {
+it('carries the comments and decisions of a review into the review reopened on a newer commit', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
   git(repo, ['init', '-q']);
   git(repo, ['checkout', '-q', '-b', 'feature']);
   const base = commit(repo, 'base', { 'a.js': '1\n' });
   const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
-  const oldTip = commit(repo, 'add c', { 'c.js': '1\n' });
+  const oldTip = commit(repo, 'add c', { 'c.js': '1\n2\n' });
 
   const { port, server } = await startServer({
     selection: createDiffSelection(base, oldTip),
@@ -952,61 +952,107 @@ it('says where a comment of an earlier review holds a reword up after the review
   });
   cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
   const api = (path: string) => `http://localhost:${port}${path}`;
-  await fetch(api('/api/diff'));
-  await fetch(api('/api/comment-imports'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify([
-      {
-        type: 'thread',
-        id: 'earlier',
-        author: 'User',
-        filePath: 'c.js',
-        position: { side: 'new', line: 1 },
-        body: 'left on the earlier review',
-      },
-    ]),
+  const post = (path: string, body: unknown) =>
+    fetch(api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const threadIds = async (query: string) =>
+    (
+      (await (await fetch(api(`/api/comments-json?${query}`))).json()) as {
+        threads: Array<{ id: string }>;
+      }
+    ).threads.map(({ id }) => id);
+  const { review: earlierReview } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  await post('/api/comment-imports', [
+    {
+      type: 'thread',
+      id: 'line',
+      author: 'User',
+      filePath: 'c.js',
+      position: { side: 'new', line: 2 },
+      body: 'on a line',
+    },
+    {
+      type: 'thread',
+      id: 'subject',
+      author: 'User',
+      position: { scope: 'commit' },
+      fixupTarget: typo,
+      body: 'typo in the subject',
+    },
+    {
+      type: 'thread',
+      id: 'settled',
+      author: 'User',
+      filePath: 'c.js',
+      position: { side: 'new', line: 1 },
+      body: 'settled already',
+    },
+  ]);
+  await post('/api/decisions', [
+    { threadId: 'settled', kind: 'resolved', fixupSha: '', at: new Date().toISOString() },
+  ]);
+  const onLine = { threadId: 'line', filePath: 'c.js', position: { side: 'new', line: 2 } };
+  const onSubject = { threadId: 'subject', position: { scope: 'commit' }, fixupTarget: typo };
+  await post('/api/comment-imports', [
+    { type: 'reply', ...onLine, author: 'Agent', body: 'answered' },
+    { type: 'reply', ...onSubject, author: 'Agent', body: 'answered' },
+  ]);
+  const waiting = new AbortController();
+  cleanups.push(() => waiting.abort());
+  const wait = fetch(api('/api/comments-wait'), { signal: waiting.signal })
+    .then((response) => response.text())
+    .catch((error: unknown) => String(error));
+
+  const newTip = commit(repo, 'add d', { 'c.js': '0\n1\n2\n' });
+  const reopened = (await (
+    await fetch(api(`/api/diff?base=${base}&target=${newTip}`))
+  ).json()) as DiffResponse;
+
+  const newReview = `base=${base}&target=${newTip}`;
+  const reopenedSelection = createDiffSelection(base.slice(0, 7), newTip.slice(0, 7));
+  expect(reopened.review?.selection).toEqual(reopenedSelection);
+  expect(reopened.reviewMoves).toEqual([{ from: earlierReview?.selection, to: reopenedSelection }]);
+  expect(await threadIds(newReview)).toEqual(['line', 'subject', 'settled']);
+  const { decisions } = (await (await fetch(api(`/api/comments-json?${newReview}`))).json()) as {
+    decisions: Array<{ threadId: string; kind: string }>;
+  };
+  expect(decisions.map(({ threadId, kind }) => ({ threadId, kind }))).toEqual([
+    { threadId: 'settled', kind: 'resolved' },
+  ]);
+
+  await post('/api/comment-imports', [
+    { type: 'reply', ...onLine, author: 'User', body: 'not yet' },
+    { type: 'reply', ...onSubject, author: 'User', body: 'still there' },
+  ]);
+  expect(await wait).toContain('"threadId":"line"');
+  const output = await (await fetch(api(`/api/comments-output?${newReview}`))).text();
+  expect(output).toContain('c.js:L2');
+  expect(output).toContain('still there');
+  expect(output).not.toContain('settled already');
+
+  const blocked = await post(`/api/reword?${newReview}`, {
+    commit: typo,
+    original: 'add typpo',
+    message: 'add typo',
   });
-
-  const newTip = commit(repo, 'add d', { 'd.js': '1\n' });
-  await fetch(api(`/api/diff?base=${base}&target=${newTip}`));
-  const onNewReview = await fetch(api(`/api/comments-json?base=${base}&target=${newTip}`));
-  expect(((await onNewReview.json()) as { threads: unknown[] }).threads).toEqual([]);
-
-  const blocked = await fetch(api(`/api/reword?base=${base}&target=${newTip}`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo' }),
-  });
-
   expect(blocked.status).toBe(409);
-  const refused = (await blocked.json()) as RewordResponse & {
+  const { blockingThreads } = (await blocked.json()) as {
     blockingThreads: RewriteBlockingThread[];
   };
-  expect(refused).toEqual({
-    error: 'Rewrite refused: comments-waiting',
-    reason: 'comments-waiting',
-    blockingThreads: [
-      {
-        threadId: 'earlier',
-        review: createDiffSelection(base, oldTip),
-        commit: { shortSha: oldTip.slice(0, 7), subject: 'add c' },
-        file: 'c.js',
-        line: 1,
-      },
-    ],
-  });
+  expect(blockingThreads.map(({ threadId, review }) => ({ threadId, review }))).toEqual([
+    { threadId: 'line', review: createDiffSelection(base, newTip) },
+    { threadId: 'subject', review: createDiffSelection(base, newTip) },
+  ]);
 
-  const { review } = refused.blockingThreads[0]!;
-  const opened = await fetch(
-    api(`/api/diff?base=${review.baseCommitish}&target=${review.targetCommitish}`),
-  );
-  const { selection } = ((await opened.json()) as DiffResponse).review!;
-  const comments = await fetch(
-    api(`/api/comments-json?base=${selection.baseCommitish}&target=${selection.targetCommitish}`),
-  );
-  const shown = (await comments.json()) as { threads: Array<{ id: string }> };
-  expect(shown.threads.map(({ id }) => id)).toEqual(['earlier']);
+  const older = (await (
+    await fetch(api(`/api/diff?base=${base}&target=${oldTip}`))
+  ).json()) as DiffResponse;
+  expect(older.review?.selection).toEqual(reopenedSelection);
+  expect(await threadIds(`base=${base}&target=${oldTip}`)).toEqual(['line', 'subject', 'settled']);
+  expect(await threadIds(newReview)).toEqual(['line', 'subject', 'settled']);
   expect(git(repo, ['rev-parse', 'HEAD'])).toBe(newTip);
 });
 

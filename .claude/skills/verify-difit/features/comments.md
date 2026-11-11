@@ -68,6 +68,31 @@ Two User threads at `math.js` line 2, then replies naming each by `"threadId"`:
 - `threadId` with another `position` stores on the named thread and prints a `warnings` entry;
 - the same replies without `threadId` still go to the newest open thread at the place.
 
+## Reopen on a newer commit
+
+The browser's `다시 열기` asks `/api/diff` for the same base and the newer commit. The review it opens takes over every thread and decision of the review whose target is an ancestor of the new one, and the older review is gone. Start on a branch with two commits and a SHA target, add a line thread, a commit-level thread and a thread closed with `resolved`, then commit a change that shifts the commented file down a line:
+
+```bash
+( . "$S/env.sh"; cd "$REPO"
+  BASE=$(git rev-parse HEAD~2); OLD=$(git rev-parse HEAD~1); NEW=$(git rev-parse HEAD)
+  curl -s "$URL/api/diff?base=$BASE&target=$NEW" | jq -c '{review: .review.selection, reviewMoves}'
+  difit comment get --port "$PORT"
+  timeout 5 difit comment wait --port "$PORT"; echo "wait exit $?"
+  curl -s "$URL/api/comments-json?base=$BASE&target=$NEW" | jq -c '{threads: [.threads[].id], decisions: [.decisions[] | {threadId, kind}]}'
+  curl -s "$URL/api/diff?base=$BASE&target=$OLD" | jq -c '.review.selection'
+) 2>&1 | tee "$S/evidence/reopen.txt"
+```
+
+Proof:
+
+- `/api/diff` names the new review and one `reviewMoves` entry from the older review to it.
+- `get` lists every open thread, and `wait` prints them at once and exits 0. The resolved thread is in neither.
+- `comments-json` of the new review has every thread and the `resolved` decision.
+- Asking for the older target again returns the new review as its `review`, and its threads stay there.
+- A `POST /api/reword` in the new review refused with `comments-waiting` lists each open thread once, naming the new review.
+- In the browser, the toolbar count stays the same, and a whole-view thread on a shifted line shows on its new line number.
+- A history that was folded does not count: its old target is no ancestor, and the comments stay with the older review.
+
 ## Gotchas
 
 - `"author":"User"` is what makes a thread the reviewer's. Without it the author is `Agent`, which is never the agent's turn, so `wait` blocks forever. Wrap `wait` in `timeout`.
