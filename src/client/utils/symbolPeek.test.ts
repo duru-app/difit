@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SymbolSearchResponse } from '../../types/diff';
+import type { DiffFile, SymbolSearchResponse } from '../../types/diff';
 
 import {
+  diffPlaceOfMatch,
   fetchLibrarySource,
   fetchSymbol,
   reselect,
@@ -236,5 +237,45 @@ describe('fetchLibrarySource', () => {
       { signal: undefined },
     );
     await expect(fetchLibrarySource('x')).rejects.toThrow();
+  });
+});
+
+describe('diffPlaceOfMatch', () => {
+  const file = (path: string, status: DiffFile['status'], oldPath?: string): DiffFile => ({
+    path,
+    status,
+    additions: 0,
+    deletions: 0,
+    chunks: [],
+    ...(oldPath && { oldPath }),
+  });
+  const files = [
+    file('src/a.ts', 'modified'),
+    file('src/new.ts', 'added'),
+    file('src/gone.ts', 'deleted'),
+    file('src/moved.ts', 'renamed', 'src/was.ts'),
+  ];
+  const at = (path: string, ref: string) =>
+    diffPlaceOfMatch({ path, line: 3, text: '' }, ref, refs, files);
+
+  it('puts a match found in the target on the new side of its diff file', () => {
+    expect(at('src/a.ts', 'bbb2222')).toEqual({ file: 'src/a.ts', side: 'new' });
+    expect(at('src/moved.ts', 'bbb2222')).toEqual({ file: 'src/moved.ts', side: 'new' });
+  });
+
+  it('puts a match found in the base on the old side, under the diff file of its old path', () => {
+    expect(at('src/a.ts', 'aaa1111')).toEqual({ file: 'src/a.ts', side: 'old' });
+    expect(at('src/was.ts', 'aaa1111')).toEqual({ file: 'src/moved.ts', side: 'old' });
+    expect(at('src/gone.ts', 'aaa1111')).toEqual({ file: 'src/gone.ts', side: 'old' });
+  });
+
+  it('leaves out files the diff does not touch and lines a side does not have', () => {
+    expect(at('src/other.ts', 'bbb2222')).toBeNull();
+    expect(at('src/gone.ts', 'bbb2222')).toBeNull();
+    expect(at('src/new.ts', 'aaa1111')).toBeNull();
+  });
+
+  it('leaves out a match found in any other revision', () => {
+    expect(at('src/a.ts', 'ccc3333')).toBeNull();
   });
 });
