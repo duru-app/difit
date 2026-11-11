@@ -3476,6 +3476,7 @@ describe('Server Integration Tests', () => {
       const NEW_SECOND_SHA = 'f'.repeat(40);
       const FEATURE_BRANCH = {
         branch: 'feature',
+        defaultBranch: null,
         targetInHead: true,
         operationInProgress: false,
         leftBranches: [],
@@ -3557,6 +3558,7 @@ describe('Server Integration Tests', () => {
 
       it('warns on the default branch and goes ahead once the warning is acknowledged', async () => {
         parserInstances.at(-1)!.getDefaultBranch.mockResolvedValue('feature');
+        readRewriteState.mockResolvedValue({ ...FEATURE_BRANCH, defaultBranch: 'feature' });
 
         const warned = await reword({});
 

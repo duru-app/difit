@@ -10,11 +10,20 @@ export interface StackedBranches {
   left: LeftBranch[];
   // Short names, HEAD's branch among them, whose upstream holds a commit the rewrite replaces.
   pushed: string[];
+  // What the default branch's name points at once symbolic names are followed.
+  defaultBranch: string | null;
 }
 
 const BRANCH_PREFIX = 'refs/heads/';
 const shortName = (ref: string) =>
   ref.startsWith(BRANCH_PREFIX) ? ref.slice(BRANCH_PREFIX.length) : ref;
+
+// --short would print heads/<name> when a tag has the same name.
+export async function headBranchOf(repoPath: string): Promise<string | null> {
+  const run = await runGit(repoPath, ['symbolic-ref', '-q', 'HEAD']);
+  const ref = run.stdout.toString('utf8').trim();
+  return run.code === 0 && ref.startsWith(BRANCH_PREFIX) ? shortName(ref) : null;
+}
 
 async function gitLines(repoPath: string, args: string[]): Promise<string[]> {
   const run = await runGit(repoPath, args);
@@ -101,7 +110,7 @@ export async function findStackedBranches(
   };
   const head = resolveAlias(headBranch);
   const defaultName = resolveAlias(defaultBranch);
-  const result: StackedBranches = { moving: [], left: [], pushed: [] };
+  const result: StackedBranches = { moving: [], left: [], pushed: [], defaultBranch: defaultName };
   for (const { name, tip, worktree, upstream, symref } of branches) {
     if (symref !== '') continue;
     const isHead = name === head;

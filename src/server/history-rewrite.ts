@@ -9,7 +9,7 @@ import { autosquashGroups, squashTarget, type TodoCommit } from './autosquash.js
 import { hasOperationInProgress } from './direct-edit.js';
 import type { RewriteState } from './rewrite-check.js';
 import { type GitOptions, runGit } from './run-git.js';
-import { findStackedBranches } from './stacked-branches.js';
+import { findStackedBranches, headBranchOf } from './stacked-branches.js';
 
 export interface HistoryRewrite {
   // Where the reviewed range starts; autosquash targets are read from here on.
@@ -46,19 +46,29 @@ export async function readRewriteState(
   target: string,
   oldestReplaced: string,
   defaultBranch: string | null,
-): Promise<Pick<RewriteState, 'branch' | 'targetInHead' | 'operationInProgress' | 'leftBranches'>> {
-  const [headBranch, onHead, operationInProgress] = await Promise.all([
-    runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']),
+): Promise<
+  Pick<
+    RewriteState,
+    'branch' | 'defaultBranch' | 'targetInHead' | 'operationInProgress' | 'leftBranches'
+  >
+> {
+  const [branch, onHead, operationInProgress] = await Promise.all([
+    headBranchOf(repoPath),
     runGit(repoPath, ['merge-base', '--is-ancestor', target, 'HEAD']),
     hasOperationInProgress(repoPath),
   ]);
-  const branch = headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null;
-  const { left } = await findStackedBranches(repoPath, {
+  const stack = await findStackedBranches(repoPath, {
     oldest: oldestReplaced,
     headBranch: branch,
     defaultBranch,
   });
-  return { branch, targetInHead: onHead.code === 0, operationInProgress, leftBranches: left };
+  return {
+    branch,
+    defaultBranch: stack.defaultBranch,
+    targetInHead: onHead.code === 0,
+    operationInProgress,
+    leftBranches: stack.left,
+  };
 }
 
 const shellQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -208,10 +218,25 @@ const REWRITE_DIR_PREFIX = 'difit-history-rewrite-';
 const OWNER_FILE = 'owner';
 const INTERRUPTING_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
+// For a worktree whose folder is gone, which `worktree remove` refuses; `worktree prune` would also
+// drop the reviewer's own stale entries.
+async function unregisterWorktree(repoPath: string, worktree: string): Promise<void> {
+  const common = await runGit(repoPath, ['rev-parse', '--git-common-dir']);
+  if (common.code !== 0) return;
+  const entries = join(resolve(repoPath, common.stdout.toString('utf8').trim()), 'worktrees');
+  for (const entry of await fs.readdir(entries).catch(() => [] as string[])) {
+    const gitdir = await fs.readFile(join(entries, entry, 'gitdir'), 'utf8').catch(() => '');
+    if (dirname(gitdir.trim()) === worktree) {
+      await fs.rm(join(entries, entry), { recursive: true, force: true });
+    }
+  }
+}
+
 async function removeRewriteDir(repoPath: string, dir: string): Promise<void> {
-  const removed = await runGit(repoPath, ['worktree', 'remove', '--force', join(dir, 'worktree')]);
+  const worktree = join(dir, 'worktree');
+  const removed = await runGit(repoPath, ['worktree', 'remove', '--force', worktree]);
   await fs.rm(dir, { recursive: true, force: true });
-  if (removed.code !== 0) await runGit(repoPath, ['worktree', 'prune']);
+  if (removed.code !== 0) await unregisterWorktree(repoPath, worktree);
 }
 
 function isRunning(pid: number): boolean {
@@ -234,6 +259,11 @@ export async function removeAbandonedRewrites(repoPath: string): Promise<void> {
     .map(dirname)
     .filter((dir) => basename(dir).startsWith(REWRITE_DIR_PREFIX));
   for (const dir of dirs) {
+    // The owner is written before the worktree is added, so a missing folder has no owner left.
+    if (!existsSync(dir)) {
+      await unregisterWorktree(repoPath, join(dir, 'worktree'));
+      continue;
+    }
     const owner = Number(await fs.readFile(join(dir, OWNER_FILE), 'utf8').catch(() => ''));
     if (!Number.isInteger(owner) || owner <= 0 || isRunning(owner)) continue;
     await removeRewriteDir(repoPath, dir);
@@ -250,10 +280,9 @@ export async function rewriteHistory(
     .split('\n')
     .find((commit) => request.messages.has(commit));
   if (oldest === undefined) return { ok: false, reason: 'commit-failed' };
-  const headBranch = await runGit(repoPath, ['symbolic-ref', '-q', '--short', 'HEAD']);
   const stack = await findStackedBranches(repoPath, {
     oldest,
-    headBranch: headBranch.code === 0 ? headBranch.stdout.toString('utf8').trim() : null,
+    headBranch: await headBranchOf(repoPath),
     defaultBranch: request.defaultBranch,
   });
   const byLength = await Promise.all(

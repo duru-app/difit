@@ -12,7 +12,12 @@ import { tmpdir } from 'os';
 import { delimiter, join } from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { type HistoryRewrite, removeAbandonedRewrites, rewriteHistory } from './history-rewrite';
+import {
+  type HistoryRewrite,
+  readRewriteState,
+  removeAbandonedRewrites,
+  rewriteHistory,
+} from './history-rewrite';
 
 let home: string;
 const savedEnv = { ...process.env };
@@ -531,6 +536,18 @@ describe('rewriteHistory', () => {
       expect(result.branches).toEqual({ moved: ['low', 'up'], left: [] });
     });
 
+    it('counts HEAD’s branch as moved when a tag has the same name', async () => {
+      const { repo, base, first, second } = stackedRepo();
+      git(repo, 'tag', 'feature', second);
+
+      const state = await readRewriteState(repo, second, first, null);
+      const result = expectOk(await reword(repo, base, first));
+
+      expect(state).toMatchObject({ branch: 'feature', leftBranches: [] });
+      expect(git(repo, 'rev-parse', 'refs/heads/feature')).toBe(result.head);
+      expect(result.branches).toEqual({ moved: ['low', 'up'], left: [] });
+    });
+
     it('leaves a branch checked out in another worktree, and says so', async () => {
       const { repo, base, first, third } = stackedRepo();
       const other = mkdtempSync(join(tmpdir(), 'difit-history-rewrite-other-'));
@@ -683,5 +700,24 @@ describe.skipIf(process.platform === 'win32')('a rewrite cut short', { timeout: 
     expect(existsSync(join(live, 'worktree'))).toBe(true);
     expect(existsSync(join(unowned, 'worktree'))).toBe(true);
     expect(worktrees(repo)).toHaveLength(3);
+  });
+
+  it('unregisters at startup a rewrite worktree whose folder is gone, and no other', async () => {
+    const { repo } = createRepo();
+    const temp = scratch();
+    const rewriteDir = mkdtempSync(join(temp, 'difit-history-rewrite-'));
+    writeFileSync(join(rewriteDir, 'owner'), `${spawnSync(process.execPath, ['-e', '']).pid}\n`);
+    git(repo, 'worktree', 'add', '-q', '--detach', join(rewriteDir, 'worktree'), 'HEAD');
+    const users = join(temp, 'users-worktree');
+    git(repo, 'worktree', 'add', '-q', '--detach', users, 'HEAD');
+    rmSync(rewriteDir, { recursive: true, force: true });
+    rmSync(users, { recursive: true, force: true });
+
+    await removeAbandonedRewrites(repo);
+
+    const listed = git(repo, 'worktree', 'list', '--porcelain');
+    expect(listed).not.toContain(rewriteDir);
+    expect(listed).toContain(`worktree ${users}\n`);
+    expect(worktrees(repo)).toHaveLength(2);
   });
 });

@@ -652,6 +652,49 @@ it('warns before rewording on the default branch and rewrites once the warning i
   expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
 });
 
+it('warns before rewording on the default branch checked out through a symbolic name', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q', '-b', 'master']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const tip = commit(repo, 'tip', { 'c.js': '1\n' });
+  git(repo, ['symbolic-ref', 'refs/heads/main', 'refs/heads/master']);
+  git(repo, ['checkout', '-q', 'main']);
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9287,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const reword = (extra: object) =>
+    fetch(api(`/api/reword?base=${base}&target=${tip}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commit: typo, original: 'add typpo', message: 'add typo', ...extra }),
+    });
+
+  const warned = await reword({});
+  expect(warned.status).toBe(409);
+  expect(await warned.json()).toMatchObject({
+    reason: 'needs-confirmation',
+    warnings: ['default-branch'],
+  });
+  expect(git(repo, ['rev-parse', 'master'])).toBe(tip);
+
+  const confirmed = await reword({ acknowledged: ['default-branch'] });
+  expect(confirmed.status).toBe(200);
+  expect(((await confirmed.json()) as { branches: unknown }).branches).toEqual({
+    moved: [],
+    left: [],
+  });
+  expect(git(repo, ['log', '-1', '--format=%s', 'master~1'])).toBe('add typo');
+  expect(git(repo, ['symbolic-ref', 'refs/heads/main'])).toBe('refs/heads/master');
+});
+
 it(
   'moves the branches stacked on the reworded commit, and warns by name about one open elsewhere',
   { timeout: 15_000 },
