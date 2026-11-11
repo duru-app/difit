@@ -1,14 +1,16 @@
 import { execFileSync } from 'child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'net';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { fetch } from 'undici';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
 
 import { startServer } from './server.js';
 import type { DiffResponse, RewriteBlockingThread } from '../types/diff.js';
+import { DiffMode, type WatchEvent } from '../types/watch.js';
 import { bindingForView, createDiffSelection } from '../utils/diffSelection.js';
 
 let home: string;
@@ -2298,3 +2300,195 @@ it.each([
     expect((await stored()).decisions).toEqual(afterFold.decisions);
   },
 );
+
+describe.skipIf(process.platform === 'win32')('a history rewritten in a terminal', () => {
+  function datedStack(subjects = ['A: x to 1', 'B: 1 to 2'], step = 60) {
+    const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+    cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+    let when = 1_700_000_000;
+    const dated = (message: string, files: Record<string, string>) => {
+      const date = `@${when} +0000`;
+      when += step;
+      for (const [path, content] of Object.entries(files)) writeFileSync(join(repo, path), content);
+      git(repo, ['add', '-A']);
+      git(repo, ['commit', '-q', '-m', message], {
+        GIT_AUTHOR_DATE: date,
+        GIT_COMMITTER_DATE: date,
+      });
+      return git(repo, ['rev-parse', 'HEAD']);
+    };
+    git(repo, ['init', '-q', '-b', 'main']);
+    const base = dated('base', { 'a.txt': 'x\n' });
+    git(repo, ['checkout', '-q', '-b', 'feature']);
+    const a = dated(subjects[0] ?? '', { 'a.txt': '1\n' });
+    const b = dated(subjects[1] ?? '', { 'a.txt': '2\n' });
+    const c = dated('C: add c', { 'c.txt': 'c\n' });
+    return { repo, base, a, b, c, dated };
+  }
+
+  // B moves before A and both stop on a conflict. A resolved to what B already holds is left empty,
+  // and git drops it.
+  function swapInTerminal(repo: string, base: string, resolvedA = '2\n') {
+    const editor = join(repo, '..', `${repo.split('/').at(-1)}-todo.sh`);
+    writeFileSync(
+      editor,
+      `#!/bin/sh\n{ sed -n 2p "$1"; sed -n 1p "$1"; sed -n 3p "$1"; } > "$1.new"\nmv "$1.new" "$1"\n`,
+    );
+    chmodSync(editor, 0o755);
+    cleanups.push(() => rmSync(editor, { force: true }));
+    const quietly = (args: string[], env: NodeJS.ProcessEnv = {}) => {
+      try {
+        git(repo, args, { GIT_EDITOR: 'true', ...env });
+      } catch {
+        // Stopped on a conflict, resolved below.
+      }
+    };
+    quietly(['rebase', '-i', base], { GIT_SEQUENCE_EDITOR: editor });
+    writeFileSync(join(repo, 'a.txt'), '2\n');
+    git(repo, ['add', 'a.txt']);
+    quietly(['rebase', '--continue']);
+    writeFileSync(join(repo, 'a.txt'), resolvedA);
+    git(repo, ['add', 'a.txt']);
+    git(repo, ['rebase', '--continue'], { GIT_EDITOR: 'true' });
+    expect(existsSync(join(repo, '.git', 'rebase-merge'))).toBe(false);
+    return git(repo, ['rev-list', '--reverse', `${base}..HEAD`]).split('\n');
+  }
+
+  it('moves the review and its comments to the new commits and names the commit it lost', async () => {
+    const { repo, base, a, b, c } = datedStack();
+    const { port, server } = await startServer({
+      selection: createDiffSelection(base, c),
+      repoPath: repo,
+      preferredPort: 9296,
+      diffMode: DiffMode.SPECIFIC,
+      keepAlive: true,
+    });
+    cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+    const api = (path: string) => `http://localhost:${port}${path}`;
+    const post = (path: string, body: unknown) =>
+      fetch(api(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const socket = new WebSocket(`ws://localhost:${port}/api/live`);
+    cleanups.push(() => socket.terminate());
+    const events: WatchEvent[] = [];
+    socket.on('message', (message: Buffer) => {
+      events.push(JSON.parse(message.toString()) as WatchEvent);
+    });
+    await new Promise((resolve) => socket.once('open', resolve));
+
+    const query = `?base=${base}&target=${c}`;
+    const at = '2026-11-12T00:00:00Z';
+    const thread = (id: string, sha: string, parent: string) => ({
+      id,
+      position: { scope: 'commit' },
+      fixupTarget: sha,
+      view: { baseCommitish: parent, targetCommitish: sha },
+      createdAt: at,
+      updatedAt: at,
+      messages: [{ id, body: id, author: 'User', createdAt: at, updatedAt: at }],
+    });
+    await post(`/api/comments${query}`, {
+      threads: [thread('on-a', a, base), thread('on-b', b, a)],
+    });
+
+    const [newB, newC] = swapInTerminal(repo, base) as [string, string];
+    await vi.waitFor(
+      async () => {
+        const { review } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+        expect(review!.commits.map(({ sha }) => sha)).toEqual([newB, newC]);
+      },
+      { timeout: 5000, interval: 100 },
+    );
+
+    type Stored = { version: number; threads: Array<{ id: string; fixupTarget?: string }> };
+    const stored = async () =>
+      (await (await fetch(api(`/api/comments-json?base=${base}&target=${newC}`))).json()) as Stored;
+    const followed = await stored();
+    expect(followed.threads.map(({ id, fixupTarget }) => [id, fixupTarget])).toEqual([
+      ['on-a', a],
+      ['on-b', newB],
+    ]);
+    await vi.waitFor(() =>
+      expect(events.filter(({ type }) => type === 'historyRewritten')).toEqual([
+        expect.objectContaining({
+          terminal: { left: [{ sha: a, shortSha: a.slice(0, 7), subject: 'A: x to 1' }] },
+        }),
+      ]),
+    );
+
+    const repeated = await post(`/api/history-rewritten${query}`, {
+      rewritten: { [b]: newB, [c]: newC },
+    });
+    expect(repeated.status).toBe(200);
+    expect(await stored()).toEqual(followed);
+  });
+
+  async function startTerminalReview(
+    repo: string,
+    base: string,
+    target: string,
+    preferredPort: number,
+  ) {
+    const { port, server } = await startServer({
+      selection: createDiffSelection(base, target),
+      repoPath: repo,
+      preferredPort,
+      diffMode: DiffMode.SPECIFIC,
+      keepAlive: true,
+    });
+    cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+    const api = (path: string) => `http://localhost:${port}${path}`;
+    const post = (path: string, body: unknown) =>
+      fetch(api(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const reviewed = async () =>
+      ((await (await fetch(api('/api/diff'))).json()) as DiffResponse).review!.commits.map(
+        ({ sha }) => sha,
+      );
+    return { api, post, reviewed };
+  }
+
+  it('takes a later report for commits it could not tell apart', async () => {
+    const { repo, base, a, b, c } = datedStack(['wip', 'wip'], 0);
+    const { api, post, reviewed } = await startTerminalReview(repo, base, c, 9297);
+    const query = `?base=${base}&target=${c}`;
+    const at = '2026-11-12T00:00:00Z';
+    await post(`/api/comments${query}`, {
+      threads: [
+        {
+          id: 'on-a',
+          position: { scope: 'commit' },
+          fixupTarget: a,
+          view: { baseCommitish: base, targetCommitish: a },
+          createdAt: at,
+          updatedAt: at,
+          messages: [{ id: 'on-a', body: 'x', author: 'User', createdAt: at, updatedAt: at }],
+        },
+      ],
+    });
+
+    const [newB, newA, newC] = swapInTerminal(repo, base, '2 and 1\n') as [string, string, string];
+    await vi.waitFor(async () => expect(await reviewed()).toEqual([newB, newA, newC]), {
+      timeout: 5000,
+      interval: 100,
+    });
+    const stored = (await (
+      await fetch(api(`/api/comments-json?base=${base}&target=${newC}`))
+    ).json()) as { threads: Array<{ fixupTarget?: string }> };
+    expect(stored.threads[0]?.fixupTarget).toBe(a);
+
+    const followed = await post(`/api/history-rewritten${query}`, {
+      rewritten: { [a]: newA, [b]: newB, [c]: newC },
+    });
+    expect(await followed.json()).toMatchObject({
+      success: true,
+      threads: [{ id: 'on-a', fixupTarget: newA }],
+    });
+  });
+});

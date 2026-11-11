@@ -212,6 +212,8 @@ When the user reorders commits or rewords one from the commit list and the rebas
      -d '{"rewritten":{"<old sha>":"<new sha>"}}'
    ```
 
+   difit follows the rebase on its own once HEAD moves, pairing commits by author and author date, so this report usually changes nothing. Send it anyway: it fills in commits difit could not pair, such as several made in the same second.
+
    It takes full SHAs only. It answers 409 `stale-view` and moves nothing when a new SHA is not in HEAD's history, when a commit the review lists is not on HEAD's first-parent line under its new SHA or its old one, or when a commit from above the review now stands inside it. Correct the history and report again.
 
 6. Reply on the thread with what you did.

@@ -11,10 +11,12 @@ import {
 } from 'react';
 
 import type { ReviewCommit, ReviewScope, ReviewView, ReviewViewAction } from '../../types/diff';
+import type { FollowedTerminalRewrite } from '../../types/watch';
 import { layoutCommitGraph } from '../../utils/commitGraph';
 import { isSameCommit, selectReviewView } from '../../utils/diffSelection';
 import { useCopyCommitHash } from '../hooks/useCopyCommitHash';
 import { useGuardedReword } from '../hooks/useGuardedReword';
+import { terminalRewriteNotice } from '../utils/directEdit';
 
 import { CommentCount } from './CommentCount';
 import { CommentForm } from './CommentForm';
@@ -35,6 +37,7 @@ import {
   useCommitReorder,
 } from './CommitReorder';
 import { MovedBranchesNotice } from './MovedBranchesNotice';
+import { NoticeBar } from './NoticeBar';
 
 interface CommitListProps {
   review: Pick<ReviewScope, 'requested' | 'commits'>;
@@ -52,6 +55,8 @@ interface CommitListProps {
   height?: number | null | undefined;
   onResize?: ((height: number) => void) | undefined;
   loadMessage?: LoadCommitMessage | undefined;
+  terminalRewrite?: FollowedTerminalRewrite | null | undefined;
+  onDismissTerminalRewrite?: (() => void) | undefined;
 }
 
 interface Drag {
@@ -176,6 +181,8 @@ export function CommitList({
   height,
   onResize,
   loadMessage,
+  terminalRewrite,
+  onDismissTerminalRewrite,
 }: CommitListProps) {
   const { commits } = review;
   const isOnlyCommit = commits.length === 1;
@@ -447,6 +454,12 @@ export function CommitList({
           amendedMessage={amendedMessages?.get(hoverCard.place.sha)}
           onKeep={hoverCard.keep}
           onLeave={hoverCard.leave}
+        />
+      )}
+      {terminalRewrite && onDismissTerminalRewrite && (
+        <NoticeBar
+          text={terminalRewriteNotice(terminalRewrite)}
+          onDismiss={onDismissTerminalRewrite}
         />
       )}
       <MovedBranchesNotice branches={movedBranches} onDismiss={dismissMovedBranches} />
