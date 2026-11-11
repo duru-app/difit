@@ -9,6 +9,8 @@ interface FileWatcherConfig {
   diffMode: DiffMode;
   debounceMs: number;
   onCacheInvalidate?: () => void;
+  // Settles before the tabs hear that HEAD moved.
+  onHeadMoved?: () => Promise<void>;
 }
 
 interface ModeWatchConfig {
@@ -66,8 +68,9 @@ export class FileWatcherService {
     watchPath: string,
     debounceMs = 300,
     onCacheInvalidate?: () => void,
+    onHeadMoved?: () => Promise<void>,
   ): Promise<void> {
-    this.config = { watchPath, diffMode, debounceMs, onCacheInvalidate };
+    this.config = { watchPath, diffMode, debounceMs, onCacheInvalidate, onHeadMoved };
 
     // Stop existing watchers
     await this.stop();
@@ -219,7 +222,9 @@ export class FileWatcherService {
         this.broadcastChange();
       }
       if (pendingHeadMove) {
-        this.broadcast({ type: 'headMoved', timestamp: new Date().toISOString() });
+        void (this.config?.onHeadMoved?.() ?? Promise.resolve())
+          .catch((error: unknown) => console.error('Error following a move of HEAD:', error))
+          .then(() => this.broadcast({ type: 'headMoved', timestamp: new Date().toISOString() }));
       }
     }, debounceMs);
   }

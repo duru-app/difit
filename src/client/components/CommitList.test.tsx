@@ -762,6 +762,43 @@ describe('CommitList', () => {
     });
   });
 
+  describe('a history rewritten in a terminal', () => {
+    it('says the review followed it and names the commits it lost, until dismissed', () => {
+      const onDismiss = vi.fn();
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          terminalRewrite={{ left: [{ sha: 'a'.repeat(40), shortSha: 'aaaaaaa', subject: 'A' }] }}
+          onDismissTerminalRewrite={onDismiss}
+        />,
+      );
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        '터미널에서 다시 쓴 이력을 따라 리뷰를 옮겼습니다. 다음 커밋은 새 이력에서 찾지 못해 지적을 옛 커밋에 두었습니다: aaaaaaa A',
+      );
+      fireEvent.click(screen.getByRole('button', { name: '알림 닫기' }));
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it('says only that it followed when every commit has its partner', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          terminalRewrite={{ left: [] }}
+          onDismissTerminalRewrite={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        /^터미널에서 다시 쓴 이력을 따라 리뷰를 옮겼습니다\.$/,
+      );
+    });
+  });
+
   describe('copying the hash', () => {
     let writeText: ReturnType<typeof vi.fn>;
 

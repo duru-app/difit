@@ -1,3 +1,5 @@
+import type { ReviewCommit } from './diff';
+
 export enum DiffMode {
   DEFAULT = 'default', // a target with no commit, such as stdin
   WORKING = 'working', // staged vs working
@@ -43,9 +45,16 @@ interface HeadMovedWatchEvent {
   timestamp: string;
 }
 
-interface HistoryRewrittenWatchEvent {
+// The review's commits that nothing on the new line stands for; their comments stay on them.
+export interface FollowedTerminalRewrite {
+  left: Array<Pick<ReviewCommit, 'sha' | 'shortSha' | 'subject'>>;
+}
+
+export interface HistoryRewrittenWatchEvent {
   type: 'historyRewritten';
   timestamp: string;
+  // Set when the history was rewritten outside difit, as by `git rebase -i` in a terminal.
+  terminal?: FollowedTerminalRewrite;
 }
 
 // `no-java`: the commit has no Java source. `no-build-file`: it has no build.gradle,

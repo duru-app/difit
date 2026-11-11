@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DiffMode,
   type ClientWatchState,
+  type HistoryRewrittenWatchEvent,
   type SymbolIndexState,
   type WatchEvent,
 } from '../../types/watch.js';
@@ -21,7 +22,7 @@ export function useFileWatch(
   onCommentsChanged?: () => Promise<void>,
   onSymbolIndexChanged?: (commit: string, state: SymbolIndexState) => void,
   onHeadMoved?: () => void,
-  onHistoryRewritten?: () => Promise<void>,
+  onHistoryRewritten?: (event: HistoryRewrittenWatchEvent) => Promise<void>,
 ): FileWatchHook {
   const socketRef = useRef<WebSocket | null>(null);
   // Read through a ref so a new callback identity never closes and reopens the connection,
@@ -114,7 +115,7 @@ export function useFileWatch(
               break;
 
             case 'historyRewritten':
-              void onHistoryRewrittenRef.current?.();
+              void onHistoryRewrittenRef.current?.(data);
               break;
 
             case 'symbolIndexChanged':

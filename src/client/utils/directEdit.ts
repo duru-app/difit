@@ -8,6 +8,7 @@ import type {
   RewriteConflict,
   RewriteWarning,
 } from '../../types/diff';
+import type { FollowedTerminalRewrite } from '../../types/watch';
 
 export interface EditRange {
   start: number;
@@ -216,6 +217,13 @@ export function rewordFailureMessage(
 
 export function movedBranchesNotice(branches: readonly string[]): string {
   return `브랜치 ${branches.join(', ')}도 함께 옮겼습니다.`;
+}
+
+export function terminalRewriteNotice({ left }: FollowedTerminalRewrite): string {
+  const followed = '터미널에서 다시 쓴 이력을 따라 리뷰를 옮겼습니다.';
+  if (left.length === 0) return followed;
+  const commits = left.map(({ shortSha, subject }) => `${shortSha} ${subject}`).join(', ');
+  return `${followed} 다음 커밋은 새 이력에서 찾지 못해 지적을 옛 커밋에 두었습니다: ${commits}`;
 }
 
 export function leftBranchesNotice(branches: readonly string[]): string {

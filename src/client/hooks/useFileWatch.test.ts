@@ -272,6 +272,22 @@ describe('useFileWatch', () => {
       expect(second).toHaveBeenCalledTimes(1);
     });
 
+    it('passes on what a rewrite made in a terminal left behind', () => {
+      const onHistoryRewritten = vi.fn(async () => {});
+      renderHook(() =>
+        useFileWatch(undefined, undefined, undefined, undefined, onHistoryRewritten),
+      );
+      const terminal = { left: [{ sha: 'a'.repeat(40), shortSha: 'aaaaaaa', subject: 'A' }] };
+
+      act(() => {
+        MockWebSocket.instances[0]!.dispatchMessage(
+          JSON.stringify({ type: 'historyRewritten', timestamp: 'now', terminal }),
+        );
+      });
+
+      expect(onHistoryRewritten).toHaveBeenCalledWith(expect.objectContaining({ terminal }));
+    });
+
     it('passes on a change of a commit index without reconnecting', () => {
       const onSymbolIndexChanged = vi.fn();
       renderHook(() => useFileWatch(undefined, undefined, onSymbolIndexChanged));
