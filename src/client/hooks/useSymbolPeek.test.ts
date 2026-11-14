@@ -77,6 +77,38 @@ describe('useSymbolPeek', () => {
     expect(result.current.stack).toEqual([{ name: 'helper', ref: 'bbb', from: 'src/a.ts' }]);
   });
 
+  it('goes to the only declaration instead of opening the popup when it can', async () => {
+    const jumpToOnlyDeclaration = vi.fn(() => Promise.resolve(true));
+    const { result } = renderHook(() =>
+      useSymbolPeek({ base: 'aaa', target: 'bbb', enabled: true, jumpToOnlyDeclaration }),
+    );
+
+    click(word, { ctrlKey: true });
+    await act(async () => {});
+
+    expect(jumpToOnlyDeclaration).toHaveBeenCalledWith({
+      name: 'helper',
+      ref: 'bbb',
+      from: 'src/a.ts',
+    });
+    expect(result.current.stack).toEqual([]);
+  });
+
+  it('opens the popup when it cannot go to one declaration', async () => {
+    const outcomes = [() => Promise.resolve(false), () => Promise.reject(new Error('offline'))];
+    for (const jumpToOnlyDeclaration of outcomes) {
+      const { result, unmount } = renderHook(() =>
+        useSymbolPeek({ base: 'aaa', target: 'bbb', enabled: true, jumpToOnlyDeclaration }),
+      );
+
+      click(word, { ctrlKey: true });
+      await act(async () => {});
+
+      expect(result.current.stack).toEqual([{ name: 'helper', ref: 'bbb', from: 'src/a.ts' }]);
+      unmount();
+    }
+  });
+
   it('leaves Shift clicks to line selection', () => {
     const { result } = renderHook(() =>
       useSymbolPeek({ base: 'aaa', target: 'bbb', enabled: true }),

@@ -148,7 +148,12 @@ import { useViewport } from './hooks/useViewport';
 import { storageService } from './services/StorageService';
 import { fetchClientSettings, saveClientSettings } from './services/userSettings';
 import { hasMultipleCommentAuthors } from './utils/commentAuthors';
-import { diffPlaceOfMatch } from './utils/symbolPeek';
+import {
+  diffPlaceOfPath,
+  fetchSymbol,
+  onlyDeclarationElsewhere,
+  type SymbolPeekRequest,
+} from './utils/symbolPeek';
 import { copyTextToClipboard } from './utils/clipboard';
 import { createDiffPathResolver, type DiffLineTarget, linesOf } from './utils/diffLineLinks';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
@@ -994,10 +999,18 @@ function App() {
     diffIdentity: diffDataVersion,
   });
 
+  const jumpToOnlyDeclarationRef = useRef<(request: SymbolPeekRequest) => Promise<boolean>>(() =>
+    Promise.resolve(false),
+  );
+  const jumpToOnlyDeclaration = useCallback(
+    (request: SymbolPeekRequest) => jumpToOnlyDeclarationRef.current(request),
+    [],
+  );
   const symbolPeek = useSymbolPeek({
     base: diffData?.baseCommitish,
     target: diffData?.targetCommitish,
     enabled: diffData?.symbolSearchAvailable === true,
+    jumpToOnlyDeclaration,
   });
 
   const getMergedChunksRef = useRef(getMergedChunks);
@@ -1808,9 +1821,9 @@ function App() {
     restore: (entry) => restoreEntryRef.current(entry),
   });
   const jumpWithinReview = useCallback(
-    (place: ReviewPlace) => {
+    (place: ReviewPlace, from?: ReviewPlace) => {
       pendingPlaceRef.current = null;
-      recordJump({ selection: selectedRevisionRef.current, place });
+      recordJump({ selection: selectedRevisionRef.current, place }, from);
     },
     [recordJump],
   );
@@ -2557,14 +2570,22 @@ function App() {
     side: DiffSide;
   } | null>(null);
   const [lineLinkRequest, setLineLinkRequest] = useState(0);
-  const openDiffLine = (target: DiffLineTarget, file: DiffFile, side: DiffSide) => {
-    jumpWithinReview({
-      kind: 'line',
-      file: file.path,
-      line: target.line,
-      side,
-      cursor: true,
-    });
+  const openDiffLine = (
+    target: DiffLineTarget,
+    file: DiffFile,
+    side: DiffSide,
+    from?: ReviewPlace,
+  ) => {
+    jumpWithinReview(
+      {
+        kind: 'line',
+        file: file.path,
+        line: target.line,
+        side,
+        cursor: true,
+      },
+      from,
+    );
     const pending = { target, side };
     pendingLineLinkRef.current = pending;
     setCollapsedFiles((prev) => {
@@ -2590,17 +2611,39 @@ function App() {
     const file = diffData?.files.find(({ path }) => path === target.file);
     if (file) openDiffLine(target, file, file.status === 'deleted' ? 'old' : 'new');
   };
-  const pickPeekInDiff = (match: SymbolMatch, ref: string): boolean => {
-    const place = diffPlaceOfMatch(
-      match,
+  const diffPlaceOf = (path: string, ref: string) =>
+    diffPlaceOfPath(
+      path,
       ref,
       { base: diffData?.baseCommitish, target: diffData?.targetCommitish },
       diffData?.files ?? [],
     );
+  const clickedPlaceOf = (request: SymbolPeekRequest | undefined): ReviewPlace | undefined => {
+    if (!request?.from || request.line === undefined) return undefined;
+    const place = diffPlaceOf(request.from, request.ref);
+    return place
+      ? { kind: 'line', file: place.file, line: request.line, side: place.side, cursor: true }
+      : undefined;
+  };
+  const openMatchInDiff = (match: SymbolMatch, ref: string, from?: ReviewPlace): boolean => {
+    const place = diffPlaceOf(match.path, ref);
     const file = diffData?.files.find(({ path }) => path === place?.file);
     if (!place || !file) return false;
-    openDiffLine({ file: file.path, line: match.line, endLine: match.line }, file, place.side);
+    openDiffLine(
+      { file: file.path, line: match.line, endLine: match.line },
+      file,
+      place.side,
+      from,
+    );
     return true;
+  };
+  const pickPeekInDiff = (match: SymbolMatch, ref: string): boolean =>
+    openMatchInDiff(match, ref, clickedPlaceOf(symbolPeek.stack[0]));
+  jumpToOnlyDeclarationRef.current = async (request) => {
+    const declaration = onlyDeclarationElsewhere(request, await fetchSymbol(request));
+    return (
+      declaration !== null && openMatchInDiff(declaration, request.ref, clickedPlaceOf(request))
+    );
   };
   const openDiffLineLinkRef = useRef(openDiffLineLink);
   openDiffLineLinkRef.current = openDiffLineLink;

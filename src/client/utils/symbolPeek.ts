@@ -159,21 +159,32 @@ export interface DiffPlace {
 
 // The diff file and side a match sits on, when it was found in the very revision the diff
 // shows on that side; null for any other revision or a file the diff does not touch.
-export function diffPlaceOfMatch(
-  match: SymbolMatch,
+export function diffPlaceOfPath(
+  filePath: string,
   ref: string,
   refs: ReviewRefs,
   files: readonly DiffFile[],
 ): DiffPlace | null {
   if (ref === refs.target) {
-    const file = files.find(({ path, status }) => path === match.path && status !== 'deleted');
+    const file = files.find(({ path, status }) => path === filePath && status !== 'deleted');
     return file ? { file: file.path, side: 'new' } : null;
   }
   if (ref === refs.base) {
     const file = files.find(
-      ({ path, oldPath, status }) => (oldPath ?? path) === match.path && status !== 'added',
+      ({ path, oldPath, status }) => (oldPath ?? path) === filePath && status !== 'added',
     );
     return file ? { file: file.path, side: 'old' } : null;
   }
   return null;
+}
+
+export function onlyDeclarationElsewhere(
+  request: SymbolPeekRequest,
+  result: SymbolSearchResponse,
+): SymbolMatch | null {
+  if (result.library !== undefined) return null;
+  const [only, ...others] = result.definitions;
+  if (!only || others.length > 0) return null;
+  if (only.path === request.from && only.line === request.line) return null;
+  return only;
 }
