@@ -20,6 +20,7 @@ import {
   createDiffSelection,
   diffSelectionsEqual,
   normalizeBaseMode,
+  shortRef,
 } from '../../utils/diffSelection';
 
 interface DiffQuickMenuProps {
@@ -99,7 +100,7 @@ const resolveDisplayLabel = (
     if (resolvedCommit) return getCommitLabel(resolvedCommit, false);
   }
 
-  return value;
+  return shortRef(value);
 };
 
 export function DiffQuickMenu({

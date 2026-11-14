@@ -19,6 +19,7 @@ import { ChevronDown, Search } from 'lucide-react';
 import { useRef, useState, type KeyboardEvent } from 'react';
 
 import { type RevisionsResponse } from '../../types/diff';
+import { shortRef } from '../../utils/diffSelection';
 
 const RESERVED_SPECIAL_OPTION_VALUES = new Set(['merge-base']);
 const EMPTY_DISABLED_VALUES: string[] = [];
@@ -104,7 +105,7 @@ export function RevisionSelector({
     const commit = options.commits.find((c) => c.shortHash === value || c.hash === value);
     if (commit) return `${commit.shortHash} - ${commit.message}`;
 
-    return value || 'Select...';
+    return shortRef(value) || 'Select...';
   };
 
   const handleSelect = (newValue: string) => {

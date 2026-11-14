@@ -78,10 +78,6 @@ export function symbolRequestFromTarget(
   return from ? { name, ref, from, ...positionOf(word, name, host) } : { name, ref };
 }
 
-export function shortRef(ref: string): string {
-  return /^[0-9a-f]{40}\^?$/i.test(ref) ? ref.slice(0, 7) + ref.slice(40) : ref;
-}
-
 export async function fetchSymbol(
   request: SymbolPeekRequest,
   signal?: AbortSignal,
