@@ -1,4 +1,13 @@
-import { Check, ChevronDown, ChevronRight, Copy, MessageSquarePlus, Pencil, X } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  MessageSquare,
+  Pencil,
+  Plus,
+  X,
+} from 'lucide-react';
 import {
   Fragment,
   useEffect,
@@ -70,6 +79,8 @@ const CURRENT_COMMIT_CLASS = `${CURRENT_CLASS} shadow-[inset_2px_0_0_var(--color
 const PREVIEW_CLASS = 'outline-1 outline-dashed -outline-offset-1 outline-github-text-secondary';
 const ROW_ACTIONS_HIDDEN_CLASS =
   'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:pointer-events-auto';
+const ROW_PLUS_HIDDEN_CLASS =
+  'opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100';
 const ROW_ACTIONS_OFF_ON_TOUCH_CLASS = '[@media(hover:none)]:hidden';
 const MERGED_CLASS = 'flex items-center gap-2 px-4 text-sm text-github-text-muted';
 const CURRENT_MERGED_CLASS =
@@ -487,7 +498,14 @@ export function CommitList({
                 }
                 className={`shrink-0 flex items-center gap-1 px-2 hover:bg-github-bg-primary ${openCount > 0 ? 'text-sm font-medium text-github-warning fixup-review:text-github-text-secondary' : 'text-github-text-muted hover:text-github-text-primary'}`}
               >
-                <MessageSquarePlus size={openCount > 0 ? 14 : 12} />
+                <span className="relative flex items-center justify-center">
+                  <MessageSquare size={openCount > 0 ? 14 : 12} />
+                  <Plus
+                    size={8}
+                    strokeWidth={3}
+                    className={`absolute ${isActionPinned ? '' : ROW_PLUS_HIDDEN_CLASS}`}
+                  />
+                </span>
                 {openCount > 0 && openCount}
               </button>
             );

@@ -907,6 +907,29 @@ describe('CommitList', () => {
       expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
     });
 
+    it('shows the plus inside the comment bubble only while the row is hovered or focused', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      const plus = comment.querySelector('.lucide-plus');
+      expect(plus).not.toBeNull();
+      const classes = plus!.getAttribute('class')!.split(' ');
+      expect(classes).toContain('opacity-0');
+      expect(classes).toContain('group-hover:opacity-100');
+      expect(classes).toContain('group-has-[:focus-visible]:opacity-100');
+      expect(comment.querySelector('.lucide-message-square-plus')).toBeNull();
+    });
+
     it('keeps them in line in the phone drawer of a device with hover', () => {
       renderWithButtons({ inDrawer: true });
 
