@@ -503,7 +503,7 @@ export function CommitList({
                   <Plus
                     size={8}
                     strokeWidth={3}
-                    className={`absolute ${isActionPinned ? '' : ROW_PLUS_HIDDEN_CLASS}`}
+                    className={`absolute ${isActionPinned || inDrawer ? '' : ROW_PLUS_HIDDEN_CLASS}`}
                   />
                 </span>
                 {openCount > 0 && openCount}

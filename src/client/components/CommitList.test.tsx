@@ -930,6 +930,26 @@ describe('CommitList', () => {
       expect(comment.querySelector('.lucide-message-square-plus')).toBeNull();
     });
 
+    it('always shows the plus in the drawer, like the other row buttons there', () => {
+      render(
+        <CommitList
+          review={REVIEW}
+          shown={{ kind: 'all' }}
+          onSelect={vi.fn()}
+          inDrawer
+          onAddCommitComment={vi.fn(async () => {})}
+          openCounts={new Map([[COMMITS[1]!.sha, 2]])}
+        />,
+      );
+
+      const comment = within(row(/2222222/).closest('li')!).getByRole('button', {
+        name: '커밋에 지적 달기',
+      });
+      const plus = comment.querySelector('.lucide-plus');
+      expect(plus).not.toBeNull();
+      expect(plus!.getAttribute('class')!.split(' ')).not.toContain('opacity-0');
+    });
+
     it('keeps them in line in the phone drawer of a device with hover', () => {
       renderWithButtons({ inDrawer: true });
 
