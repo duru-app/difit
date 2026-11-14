@@ -1749,9 +1749,10 @@ function App() {
     restore: (entry) => restoreEntryRef.current(entry),
   });
   const jumpWithinReview = useCallback(
-    (place: ReviewPlace) => {
+    (place: ReviewPlace, from?: ReviewPlace) => {
       pendingPlaceRef.current = null;
-      recordJump({ selection: selectedRevisionRef.current, place });
+      const selection = selectedRevisionRef.current;
+      recordJump({ selection, place }, from && { selection, place: from });
     },
     [recordJump],
   );
@@ -2407,6 +2408,11 @@ function App() {
     if (place.kind === 'thread') {
       const thread = shownThreads.find(({ id }) => id === place.threadId);
       if (!thread) return;
+      const cardId = `comment-thread-${thread.id}`;
+      if (place.top !== undefined && 'file' in thread && document.getElementById(cardId)) {
+        scrollFileIntoDiffContainer(thread.file, cardId, undefined, place.top);
+        return;
+      }
       setPickedThreadId(thread.id);
       jumpToThread(
         thread,
@@ -2478,17 +2484,22 @@ function App() {
     side: DiffSide;
   } | null>(null);
   const [lineLinkRequest, setLineLinkRequest] = useState(0);
-  const openDiffLineLink = (target: DiffLineTarget) => {
+  const openDiffLineLink = (target: DiffLineTarget, from: HTMLElement) => {
     const file = diffData?.files.find(({ path }) => path === target.file);
     if (!file) return;
     const side: DiffSide = file.status === 'deleted' ? 'old' : 'new';
-    jumpWithinReview({
-      kind: 'line',
-      file: file.path,
-      line: target.line,
-      side,
-      cursor: true,
-    });
+    const card = from.closest<HTMLElement>('[id^="comment-thread-"]');
+    const container = diffScrollContainerRef.current;
+    jumpWithinReview(
+      { kind: 'line', file: file.path, line: target.line, side, cursor: true },
+      card && container
+        ? {
+            kind: 'thread',
+            threadId: card.id.slice('comment-thread-'.length),
+            top: card.getBoundingClientRect().top - container.getBoundingClientRect().top,
+          }
+        : undefined,
+    );
     const pending = { target, side };
     pendingLineLinkRef.current = pending;
     setCollapsedFiles((prev) => {
@@ -2518,7 +2529,7 @@ function App() {
   const diffLineLinks = useMemo<DiffLineLinks>(
     () => ({
       resolve: resolveDiffPath,
-      open: (target) => openDiffLineLinkRef.current(target),
+      open: (target, from) => openDiffLineLinkRef.current(target, from),
     }),
     [resolveDiffPath],
   );

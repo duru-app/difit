@@ -4,7 +4,8 @@ import type { DiffLineTarget, DiffPathResolver } from '../utils/diffLineLinks';
 
 export interface DiffLineLinks {
   resolve: DiffPathResolver;
-  open: (target: DiffLineTarget) => void;
+  // from is the link the reader pressed.
+  open: (target: DiffLineTarget, from: HTMLElement) => void;
 }
 
 const DiffLineLinkContext = createContext<DiffLineLinks | null>(null);
