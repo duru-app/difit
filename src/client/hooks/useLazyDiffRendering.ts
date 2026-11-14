@@ -33,8 +33,14 @@ interface UseLazyDiffRenderingReturn {
   registerLazyFileContainer: (filePath: string, node: HTMLDivElement | null) => void;
   // With elementId, scrolls to that element, or to a reviewed file's header while it is not drawn.
   // When the element above it named by alsoShowId fits on screen together with it, that one lands
-  // at the top instead, with the element below it.
-  scrollFileIntoDiffContainer: (filePath: string, elementId?: string, alsoShowId?: string) => void;
+  // at the top instead, with the element below it. With landAt, the element's top lands that far
+  // below the container's top instead.
+  scrollFileIntoDiffContainer: (
+    filePath: string,
+    elementId?: string,
+    alsoShowId?: string,
+    landAt?: number,
+  ) => void;
   isFileScrolledPastContainerTop: (filePath: string) => boolean;
 }
 
@@ -277,7 +283,7 @@ export function useLazyDiffRendering({
   );
 
   const scrollFileIntoDiffContainer = useCallback(
-    (filePath: string, elementId?: string, alsoShowId?: string) => {
+    (filePath: string, elementId?: string, alsoShowId?: string, landAt?: number) => {
       const files = diffData?.files ?? [];
       const targetIndex = files.findIndex((file) => file.path === filePath);
       // An element outside the reviewed files sits below all of them.
@@ -320,8 +326,12 @@ export function useLazyDiffRendering({
         const containerRect = scrollContainer.getBoundingClientRect();
         const targetRect = target.getBoundingClientRect();
         const cover = stickyHeaderCover(target);
-        let offset = targetRect.top - containerRect.top - cover;
-        const alsoShown = element && alsoShowId ? document.getElementById(alsoShowId) : null;
+        const landing = element ? landAt : undefined;
+        let offset = targetRect.top - containerRect.top - (landing ?? cover);
+        const alsoShown =
+          element && alsoShowId && landing === undefined
+            ? document.getElementById(alsoShowId)
+            : null;
         if (alsoShown) {
           const alsoShownTop = alsoShown.getBoundingClientRect().top - containerRect.top;
           const targetBottom = targetRect.bottom - containerRect.top;

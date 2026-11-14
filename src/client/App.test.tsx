@@ -1619,6 +1619,7 @@ describe(
     const HEADER_HEIGHT = 40;
     const LINE_HEIGHT = 20;
     let scrolled = 0;
+    let fileCardHeights: Record<string, number> = {};
     const box = (top: number, height: number) =>
       ({ top, bottom: top + height, left: 0, right: 0, width: 0, height }) as DOMRect;
 
@@ -1663,6 +1664,7 @@ describe(
       mockDecisions = [];
       scrolled = 0;
       filesByPath = {};
+      fileCardHeights = {};
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
         function (this: HTMLElement) {
           if (this.tagName === 'MAIN') return box(0, 800);
@@ -1672,12 +1674,14 @@ describe(
           const top = fileTop - scrolled;
           if (this === section) return box(top, 2000);
           if (this.closest('[data-file-header]')) return box(Math.max(0, top), HEADER_HEIGHT);
+          const cardHeight = fileCardHeights[section.dataset.filePath ?? ''] ?? 0;
+          if (this.closest('[id^="file-comment-"]')) return box(top + HEADER_HEIGHT, cardHeight);
           const row = this.closest('[data-diff-line-row="true"]');
           if (!row || !/^file-\d+-chunk-/.test(this.id)) return box(top + 1000, LINE_HEIGHT);
           const rowIndex = [...section.querySelectorAll('[data-diff-line-row="true"]')].indexOf(
             row,
           );
-          return box(top + HEADER_HEIGHT + rowIndex * LINE_HEIGHT, LINE_HEIGHT);
+          return box(top + HEADER_HEIGHT + cardHeight + rowIndex * LINE_HEIGHT, LINE_HEIGHT);
         },
       );
       Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
@@ -1911,6 +1915,48 @@ describe(
 
         back();
         await waitFor(() => expect(fileShown()).toBe('a.ts'));
+      });
+
+      it('goes back to where the card of a comment on the whole file was, not to the line below it', async () => {
+        fileCardHeights = { 'b.ts': 300 };
+        mockComments = [
+          {
+            ...createMockThread({
+              id: 'f1',
+              filePath: 'b.ts',
+              line: 1,
+              body: 'Same at `c.ts:20` and `c.ts:25`.',
+            }),
+            position: { side: 'new', scope: 'file' },
+            codeSnapshot: { content: '' },
+          },
+        ];
+        renderApp();
+        await screen.findAllByTitle('c.ts');
+        await scrollTo(3000);
+
+        fireEvent.click(await waitFor(() => lineLink('c.ts:20')));
+        await waitFor(() => expect(cursorRow()).toHaveTextContent('line 20'));
+        await waitFor(() => expect(fileShown()).toBe('c.ts'));
+
+        back();
+        await waitForScroll(3000);
+      });
+
+      it('goes back to where the card of a comment on a line was once its line ran off the top', async () => {
+        mockComments = [
+          createMockThread({ id: 'n1', filePath: 'b.ts', line: 3, body: 'Same at `c.ts:20`.' }),
+        ];
+        renderApp();
+        await screen.findAllByTitle('c.ts');
+        await scrollTo(3900);
+
+        fireEvent.click(await waitFor(() => lineLink('c.ts:20')));
+        await waitFor(() => expect(cursorRow()).toHaveTextContent('line 20'));
+        await waitFor(() => expect(fileShown()).toBe('c.ts'));
+
+        back();
+        await waitForScroll(3900);
       });
 
       it('unfolds a folded file and opens the hidden lines around the line', async () => {

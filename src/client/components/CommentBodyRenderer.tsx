@@ -109,7 +109,7 @@ function DiffLineLinkButton({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        links.open(target);
+        links.open(target, event.currentTarget);
       }}
       className="cursor-pointer text-sky-400 hover:text-sky-300 underline underline-offset-4"
     >
