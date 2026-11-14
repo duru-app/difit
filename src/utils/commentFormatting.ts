@@ -191,28 +191,39 @@ const wasEdited = ({ createdAt, updatedAt }: DiffCommentMessage): boolean =>
 
 interface PromptOptions {
   showEdits?: boolean;
-  // Says so under the location when the thread's code is no longer where it was commented.
-  showOutdated?: boolean;
+  // Says where the thread was made when it moved, and why a stale thread kept its lines.
+  showPlacement?: boolean;
+}
+
+function placementLines(thread: ShownThread): string[] {
+  if (!('file' in thread)) return [];
+  if (thread.isOutdated) {
+    return [
+      thread.outdatedReason === 'ambiguous'
+        ? '바뀐 줄: 지적을 단 코드가 지금 diff 의 여러 곳에 있다. 위 줄 번호는 지적을 단 때의 것이다.'
+        : '바뀐 줄: 지적을 단 코드가 지금 diff 에 없다. 위 줄 번호는 지적을 단 때의 것이다.',
+    ];
+  }
+  if (thread.storedLine === undefined) return [];
+  const stored = [
+    ...(thread.storedExtraLines ?? []),
+    { side: thread.side ?? 'new', line: thread.storedLine },
+  ];
+  return [`처음 단 줄: ${sidedRangesLabel(stored, spanInfo)}`];
 }
 
 export function formatCommentThreadPrompt(
   thread: ShownThread,
   reviewState?: ThreadReviewState,
-  { showEdits = false, showOutdated = false }: PromptOptions = {},
+  { showEdits = false, showPlacement = false }: PromptOptions = {},
 ): string {
   const onFile = 'file' in thread;
   const sections: string[] = [
     onFile
       ? formatCommentLocation(thread.file, thread.line, thread.side, reviewState, thread.extraLines)
       : `${commitLocationLabel(thread)}${reviewState ? ` [${reviewStateLabel(reviewState)}]` : ''}`,
+    ...(showPlacement ? placementLines(thread) : []),
   ];
-  if (showOutdated && thread.isOutdated) {
-    sections.push(
-      thread.outdatedReason === 'ambiguous'
-        ? '바뀐 줄: 지적을 단 코드가 지금 diff 의 여러 곳에 있다. 위 줄 번호는 지적을 단 때의 것이다.'
-        : '바뀐 줄: 지적을 단 코드가 지금 diff 에 없다. 위 줄 번호는 지적을 단 때의 것이다.',
-    );
-  }
   if (onFile && thread.fixupCommit) {
     const { shortSha, subject } = thread.fixupCommit;
     sections.push(`고쳐 넣을 커밋: ${subject ? `${shortSha} ${subject}` : shortSha}`);
@@ -262,7 +273,7 @@ export function formatCommentsOutput(
   const threads = input.map((item) => ('messages' in item ? item : normalizeLegacyComment(item)));
   const allPrompts = formatAllCommentThreadsPrompt(threads, undefined, reviewStates, {
     showEdits: true,
-    showOutdated: true,
+    showPlacement: true,
   });
 
   return [

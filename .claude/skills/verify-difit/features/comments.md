@@ -5,7 +5,7 @@
 ## Sub-features
 
 - `add`: new threads and replies, from an argument or stdin
-- `get`: text for reading, `--format json` for thread IDs and `decisions`, `--left-out` for the threads left out because their file is not in the diff
+- `get`: text for reading, `--format json` for thread IDs and `decisions`, `--left-out` for the threads left out because their file is not in the diff; a thread whose lines moved since it was made gets the line found now plus `처음 단 줄:`, or `바뀐 줄:` with the reason, and in JSON an entry in `placements`
 - `wait`: blocks until a thread is the agent's turn, prints one JSON line per thread, exits 0
 - `wait` after the reviewer's `리뷰 끝` button (`POST /api/review-done`): prints `{"state":"review-done"}` and exits 0
 - `add` reply with `threadId`: attaches to that thread; duplicates are judged inside it
@@ -51,6 +51,7 @@ Proof:
 
 - `add` prints `{"success":true,…,"count":1,"warnings":[]}`.
 - `get` shows `math.js:L2` with the state in brackets.
+- `get --format json` has `"placements": {}` while no thread's lines moved. `/api/comments-json` without `?placements=true` has no `placements` key.
 - `wait` prints a line with `threadId` and `"label":"답변 대기"`, and exits 0.
 - `get --format json` then has a `decisions` entry of kind `handed` for that thread.
 - `resolve` on the reviewer's thread (`"author":"User"`) prints its ID under `errors` with `Refused`, adds no `resolved` entry to `decisions` and exits 1. The same holds for `OTHER`, a thread added with an author other than `Agent`, such as a GitHub login.
@@ -125,3 +126,4 @@ Proof: `{"waits":0,"checkedAgoMs":null,"connected":false}` before any wait; `wai
 - `"author":"User"` is what makes a thread the reviewer's. Without it the author is `Agent`, which is never the agent's turn, so `wait` blocks forever. Wrap `wait` in `timeout`.
 - What `resolve` leaves in `threads` and `decisions` is defined by `src/cli/comment.ts` in the checkout you built. Read it before asserting that end state.
 - `get` in text form has no thread IDs. Read IDs from `--format json`.
+- `get` relocates a moved thread on the diff of the screen it was made on (`view`), with whitespace-only changes ignored as the screen does when it opens. Unchecking Ignore Whitespace on the screen can show a different line.

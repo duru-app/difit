@@ -705,6 +705,9 @@ export interface CommentThread extends ShownThreadBase {
   side?: DiffSide;
   codeContent?: string;
   anchorCommit?: string;
+  // Where the thread was made, set only when `line` moved away from it.
+  storedLine?: LineNumber;
+  storedExtraLines?: SidedLine[];
 }
 
 export interface CommitThreadView extends ShownThreadBase {

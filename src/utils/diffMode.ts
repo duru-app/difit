@@ -2,6 +2,8 @@ import type { DiffViewMode } from '../types/diff.js';
 
 export const DEFAULT_DIFF_VIEW_MODE: DiffViewMode = 'split';
 
+export const DEFAULT_IGNORE_WHITESPACE = true;
+
 export function normalizeDiffViewMode(mode?: string | null): DiffViewMode {
   switch (mode) {
     case 'split':
