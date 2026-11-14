@@ -107,7 +107,7 @@ Claude Code 세션이 띄운 difit(`--background` 포함)은 세션의 메시지
 
    리뷰어는 지적 아래 fixup 카드 안에서도 줄을 고친다. 그러면 같은 `Review-Thread` 트레일러와 같은 대상 커밋으로 리뷰어의 fixup이 에이전트의 fixup 위에 하나 더 생기고, 두 fixup이 함께 승인되어 지적이 닫힌다. 에이전트가 할 일은 없다. 리뷰어가 이 수정을 `되돌리기`로 거절하면 지적은 `[승인 대기]`로 돌아가 리뷰어가 에이전트의 fixup을 다시 판정하고, wait는 이 지적을 알리지 않는다. 되돌린 fixup은 `decisions`의 `rejected`로만 남으니 마무리 때 다른 거절된 fixup과 함께 버린다.
 
-5. 리뷰어가 커밋 목록에서 커밋 메시지를 고치면, difit은 파일을 바꾸지 않는 `amend! <대상 SHA>` 커밋을 HEAD 위에 만들고 승인으로 기록한다. 그 커밋 메시지의 첫 문단 아래가 새 메시지이고, 끝에 `Review-Thread` 트레일러가 붙는다. 스레드는 새로 열리고 `filePath`가 `/COMMIT_MSG`(1번 줄), `fixupTarget`이 메시지를 고친 커밋, author가 `reviewer-edit`이다. 접을 때까지 할 일은 없다.
+5. 리뷰어가 커밋 목록에서 커밋 메시지를 고치면, difit은 그 자리에서 이력을 다시 쓴다. `amend!` 커밋은 생기지 않고, 그 커밋과 뒤 커밋의 SHA가 바뀐다. 아직 접지 않은 `fixup!`과 `amend!`는 커밋으로 남고 제목이 새 SHA를 가리키며, 지적의 `fixupTarget`과 `view`, 결정 기록도 difit이 새 SHA로 옮긴다. 할 일은 없다. 다만 `comment get`과 `wait`가 알려 주는 SHA를 쓰고, 그 전에 적어 둔 SHA를 다시 쓰지 않는다. 그 커밋을 품은 다른 로컬 브랜치도 함께 옮겨지지만, 다른 작업 폴더에 체크아웃된 브랜치와 그곳에서 rebase나 bisect 중인 브랜치는 옛 커밋에 남는다. 이렇게 고친 커밋을 향해 기다리던 `amend!`는 본문이 저장한 메시지로 바뀌어, 접으면 그 메시지가 남는다.
 
 ## 어느 지적에 답하는지 지정하기
 
@@ -159,7 +159,7 @@ GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash <리뷰 범위의 시작 커밋
 
 접기 전 SHA는 셸 변수에 담지 말고 적어 둔다. 명령을 한 번씩 따로 돌리는 에이전트에게는 앞 명령의 셸 변수가 남지 않는다. 접기는 커밋을 다시 나눌 뿐 마지막 파일 내용은 바꾸지 않으므로, 접은 뒤 `git diff --exit-code <접기 전 SHA> HEAD`가 아무것도 찍지 않아야 한다.
 
-`amend!` 커밋은 첫 문단 아래를 트레일러까지 그대로 대상 커밋의 메시지로 쓴다. 그래서 접은 뒤의 메시지에 `Review-Thread` 줄이 남는다. 이 줄이 남은 커밋은 나중 리뷰에서 fixup으로 읽혀 커밋 목록에서 빠지므로, git 2.32 이상에서는 접은 직후 기록을 올리기 전에 지운다. 아래 명령은 그 줄이 있는 커밋만 고쳐 쓴다([docs/adr/0009](adr/0009-reviewer-rewords-become-amend-commits.md)).
+`amend!` 커밋은 첫 문단 아래를 트레일러까지 그대로 대상 커밋의 메시지로 쓴다. 그래서 접은 뒤의 메시지에 `Review-Thread` 줄이 남는다. 이 줄이 남은 커밋은 나중 리뷰에서 fixup으로 읽혀 커밋 목록에서 빠지므로, git 2.32 이상에서는 접은 직후 기록을 올리기 전에 지운다. 아래 명령은 그 줄이 있는 커밋만 고쳐 쓴다([docs/adr/0009](adr/0009-reviewer-rewords-rewrite-history.md)).
 
 ```sh
 git rebase <리뷰 범위의 시작 커밋> --exec 'git log -1 --format=%B | grep -q "^Review-Thread: " || exit 0; git log -1 --format=%B | sed "/^Review-Thread: /d" | git commit -q --amend --allow-empty --no-verify --cleanup=whitespace -F -'
@@ -171,7 +171,7 @@ git rebase <리뷰 범위의 시작 커밋> --exec 'git log -1 --format=%B | gre
 
 fixup이 대상 커밋이 넣은 내용을 전부 지우면 그 커밋이 비게 되어 rebase가 `Could not apply ... fixup!`에서 멈춘다. 빈 커밋으로 남기려면 `git commit --amend --allow-empty --no-edit`, 커밋째 없애려면 `git reset --soft HEAD^`를 한 뒤 `git rebase --continue`로 잇는다.
 
-리뷰어가 직접 고친 fixup은 SHA로 대상을 가리킨다(`fixup! <SHA>`). 접기 전에 대상 커밋이 rebase로 새 SHA를 받으면 짝을 찾지 못해 접히지 않고 남으므로, 기준 브랜치를 따라잡는 rebase나 대상 커밋의 메시지 수정은 접은 뒤에 한다. rebase는 짝을 못 찾아도 성공으로 끝나므로, 접은 뒤에 아래 명령이 아무것도 출력하지 않는지 확인한다.
+리뷰어가 직접 고친 fixup은 SHA로 대상을 가리킨다(`fixup! <SHA>`). 접기 전에 대상 커밋이 rebase로 새 SHA를 받으면 짝을 찾지 못해 접히지 않고 남으므로, 에이전트가 하는 기준 브랜치를 따라잡는 rebase나 대상 커밋의 메시지 수정은 접은 뒤에 한다. 리뷰어가 커밋 목록에서 고친 메시지는 difit이 fixup 제목까지 함께 옮긴다. rebase는 짝을 못 찾아도 성공으로 끝나므로, 접은 뒤에 아래 명령이 아무것도 출력하지 않는지 확인한다.
 
 ```sh
 git log --format='%h %s' <리뷰 범위의 시작 커밋>..HEAD | grep -E '^[0-9a-f]+ (fixup|squash|amend)! '

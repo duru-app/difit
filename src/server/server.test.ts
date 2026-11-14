@@ -21,13 +21,20 @@ globalThis.fetch = fetch as any;
 const parserInstances = vi.hoisted(() => [] as any[]);
 const parserStartup = vi.hoisted(() => ({ validCommit: true, emptyDiff: false }));
 const commitDirectEdit = vi.hoisted(() => vi.fn());
-const commitDirectReword = vi.hoisted(() => vi.fn());
+const rewriteHistory = vi.hoisted(() => vi.fn());
+const readRewriteState = vi.hoisted(() => vi.fn());
+const removeAbandonedRewrites = vi.hoisted(() => vi.fn(async () => {}));
 
 const searchSymbol = vi.hoisted(() => vi.fn());
 const findLibrarySource = vi.hoisted(() => vi.fn());
 const reviewCommits = vi.hoisted(() => ({ list: [] as unknown[] }));
 
-vi.mock('./direct-edit.js', () => ({ commitDirectEdit, commitDirectReword }));
+vi.mock('./direct-edit.js', () => ({ commitDirectEdit }));
+vi.mock('./history-rewrite.js', () => ({
+  readRewriteState,
+  removeAbandonedRewrites,
+  rewriteHistory,
+}));
 vi.mock('./symbol-search.js', () => ({ searchSymbol }));
 vi.mock('./library-source.js', () => ({ findLibrarySource, sourceLocations: () => ({}) }));
 
@@ -118,6 +125,7 @@ vi.mock('./git-diff.js', () => {
     listThreadFixups = vi.fn().mockResolvedValue([]);
     listFixupsForScreen = vi.fn(async () => this.listThreadFixups());
     findNewerTarget = vi.fn().mockResolvedValue(null);
+    getDefaultBranch = vi.fn().mockResolvedValue(null);
     readCommitMessage = vi.fn().mockResolvedValue('second\n\nExplains it.');
     listReviewCommits = vi.fn(async () => reviewCommits.list);
     readThreadFixup = vi.fn(
@@ -3465,6 +3473,13 @@ describe('Server Integration Tests', () => {
     describe('rewording one of its commits', () => {
       const AMEND_SHA = 'e'.repeat(40);
       const SECOND_SHA = full('abc1234');
+      const NEW_SECOND_SHA = 'f'.repeat(40);
+      const FEATURE_BRANCH = {
+        branch: 'feature',
+        targetInHead: true,
+        operationInProgress: false,
+        leftBranches: [],
+      };
       let port: number;
 
       const reword = (body: Record<string, unknown>, headers = {}) =>
@@ -3493,12 +3508,15 @@ describe('Server Integration Tests', () => {
       });
 
       beforeEach(async () => {
-        commitDirectReword.mockReset();
-        commitDirectReword.mockImplementation(async (_repo, _range, request) => {
-          const parser = parserInstances.at(-1)!;
-          parser.listThreadFixups.mockResolvedValue([amendOf(request.threadId, request.message)]);
-          return { ok: true, sha: AMEND_SHA };
+        rewriteHistory.mockReset();
+        rewriteHistory.mockResolvedValue({
+          ok: true,
+          head: NEW_SECOND_SHA,
+          rewritten: { [SECOND_SHA]: NEW_SECOND_SHA },
+          branches: { moved: ['stacked'], left: [] },
         });
+        readRewriteState.mockReset();
+        readRewriteState.mockResolvedValue(FEATURE_BRANCH);
         port = await startReview();
         await view(port);
       });
@@ -3521,36 +3539,76 @@ describe('Server Integration Tests', () => {
         expect((await messageOf(full('9999999'))).status).toBe(400);
       });
 
-      it('commits the amend! and opens an approved thread on the commit message', async () => {
+      it('rewrites the history and opens no thread', async () => {
         const response = await reword({});
         const data = (await response.json()) as any;
 
         expect(response.status).toBe(200);
-        expect(commitDirectReword).toHaveBeenCalledWith(expect.any(String), 'abc1234', {
-          commit: SECOND_SHA,
-          message: 'second, better\n\nExplains it.',
-          threadId: data.threadId,
+        expect(rewriteHistory).toHaveBeenCalledWith(expect.any(String), {
+          base: expect.any(String),
+          messages: new Map([[SECOND_SHA, 'second, better\n\nExplains it.']]),
+          defaultBranch: null,
         });
-        const { threads, decisions } = (await (
-          await fetch(`http://localhost:${port}/api/comments-json${REVIEW}`)
-        ).json()) as any;
-        expect(threads).toEqual([
-          expect.objectContaining({
-            id: data.threadId,
-            filePath: '/COMMIT_MSG',
-            position: { side: 'new', line: 1 },
-            view: { baseCommitish: full('1111111'), targetCommitish: SECOND_SHA },
-            fixupTarget: SECOND_SHA,
-            messages: [expect.objectContaining({ author: 'reviewer-edit' })],
-          }),
-        ]);
-        expect(decisions).toEqual([
-          expect.objectContaining({
-            threadId: data.threadId,
-            kind: 'approved',
-            fixupSha: AMEND_SHA,
-          }),
-        ]);
+        expect(data.rewritten).toEqual({ [SECOND_SHA]: NEW_SECOND_SHA });
+        expect(data.branches).toEqual({ moved: ['stacked'], left: [] });
+        expect(data.threads).toEqual([]);
+        expect(data.decisions).toEqual([]);
+      });
+
+      it('warns on the default branch and goes ahead once the warning is acknowledged', async () => {
+        parserInstances.at(-1)!.getDefaultBranch.mockResolvedValue('feature');
+
+        const warned = await reword({});
+
+        expect(warned.status).toBe(409);
+        expect(await warned.json()).toMatchObject({
+          reason: 'needs-confirmation',
+          warnings: ['default-branch'],
+        });
+        expect(rewriteHistory).not.toHaveBeenCalled();
+
+        const confirmed = await reword({ acknowledged: ['default-branch'] });
+
+        expect(confirmed.status).toBe(200);
+        expect(rewriteHistory).toHaveBeenCalledTimes(1);
+      });
+
+      it('names the branches it leaves in another worktree, and goes ahead once acknowledged', async () => {
+        readRewriteState.mockResolvedValue({
+          ...FEATURE_BRANCH,
+          leftBranches: [{ name: 'work2', why: 'worktree' }],
+        });
+
+        const warned = await reword({});
+
+        expect(warned.status).toBe(409);
+        expect(await warned.json()).toMatchObject({
+          reason: 'needs-confirmation',
+          warnings: ['branch-elsewhere'],
+          warningBranches: { 'branch-elsewhere': ['work2'] },
+        });
+        expect(readRewriteState).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.any(String),
+          SECOND_SHA,
+          null,
+        );
+        expect(rewriteHistory).not.toHaveBeenCalled();
+
+        const confirmed = await reword({ acknowledged: ['branch-elsewhere'] });
+
+        expect(confirmed.status).toBe(200);
+        expect(rewriteHistory).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses while a git operation is in progress', async () => {
+        readRewriteState.mockResolvedValue({ ...FEATURE_BRANCH, operationInProgress: true });
+
+        const response = await reword({});
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ reason: 'operation-in-progress' });
+        expect(rewriteHistory).not.toHaveBeenCalled();
       });
 
       it('refuses when the message shown is no longer the current one', async () => {
@@ -3560,7 +3618,7 @@ describe('Server Integration Tests', () => {
 
         expect(response.status).toBe(409);
         expect(await response.json()).toMatchObject({ reason: 'stale-view' });
-        expect(commitDirectReword).not.toHaveBeenCalled();
+        expect(rewriteHistory).not.toHaveBeenCalled();
       });
 
       it('refuses a message that cleans up to the current one', async () => {
@@ -3568,27 +3626,31 @@ describe('Server Integration Tests', () => {
 
         expect(response.status).toBe(409);
         expect(await response.json()).toMatchObject({ reason: 'no-change' });
-        expect(commitDirectReword).not.toHaveBeenCalled();
+        expect(rewriteHistory).not.toHaveBeenCalled();
       });
 
-      it('passes on the reason git refused', async () => {
-        commitDirectReword.mockResolvedValue({ ok: false, reason: 'target-not-in-head' });
+      it('refuses a message left empty', async () => {
+        const response = await reword({ message: ' \n\nReview-Thread: old\n' });
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ reason: 'empty-message' });
+        expect(rewriteHistory).not.toHaveBeenCalled();
+      });
+
+      it('passes on the reason the rewrite failed', async () => {
+        rewriteHistory.mockResolvedValue({ ok: false, reason: 'conflict', output: 'CONFLICT' });
 
         const response = await reword({});
 
         expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ reason: 'target-not-in-head' });
-        const { threads } = (await (
-          await fetch(`http://localhost:${port}/api/comments-json${REVIEW}`)
-        ).json()) as any;
-        expect(threads).toEqual([]);
+        expect(await response.json()).toMatchObject({ reason: 'conflict', output: 'CONFLICT' });
       });
 
       it('refuses a commit outside the review', async () => {
         const response = await reword({ commit: full('9999999') });
 
         expect(response.status).toBe(400);
-        expect(commitDirectReword).not.toHaveBeenCalled();
+        expect(rewriteHistory).not.toHaveBeenCalled();
       });
 
       it('refuses a body that is not JSON', async () => {
@@ -3599,7 +3661,7 @@ describe('Server Integration Tests', () => {
         });
 
         expect(response.status).toBe(415);
-        expect(commitDirectReword).not.toHaveBeenCalled();
+        expect(rewriteHistory).not.toHaveBeenCalled();
       });
     });
 

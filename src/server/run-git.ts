@@ -9,6 +9,7 @@ export interface GitRun {
 export interface GitOptions {
   input?: Buffer;
   env?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 const GIT_TIMEOUT_MS = 60_000;
@@ -26,6 +27,7 @@ export function runGit(
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...options.env },
+      signal: options.signal,
     });
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -51,6 +53,7 @@ export function runGit(
         output: timedOut ? `${output}\ngit ${args[0]} timed out`.trim() : output,
       });
     });
+    child.stdin.on('error', () => {});
     child.stdin.end(options.input);
   });
 }

@@ -9,7 +9,7 @@ import open from 'open';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { AUTOSQUASH_PREFIX, COMMIT_MESSAGE_PATH, REVIEWER_EDIT_AUTHOR } from '../types/diff.js';
+import { AUTOSQUASH_PREFIX, REVIEWER_EDIT_AUTHOR } from '../types/diff.js';
 import { type DiffMode, type WatchEvent } from '../types/watch.js';
 import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
@@ -54,7 +54,9 @@ import {
 import { validateCommitish } from '../cli/utils.js';
 import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
-import { commitDirectEdit, commitDirectReword, type EditedView } from './direct-edit.js';
+import { commitDirectEdit, type EditedView } from './direct-edit.js';
+import { readRewriteState, removeAbandonedRewrites, rewriteHistory } from './history-rewrite.js';
+import { checkRewrite } from './rewrite-check.js';
 import { chooseFixupTarget } from './fixup-target.js';
 import { FileWatcherService } from './file-watcher.js';
 import { GitDiffParser } from './git-diff.js';
@@ -105,6 +107,8 @@ import {
   type RewordRejection,
   type RewordRequest,
   type RewordResponse,
+  type RewriteWarning,
+  type RewrittenShas,
   type LibrarySourceResponse,
   type ShownThread,
   type SidedLine,
@@ -116,7 +120,6 @@ import {
   type ThreadReviewState,
 } from '@/types/diff.js';
 import {
-  bindingForCommit,
   bindingForView,
   commitsOfView,
   createDiffSelection,
@@ -129,6 +132,13 @@ import {
   isSameView,
   isViewOfReview,
 } from '../utils/diffSelection.js';
+import {
+  afterRewrite,
+  movedDecision,
+  movedPlace,
+  movedSelection,
+  movedThread,
+} from '../utils/rewrittenShas.js';
 
 interface ServerOptions {
   selection?: DiffSelection;
@@ -148,7 +158,6 @@ interface ServerOptions {
 
 const GENERATED_STATUS_CACHE_TTL_MS = 60_000;
 const DIRECT_EDIT_MESSAGE = '직접 고침';
-const REWORD_MESSAGE = '메시지 직접 고침';
 const LOOPBACK_ADDRESSES = new Set(['localhost', '127.0.0.1', '::1']);
 // A Host header wraps an IPv6 address in brackets.
 const LOOPBACK_HOST_HEADERS = new Set([...LOOPBACK_ADDRESSES, '[::1]']);
@@ -207,6 +216,7 @@ function setCachedDiffResponse(cache: Map<string, DiffResponse>, key: string, va
 }
 
 interface CommentSessionState {
+  selection: DiffSelection;
   threads: DiffCommentThread[];
   decisions: ReviewDecision[];
   version: number;
@@ -247,7 +257,7 @@ export async function startServer(options: ServerOptions): Promise<{
   const repositoryId = createHash('sha256').update(repositoryPath).digest('hex');
   const cleanRunId = options.clearComments ? randomUUID() : undefined;
   const initialCommentImports = options.commentImports || [];
-  const initialSelection = options.selection ?? createDiffSelection('', '');
+  let initialSelection = options.selection ?? createDiffSelection('', '');
   const commentImportId =
     initialCommentImports.length > 0
       ? createHash('sha256').update(serializeCommentImports(initialCommentImports)).digest('hex')
@@ -578,9 +588,12 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   const commentSessions = new Map<string, CommentSessionState>();
+  // What a tab or an agent still holding old SHAs says lands on the commits that replaced them.
+  let rewrittenShas: RewrittenShas = {};
   const initialCommentThreads = mergeCommentImports([], initialCommentImports).threads;
   if (initialCommentThreads.length > 0) {
     commentSessions.set(createCommentSessionKey(currentCommentSelection), {
+      selection: currentCommentSelection,
       threads: initialCommentThreads,
       decisions: [],
       version: 1,
@@ -596,14 +609,17 @@ export async function startServer(options: ServerOptions): Promise<{
       return currentCommentSelection;
     }
 
-    const selection = createDiffSelection(
-      hasBase ? (query.base as string) : currentCommentSelection.baseCommitish,
-      hasTarget ? (query.target as string) : currentCommentSelection.targetCommitish,
-      hasBaseMode
-        ? parseBaseMode(query.baseMode)
-        : hasBase || hasTarget
-          ? undefined
-          : currentCommentSelection.baseMode,
+    const selection = movedSelection(
+      createDiffSelection(
+        hasBase ? (query.base as string) : currentCommentSelection.baseCommitish,
+        hasTarget ? (query.target as string) : currentCommentSelection.targetCommitish,
+        hasBaseMode
+          ? parseBaseMode(query.baseMode)
+          : hasBase || hasTarget
+            ? undefined
+            : currentCommentSelection.baseMode,
+      ),
+      rewrittenShas,
     );
     return findReviewOf(selection)?.selection ?? selection;
   }
@@ -616,6 +632,7 @@ export async function startServer(options: ServerOptions): Promise<{
     }
 
     const nextSession: CommentSessionState = {
+      selection,
       threads: [],
       decisions: [],
       version: 0,
@@ -628,14 +645,17 @@ export async function startServer(options: ServerOptions): Promise<{
     const hasBase = typeof query.base === 'string';
     const hasTarget = typeof query.target === 'string';
     const hasBaseMode = typeof query.baseMode === 'string';
-    return createDiffSelection(
-      hasBase ? (query.base as string) : currentSelection.baseCommitish,
-      hasTarget ? (query.target as string) : currentSelection.targetCommitish,
-      hasBaseMode
-        ? parseBaseMode(query.baseMode)
-        : hasBase || hasTarget
-          ? undefined
-          : currentSelection.baseMode,
+    return movedSelection(
+      createDiffSelection(
+        hasBase ? (query.base as string) : currentSelection.baseCommitish,
+        hasTarget ? (query.target as string) : currentSelection.targetCommitish,
+        hasBaseMode
+          ? parseBaseMode(query.baseMode)
+          : hasBase || hasTarget
+            ? undefined
+            : currentSelection.baseMode,
+      ),
+      rewrittenShas,
     );
   };
 
@@ -712,6 +732,7 @@ export async function startServer(options: ServerOptions): Promise<{
       commentImports: shouldIncludeCommentImports ? initialCommentImports : undefined,
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,
       review,
+      ...(Object.keys(rewrittenShas).length > 0 ? { rewritten: rewrittenShas } : {}),
     });
   });
 
@@ -1564,8 +1585,12 @@ export async function startServer(options: ServerOptions): Promise<{
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const body: unknown =
         typeof req.body === 'string' ? (JSON.parse(req.body) as unknown) : req.body;
-      const nextThreads = parseCommentsPayload(body);
-      const nextDecisions = parseDecisionsPayload(body);
+      const nextThreads = parseCommentsPayload(body).map((thread) =>
+        movedThread(thread, rewrittenShas),
+      );
+      const nextDecisions = parseDecisionsPayload(body)?.map((decision) =>
+        movedDecision(decision, rewrittenShas),
+      );
       const baseVersion = parseBaseVersion(body);
       const session = getOrCreateCommentSession(selection);
       const before = { threads: session.threads, decisions: session.decisions };
@@ -1604,7 +1629,9 @@ export async function startServer(options: ServerOptions): Promise<{
     try {
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const session = getOrCreateCommentSession(selection);
-      const commentImports = parseCommentImportsPayload(req.body);
+      const commentImports = parseCommentImportsPayload(req.body).map((item) =>
+        movedPlace(item, rewrittenShas),
+      );
       const importId = createHash('sha256')
         .update(serializeCommentImports(commentImports))
         .digest('hex');
@@ -1672,7 +1699,10 @@ export async function startServer(options: ServerOptions): Promise<{
       const changed = updateCommentSession(
         selection,
         session.threads,
-        mergeReviewDecisions(session.decisions, incoming),
+        mergeReviewDecisions(
+          session.decisions,
+          incoming.map((decision) => movedDecision(decision, rewrittenShas)),
+        ),
       );
       res.json({ success: true, changed, count: incoming.length, version: session.version });
     } catch (error) {
@@ -2045,11 +2075,13 @@ export async function startServer(options: ServerOptions): Promise<{
 
   function parseRewordRequest(body: unknown): RewordRequest | null {
     if (!body || typeof body !== 'object') return null;
-    const { commit, original, message } = body as Record<string, unknown>;
+    const { commit, original, message, acknowledged } = body as Record<string, unknown>;
     if (typeof commit !== 'string' || typeof original !== 'string' || typeof message !== 'string') {
       return null;
     }
-    return { commit, original, message };
+    if (acknowledged === undefined) return { commit, original, message };
+    if (!Array.isArray(acknowledged)) return null;
+    return { commit, original, message, acknowledged: acknowledged as RewriteWarning[] };
   }
 
   const refuseReword = (
@@ -2064,70 +2096,106 @@ export async function startServer(options: ServerOptions): Promise<{
     },
   });
 
+  // Everything held under the old SHAs moves in one step, with no await between a session and its
+  // new key; only the commit lists of the moved reviews are read first.
+  async function followRewrite(rewritten: RewrittenShas) {
+    rewrittenShas = afterRewrite(rewrittenShas, rewritten);
+    invalidateCache();
+    const movedReviews = await Promise.all(
+      pinnedReviews.map(async (review): Promise<ReviewScope> => {
+        const selection = movedSelection(review.selection, rewritten);
+        if (diffSelectionsEqual(selection, review.selection)) return review;
+        let commits: ReviewScope['commits'] = [];
+        try {
+          commits = await parser.listReviewCommits(selection);
+        } catch (error) {
+          console.error('Error listing review commits:', error);
+        }
+        return { selection, requested: movedSelection(review.requested, rewritten), commits };
+      }),
+    );
+    pinnedReviews.splice(0, pinnedReviews.length, ...movedReviews);
+    pinnedCommentSessionKeys.clear();
+    for (const { selection } of movedReviews) {
+      pinnedCommentSessionKeys.add(createCommentSessionKey(selection));
+    }
+    initialSelection = movedSelection(initialSelection, rewritten);
+    currentSelection = movedSelection(currentSelection, rewritten);
+    currentCommentSelection = movedSelection(currentCommentSelection, rewritten);
+    for (const [key, session] of [...commentSessions]) {
+      const selection = movedSelection(session.selection, rewritten);
+      commentSessions.delete(key);
+      commentSessions.set(createCommentSessionKey(selection), {
+        selection,
+        threads: session.threads.map((thread) => movedThread(thread, rewritten)),
+        decisions: session.decisions.map((decision) => movedDecision(decision, rewritten)),
+        version: session.version + 1,
+      });
+    }
+    fileWatcher.broadcast({ type: 'historyRewritten', timestamp: new Date().toISOString() });
+    for (const wait of commentWaits) void wait.check();
+  }
+
   async function applyReword(
     selection: DiffSelection,
-    review: ReviewScope,
     commit: ReviewCommit,
     request: RewordRequest,
   ): Promise<{ status: number; body: RewordResponse }> {
     const current = await messageAsReviewed(selection, commit);
     if (withoutThreadTrailers(request.original) !== current) return refuseReword('stale-view');
-    if (withoutThreadTrailers(request.message) === current) return refuseReword('no-change');
+    const message = withoutThreadTrailers(request.message);
+    if (message === current) return refuseReword('no-change');
+    if (message.length === 0) return refuseReword('empty-message');
 
-    const threadId = createId();
-    const result = await commitDirectReword(repositoryPath, selection.targetCommitish, {
-      commit: commit.sha,
-      message: request.message,
-      threadId,
+    const defaultBranch = await parser.getDefaultBranch();
+    const { blocks, warnings, warningBranches } = checkRewrite({
+      ...(await readRewriteState(
+        repositoryPath,
+        selection.targetCommitish,
+        commit.sha,
+        defaultBranch,
+      )),
+      defaultBranch,
+      rewordsMerge: commit.isMerge === true,
+    });
+    const [blocked] = blocks;
+    if (blocked) return refuseReword(blocked);
+    const unseen = warnings.filter((warning) => !request.acknowledged?.includes(warning));
+    if (unseen.length > 0) {
+      const refused = refuseReword('needs-confirmation');
+      const named = Object.fromEntries(
+        Object.entries(warningBranches).filter(([warning]) =>
+          unseen.includes(warning as RewriteWarning),
+        ),
+      );
+      return {
+        ...refused,
+        body: {
+          ...refused.body,
+          warnings: unseen,
+          ...(Object.keys(named).length > 0 ? { warningBranches: named } : {}),
+        },
+      };
+    }
+
+    const result = await rewriteHistory(repositoryPath, {
+      base: selection.baseCommitish,
+      messages: new Map([[commit.sha, message]]),
+      defaultBranch,
     });
     if (!result.ok) return refuseReword(result.reason, result.output);
-    const binding = bindingForCommit(review, commit);
+    await followRewrite(result.rewritten);
 
-    const session = getOrCreateCommentSession(selection);
-    const patchId = (await parser.readThreadFixup(result.sha))?.patchId;
-    const now = new Date().toISOString();
-    updateCommentSession(
-      selection,
-      [
-        ...session.threads,
-        {
-          id: threadId,
-          filePath: COMMIT_MESSAGE_PATH,
-          createdAt: now,
-          updatedAt: now,
-          position: { side: 'new', line: 1 },
-          messages: [
-            {
-              id: threadId,
-              body: REWORD_MESSAGE,
-              author: REVIEWER_EDIT_AUTHOR,
-              createdAt: now,
-              updatedAt: now,
-            },
-          ],
-          ...(binding?.view ? { view: binding.view } : {}),
-          fixupTarget: commit.sha,
-        },
-      ],
-      mergeReviewDecisions(session.decisions, [
-        {
-          threadId,
-          kind: 'approved',
-          fixupSha: result.sha,
-          ...(patchId === undefined ? {} : { patchId }),
-          at: now,
-        },
-      ]),
-    );
+    const session = getOrCreateCommentSession(movedSelection(selection, result.rewritten));
     return {
       status: 200,
       body: {
         success: true,
-        sha: result.sha,
-        threadId,
+        rewritten: result.rewritten,
         version: session.version,
         threads: session.threads,
         decisions: session.decisions,
+        branches: result.branches,
       },
     };
   }
@@ -2154,7 +2222,7 @@ export async function startServer(options: ServerOptions): Promise<{
       return;
     }
 
-    const run = directEditQueue.then(() => applyReword(selection, review, commit, request));
+    const run = directEditQueue.then(() => applyReword(selection, commit, request));
     directEditQueue = run.catch(() => undefined);
     try {
       const { status, body } = await run;
@@ -2398,10 +2466,11 @@ export async function startServer(options: ServerOptions): Promise<{
     const ping = setInterval(() => res.write(': ping\n\n'), 30_000);
     const wait: CommentWait = {
       check: async () => {
-        const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(selection);
+        const moved = movedSelection(selection, rewrittenShas);
+        const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(moved);
         if (waiting.length > 0 && commentWaits.has(wait)) {
           await wait.finish(`event: threads\ndata: ${JSON.stringify(waiting)}\n\n`);
-          recordHandover(selection, waiting, fixupsByThread);
+          recordHandover(moved, waiting, fixupsByThread);
         }
       },
       finish: (event) => {
@@ -2493,6 +2562,12 @@ export async function startServer(options: ServerOptions): Promise<{
       console.warn('⚠️  File watcher failed to start:', error);
       console.warn('   Continuing without file watching...');
     }
+  }
+
+  if (!options.stdinDiff && listensOnLoopbackOnly) {
+    void removeAbandonedRewrites(repositoryPath).catch((error: unknown) => {
+      console.error('Error removing an abandoned history rewrite:', error);
+    });
   }
 
   if (options.clearComments && listensOnLoopbackOnly) {

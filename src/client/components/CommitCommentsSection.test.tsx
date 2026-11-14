@@ -52,7 +52,7 @@ describe('CommitCommentsSection', () => {
     const SECOND: ReviewCommit = { ...FIRST, sha: '2'.repeat(40), shortSha: '2222222' };
     const reword = {
       load: vi.fn(async () => 'first step'),
-      save: vi.fn(async () => null),
+      save: vi.fn(async () => ({ saved: true as const, movedBranches: [] })),
     };
     const touchButton = (name: string) => screen.getByRole('button', { name });
     const expectTouchOnly = (button: HTMLElement) =>
@@ -97,6 +97,27 @@ describe('CommitCommentsSection', () => {
 
       fireEvent.click(touchButton('메시지 고치기'));
       expect(screen.queryByRole('form', { name: '커밋 메시지 고치기' })).toBeNull();
+    });
+
+    it('says which other branches the save moved, until dismissed', async () => {
+      renderSection({
+        onAddComment: vi.fn(async () => {}),
+        reword: {
+          load: vi.fn(async () => 'first step'),
+          save: vi.fn(async () => ({ saved: true as const, movedBranches: ['stack'] })),
+        },
+      });
+      fireEvent.click(touchButton('메시지 고치기'));
+      const editor = await screen.findByRole('textbox', { name: '커밋 메시지' });
+
+      fireEvent.change(editor, { target: { value: 'first step, reworded' } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '저장' }));
+      });
+
+      expect(screen.getByText('브랜치 stack도 함께 옮겼습니다.')).toHaveAttribute('role', 'status');
+      fireEvent.click(touchButton('알림 닫기'));
+      expect(screen.queryByText(/함께 옮겼습니다/)).toBeNull();
     });
 
     it('does not carry the open message editor over to the next commit shown', async () => {

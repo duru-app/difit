@@ -4,7 +4,6 @@ import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { commitDirectReword } from './direct-edit';
 import { GitDiffParser } from './git-diff';
 
 const runGitCalls = vi.hoisted(() => [] as string[][]);
@@ -711,16 +710,33 @@ describe('messages of amend! commits against a real repository', () => {
   });
 });
 
-describe('amend! commits made by commitDirectReword', () => {
+describe('amend! commits carrying a thread', () => {
+  it('shows no change for an amend! that leaves the message as it is', async () => {
+    const repo = createRepo();
+    const base = commit(repo, 'base', { 'f.txt': 'a\n' });
+    const target = commit(repo, 'add feature\n\nExplains it.', { 'g.txt': 'g\n' });
+    const sha = commit(
+      repo,
+      `amend! ${target}\n\nadd feature\n\nExplains it.\n\nReview-Thread: t1`,
+    );
+
+    const [amend] = await new GitDiffParser(repo).listFixupsForScreen({
+      targetCommitish: target,
+      baseCommitish: base,
+    });
+
+    expect(amend).toMatchObject({ sha, foldTargetSha: target });
+    expect(amend?.amendedMessage).toBeUndefined();
+  });
+
   it('reads the message the reviewer wrote, with other trailers kept', async () => {
     const repo = createRepo();
     const base = commit(repo, 'base', { 'f.txt': 'a\n' });
     const target = commit(repo, 'add feture', { 'g.txt': 'g\n' });
-    const result = await commitDirectReword(repo, target, {
-      commit: target,
-      message: 'add feature\n\nCo-Authored-By: someone <s@example.com>',
-      threadId: 't1',
-    });
+    const sha = commit(
+      repo,
+      `amend! ${target}\n\nadd feature\n\nCo-Authored-By: someone <s@example.com>\nReview-Thread: t1`,
+    );
 
     const [amend] = await new GitDiffParser(repo).listFixupsForScreen({
       targetCommitish: target,
@@ -728,7 +744,7 @@ describe('amend! commits made by commitDirectReword', () => {
     });
 
     expect(amend).toMatchObject({
-      sha: result.ok ? result.sha : '',
+      sha,
       threadIds: ['t1'],
       files: [],
       foldTargetSha: target,

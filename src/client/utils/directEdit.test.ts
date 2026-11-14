@@ -9,6 +9,7 @@ import {
   newSideLineNumbers,
   rangeOfLine,
   rangeShown,
+  rewordFailureMessage,
 } from './directEdit';
 
 const lines: DiffLine[] = [
@@ -95,5 +96,31 @@ describe('directEditFailureMessage', () => {
   it('says the edit was committed unapproved when the card changed during the commit', () => {
     expect(directEditFailureMessage('card-changed', '', true)).toContain('fixup 커밋으로 남았지만');
     expect(directEditFailureMessage('card-changed', '')).toContain('카드를 다시 확인한 뒤 고쳐');
+  });
+});
+
+describe('rewordFailureMessage', () => {
+  it('names the branches a warning is about, after the warnings that name none', () => {
+    expect(
+      rewordFailureMessage('needs-confirmation', '', ['default-branch', 'branch-elsewhere'], {
+        'branch-elsewhere': ['work2', 'rebasing'],
+      }),
+    ).toBe(
+      '기본 브랜치의 이력이 바뀝니다. 다른 작업 폴더에서 쓰는 브랜치 work2, rebasing는 옮기지 않습니다. 옛 커밋에 남습니다.',
+    );
+  });
+
+  it('says the default branch stays on the old commits and parts from the current branch', () => {
+    expect(
+      rewordFailureMessage('needs-confirmation', '', ['default-branch-left'], {
+        'default-branch-left': ['main'],
+      }),
+    ).toBe('기본 브랜치 main는 옮기지 않습니다. 옛 커밋에 남아 지금 브랜치와 갈라집니다.');
+  });
+
+  it('asks to save again when a branch moved during the save', () => {
+    expect(rewordFailureMessage('branch-moved', 'Reword refused: branch-moved')).toBe(
+      '저장하는 동안 브랜치가 바뀌어 이력을 바꾸지 않았습니다. 다시 저장해 주세요.',
+    );
   });
 });

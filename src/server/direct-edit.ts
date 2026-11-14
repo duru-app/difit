@@ -3,12 +3,7 @@ import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
-import {
-  type DirectEditRejection,
-  REVIEW_THREAD_TRAILER,
-  type RewordRejection,
-} from '../types/diff.js';
-import { withoutThreadTrailers, withThreadTrailer } from '../utils/commitMessage.js';
+import { type DirectEditRejection, REVIEW_THREAD_TRAILER } from '../types/diff.js';
 
 import { autosquashGroups } from './autosquash.js';
 import { chooseFixupTarget } from './fixup-target.js';
@@ -172,7 +167,7 @@ const IN_PROGRESS_MARKERS = [
   'rebase-apply',
 ];
 
-async function hasOperationInProgress(repoPath: string): Promise<boolean> {
+export async function hasOperationInProgress(repoPath: string): Promise<boolean> {
   const paths = (
     await gitText(repoPath, [
       'rev-parse',
@@ -509,74 +504,6 @@ export async function commitDirectEdit(
     output = moved.output;
     const headNow = await gitText(repoPath, ['rev-parse', '--verify', 'HEAD^{commit}']);
     if (headNow === fixup.head) return { ok: false, reason: 'commit-failed', output };
-  }
-  return { ok: false, reason: 'head-moved', ...(output === undefined ? {} : { output }) };
-}
-
-export interface DirectReword {
-  commit: string;
-  message: string;
-  threadId: string;
-}
-
-export type DirectRewordResult =
-  | { ok: true; sha: string }
-  | { ok: false; reason: RewordRejection; output?: string };
-
-// Commits an amend! of `commit` on top of HEAD with HEAD's own tree, the commit git 2.32 makes for
-// `--fixup=reword:`, but naming its target by SHA as fixups from the viewer do.
-export async function commitDirectReword(
-  repoPath: string,
-  reviewTarget: string,
-  reword: DirectReword,
-): Promise<DirectRewordResult> {
-  const resolve = (commitish: string) =>
-    gitText(repoPath, ['rev-parse', '--verify', `${commitish}^{commit}`]);
-  const target = await resolve(reviewTarget);
-  const amended = await resolve(reword.commit);
-  const parents = await gitText(repoPath, ['rev-list', '--parents', '-n', '1', amended]);
-  if (parents.split(' ').length > 2) return { ok: false, reason: 'merge-commit' };
-  const message = withoutThreadTrailers(reword.message);
-  if (message.length === 0) return { ok: false, reason: 'empty-message' };
-  const written = `amend! ${amended}\n\n${withThreadTrailer(message, reword.threadId)}\n`;
-
-  let output: string | undefined;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-    if ((await runGit(repoPath, ['symbolic-ref', '-q', 'HEAD'])).code !== 0) {
-      return { ok: false, reason: 'detached-head' };
-    }
-    const head = await resolve('HEAD');
-    const onHead = await runGit(repoPath, ['merge-base', '--is-ancestor', target, head]);
-    if (onHead.code !== 0) return { ok: false, reason: 'target-not-in-head' };
-    if (await hasOperationInProgress(repoPath)) {
-      return { ok: false, reason: 'operation-in-progress' };
-    }
-    const made = await runGit(
-      repoPath,
-      [
-        '-c',
-        'i18n.commitEncoding=UTF-8',
-        'commit-tree',
-        '--no-gpg-sign',
-        `${head}^{tree}`,
-        '-p',
-        head,
-      ],
-      { input: Buffer.from(written, 'utf8') },
-    );
-    if (made.code !== 0) return { ok: false, reason: 'commit-failed', output: made.output };
-    const sha = made.stdout.toString('utf8').trim();
-    const moved = await runGit(repoPath, [
-      'update-ref',
-      '-m',
-      `difit: amend! ${amended}`,
-      'HEAD',
-      sha,
-      head,
-    ]);
-    if (moved.code === 0) return { ok: true, sha };
-    output = moved.output;
-    if ((await resolve('HEAD')) === head) return { ok: false, reason: 'commit-failed', output };
   }
   return { ok: false, reason: 'head-moved', ...(output === undefined ? {} : { output }) };
 }

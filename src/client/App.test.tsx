@@ -19,6 +19,7 @@ import App from './App';
 import { useDiffComments } from './hooks/useDiffComments';
 import { useViewedFiles } from './hooks/useViewedFiles';
 import { useViewport } from './hooks/useViewport';
+import { storageService } from './services/StorageService';
 import { resetClientSettingsForTests } from './services/userSettings';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { spreadFixups } from './utils/fixupSpread';
@@ -3421,46 +3422,43 @@ describe('App Component - Commits of the review', () => {
     expect(within(commitButton(/1111111/)).queryByText('first step, renamed')).toBeNull();
   });
 
-  it('rewords a commit from the commit list and shows the amend! it made on that commit', async () => {
+  it('rewords a commit from the commit list and shows the review on the new SHAs', async () => {
     directEditAvailable = true;
-    const amend = {
-      sha: 'e'.repeat(40),
-      shortSha: 'eeeeeee',
-      patchId: 'patch-e',
-      authoredAt: '2026-01-01T00:00:00Z',
-      subject: `amend! ${COMMITS[0]!.sha}`,
-      threadIds: ['r1'],
-      files: [],
-      foldTargetSha: COMMITS[0]!.sha,
-      amendedMessage: { before: 'first step', after: 'first step, renamed' },
-    };
+    const newFirst = 'f'.repeat(40);
+    const newSecond = 'e'.repeat(40);
+    const rewritten = { [COMMITS[0]!.sha]: newFirst, [COMMITS[1]!.sha]: newSecond };
     const answer = vi.mocked(global.fetch).getMockImplementation()!;
-    vi.mocked(global.fetch).mockImplementation((input, init) => {
+    let saved = false;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.startsWith('/api/commit-message')) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({ message: 'first step' }),
-        } as Response);
+        return { ok: true, json: async () => ({ message: 'first step' }) } as Response;
       }
       if (url.startsWith('/api/reword')) {
-        fixupsFor.current = [amend];
-        return Promise.resolve({
+        saved = true;
+        review = {
+          selection: { baseCommitish: 'def4567', targetCommitish: newSecond.slice(0, 7) },
+          requested: { baseCommitish: full('def4567'), targetCommitish: newSecond },
+          commits: [
+            { ...COMMITS[0]!, sha: newFirst, shortSha: 'fffffff', subject: 'first step, renamed' },
+            { ...COMMITS[1]!, sha: newSecond, shortSha: 'eeeeeee', parentSha: newFirst },
+          ],
+        };
+        return {
           ok: true,
-          json: async () => ({
-            success: true,
-            sha: amend.sha,
-            threadId: 'r1',
-            version: 1,
-            threads: [],
-            decisions: [
-              { threadId: 'r1', kind: 'approved', fixupSha: amend.sha, at: '2026-01-01T00:00:00Z' },
-            ],
-          }),
-        } as Response);
+          json: async () => ({ success: true, rewritten, version: 1, threads: [], decisions: [] }),
+        } as Response;
       }
-      return answer(input, init);
+      const response = await answer(input, init);
+      if (!saved || !url.startsWith('/api/diff')) return response;
+      const shown = (await response.json()) as DiffResponse;
+      return {
+        ok: true,
+        json: async () => ({ ...shown, repositoryId: 'repo-1', rewritten }),
+      } as Response;
     });
+    const moveRecords = vi.spyOn(storageService, 'moveRewrittenRecords');
+    onTestFinished(() => moveRecords.mockRestore());
 
     renderApp();
     const row = (await waitFor(() => commitButton(/1111111/))).closest('li')!;
@@ -3471,7 +3469,7 @@ describe('App Component - Commits of the review', () => {
     fireEvent.click(within(row).getByRole('button', { name: '저장' }));
 
     await waitFor(() =>
-      expect(within(commitButton(/1111111/)).getByText('first step, renamed')).toBeInTheDocument(),
+      expect(within(commitButton(/fffffff/)).getByText('first step, renamed')).toBeInTheDocument(),
     );
     const posted = vi
       .mocked(global.fetch)
@@ -3482,7 +3480,121 @@ describe('App Component - Commits of the review', () => {
       original: 'first step',
       message: 'first step, renamed',
     });
-    expect(within(row).queryByRole('textbox', { name: '커밋 메시지' })).toBeNull();
+    expect(moveRecords).toHaveBeenCalledWith(rewritten, 'repo-1');
+    expect(screen.queryByRole('textbox', { name: '커밋 메시지' })).toBeNull();
+    await waitFor(() => {
+      const revisionReads = vi
+        .mocked(global.fetch)
+        .mock.calls.filter(([url]) => String(url) === '/api/revisions');
+      expect(revisionReads).toHaveLength(2);
+    });
+  });
+
+  it('shows the warning from saving on the default branch and goes ahead once confirmed', async () => {
+    directEditAvailable = true;
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    const bodies: unknown[] = [];
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/commit-message')) {
+        return { ok: true, json: async () => ({ message: 'first step' }) } as Response;
+      }
+      if (url.startsWith('/api/reword')) {
+        const body = JSON.parse(String(init?.body)) as { acknowledged?: string[] };
+        bodies.push(body);
+        return body.acknowledged
+          ? ({
+              ok: true,
+              json: async () => ({
+                success: true,
+                rewritten: {},
+                version: 1,
+                threads: [],
+                decisions: [],
+              }),
+            } as Response)
+          : ({
+              ok: false,
+              status: 409,
+              json: async () => ({
+                error: 'Reword refused: needs-confirmation',
+                reason: 'needs-confirmation',
+                warnings: ['default-branch'],
+              }),
+            } as Response);
+      }
+      return answer(input, init);
+    });
+
+    renderApp();
+    const row = (await waitFor(() => commitButton(/1111111/))).closest('li')!;
+    fireEvent.click(within(row).getByRole('button', { name: '메시지 고치기' }));
+    fireEvent.change(await within(row).findByRole('textbox', { name: '커밋 메시지' }), {
+      target: { value: 'first step, renamed' },
+    });
+    fireEvent.click(within(row).getByRole('button', { name: '저장' }));
+
+    expect(await within(row).findByRole('alert')).toHaveTextContent(
+      '기본 브랜치의 이력이 바뀝니다.',
+    );
+    fireEvent.click(within(row).getByRole('button', { name: '그래도 저장' }));
+
+    await waitFor(() =>
+      expect(within(row).queryByRole('textbox', { name: '커밋 메시지' })).toBeNull(),
+    );
+    expect(bodies.at(-1)).toMatchObject({ acknowledged: ['default-branch'] });
+  });
+
+  it('names the branches a save leaves behind, and the ones it moved once confirmed', async () => {
+    directEditAvailable = true;
+    const answer = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/commit-message')) {
+        return { ok: true, json: async () => ({ message: 'first step' }) } as Response;
+      }
+      if (url.startsWith('/api/reword')) {
+        const body = JSON.parse(String(init?.body)) as { acknowledged?: string[] };
+        return body.acknowledged
+          ? ({
+              ok: true,
+              json: async () => ({
+                success: true,
+                rewritten: {},
+                version: 1,
+                threads: [],
+                decisions: [],
+                branches: { moved: ['work3'], left: [{ name: 'work2', why: 'worktree' }] },
+              }),
+            } as Response)
+          : ({
+              ok: false,
+              status: 409,
+              json: async () => ({
+                error: 'Reword refused: needs-confirmation',
+                reason: 'needs-confirmation',
+                warnings: ['branch-elsewhere'],
+                warningBranches: { 'branch-elsewhere': ['work2'] },
+              }),
+            } as Response);
+      }
+      return answer(input, init);
+    });
+
+    renderApp();
+    const row = (await waitFor(() => commitButton(/1111111/))).closest('li')!;
+    fireEvent.click(within(row).getByRole('button', { name: '메시지 고치기' }));
+    fireEvent.change(await within(row).findByRole('textbox', { name: '커밋 메시지' }), {
+      target: { value: 'first step, renamed' },
+    });
+    fireEvent.click(within(row).getByRole('button', { name: '저장' }));
+
+    expect(await within(row).findByRole('alert')).toHaveTextContent(
+      '다른 작업 폴더에서 쓰는 브랜치 work2는 옮기지 않습니다. 옛 커밋에 남습니다.',
+    );
+    fireEvent.click(within(row).getByRole('button', { name: '그래도 저장' }));
+
+    expect(await screen.findByText('브랜치 work3도 함께 옮겼습니다.')).toBeInTheDocument();
   });
 
   it('offers no rewording where direct edits are off', async () => {

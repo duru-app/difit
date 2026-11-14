@@ -17,6 +17,7 @@ import { CommentThreadCard } from './CommentThreadCard';
 import { CommitMessageBody, type LoadCommitMessage } from './CommitMessageBody';
 import { CommitMessageForm, type RewordControls } from './CommitMessageForm';
 import { FixupOverlayBlock } from './FixupOverlayCard';
+import { MovedBranchesNotice } from './MovedBranchesNotice';
 import type { AppearanceSettings } from './SettingsModal';
 
 const TOUCH_ICON_CLASS = '[@media(hover:none)]:size-[18px]';
@@ -56,7 +57,12 @@ export function CommitCommentsSection({
 }: CommitCommentsSectionProps) {
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [rewording, setRewording] = useState<string | null>(null);
-  const { reword: guardedReword, isSaving: isSavingMessage } = useGuardedReword(reword);
+  const {
+    reword: guardedReword,
+    isSaving: isSavingMessage,
+    movedBranches,
+    dismissMovedBranches,
+  } = useGuardedReword(reword);
   const { copiedSha, copyHash } = useCopyCommitHash();
   const only = commits.length === 1 ? commits[0] : undefined;
   const addTo = onAddComment ? only : undefined;
@@ -85,7 +91,7 @@ export function CommitCommentsSection({
   const groups = [...listed, ...unlisted].filter(
     ({ addable, showsBody, threads: own }) => own.length > 0 || addable || showsBody,
   );
-  if (groups.length === 0) return null;
+  if (groups.length === 0 && movedBranches.length === 0) return null;
 
   return (
     <FixupOverlayProvider value={fixupOverlay}>
@@ -93,6 +99,7 @@ export function CommitCommentsSection({
         aria-label="커밋 지적"
         className="mb-6 space-y-3 rounded-md border border-github-border bg-github-bg-secondary px-4 py-2"
       >
+        <MovedBranchesNotice branches={movedBranches} onDismiss={dismissMovedBranches} />
         {groups.map(({ commit, label, addable, showsBody, threads: own }) => (
           <div key={commit} className="space-y-2">
             <div className="flex items-center justify-between gap-3 [@media(hover:none)]:flex-col [@media(hover:none)]:items-start [@media(hover:none)]:gap-2">

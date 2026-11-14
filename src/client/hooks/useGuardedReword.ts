@@ -4,14 +4,18 @@ import type { RewordControls } from '../components/CommitMessageForm';
 
 export function useGuardedReword(reword: RewordControls | undefined) {
   const [isSaving, setIsSaving] = useState(false);
+  const [movedBranches, setMovedBranches] = useState<string[]>([]);
   const guarded = useMemo<RewordControls | undefined>(
     () =>
       reword && {
         load: reword.load,
         save: async (request) => {
           setIsSaving(true);
+          setMovedBranches([]);
           try {
-            return await reword.save(request);
+            const result = await reword.save(request);
+            if ('saved' in result) setMovedBranches(result.movedBranches);
+            return result;
           } finally {
             setIsSaving(false);
           }
@@ -19,5 +23,10 @@ export function useGuardedReword(reword: RewordControls | undefined) {
       },
     [reword],
   );
-  return { reword: guarded, isSaving };
+  return {
+    reword: guarded,
+    isSaving,
+    movedBranches,
+    dismissMovedBranches: () => setMovedBranches([]),
+  };
 }
