@@ -1,4 +1,5 @@
-import { renderHook } from '@testing-library/react';
+import { act, render, renderHook } from '@testing-library/react';
+import { createElement, useLayoutEffect } from 'react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
 import type { DiffResponse } from '../../types/diff';
@@ -503,6 +504,180 @@ describe('useLazyDiffRendering', () => {
 
         await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1300 }));
       });
+    });
+  });
+
+  describe('when another selection is shown', () => {
+    const selection = (target: string, paths: string[]): DiffResponse => ({
+      commit: target,
+      files: paths.map((path) => ({
+        path,
+        status: 'modified',
+        additions: 1,
+        deletions: 0,
+        chunks: [],
+      })),
+      ignoreWhitespace: false,
+      isEmpty: false,
+      requestedBaseCommitish: 'base',
+      requestedTargetCommitish: target,
+    });
+
+    function setup(initial: DiffResponse) {
+      const container = document.createElement('div');
+      const scrollTo = vi.fn();
+      container.scrollTo = scrollTo as typeof container.scrollTo;
+      const committed: Array<{ diffData: DiffResponse; paths: string[] }> = [];
+      const hook = renderHook(
+        ({ diffData }: { diffData: DiffResponse }) => {
+          const lazy = useLazyDiffRendering({
+            diffData,
+            diffScrollContainerRef: { current: container },
+            setDiffData: () => {},
+          });
+          useLayoutEffect(() => {
+            committed.push({ diffData, paths: [...lazy.renderedFilePaths] });
+          });
+          return lazy;
+        },
+        { initialProps: { diffData: initial } },
+      );
+      return { ...hook, committed, scrollTo };
+    }
+
+    it('draws only its first files from its first render', () => {
+      const first = selection('one', ['a.ts', 'b.ts', 'c.ts']);
+      const { result, rerender, committed } = setup(first);
+      act(() => result.current.ensureFileRendered('c.ts'));
+
+      const next = selection('two', ['x.ts', 'y.ts']);
+      rerender({ diffData: next });
+
+      const shown = committed.filter((entry) => entry.diffData === next);
+      expect(shown.length).toBeGreaterThan(0);
+      for (const entry of shown) expect(entry.paths.sort()).toEqual(['x.ts', 'y.ts']);
+    });
+
+    it('scrolls the diff back to the top, but not when the same selection is reloaded', () => {
+      const { rerender, scrollTo } = setup(selection('one', ['a.ts']));
+
+      rerender({ diffData: selection('one', ['a.ts', 'b.ts']) });
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      rerender({ diffData: selection('two', ['x.ts']) });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+    });
+
+    it('draws a few files nearest the screen at a time and looks at the rest again', () => {
+      type Callback = (entries: IntersectionObserverEntry[]) => void;
+      let notify: Callback = () => {};
+      const reobserved: Array<string | undefined> = [];
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          constructor(callback: Callback) {
+            notify = callback;
+          }
+          observe(node: HTMLElement) {
+            reobserved.push(node.dataset.filePath);
+          }
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const container = document.createElement('div');
+      const paths = Array.from({ length: 12 }, (_, index) => `f${index}.ts`);
+      const nodes = paths.map((path) => {
+        const node = document.createElement('div');
+        node.dataset.filePath = path;
+        return node;
+      });
+      const diffData = selection('one', paths);
+      const scrollRef = { current: container };
+      const { result } = renderHook(() =>
+        useLazyDiffRendering({
+          diffData,
+          diffScrollContainerRef: scrollRef,
+          setDiffData: () => {},
+        }),
+      );
+      act(() => {
+        nodes.forEach((node, index) =>
+          result.current.registerLazyFileContainer(paths[index]!, node),
+        );
+      });
+      const entries = nodes
+        .slice(2)
+        .reverse()
+        .map(
+          (target, index, all) =>
+            ({
+              isIntersecting: true,
+              target,
+              rootBounds: { top: 0 },
+              boundingClientRect: { top: (all.length - index) * 100 },
+            }) as unknown as IntersectionObserverEntry,
+        );
+      reobserved.length = 0;
+
+      act(() => notify(entries));
+
+      expect([...result.current.renderedFilePaths]).toEqual([
+        'f0.ts',
+        'f1.ts',
+        'f2.ts',
+        'f3.ts',
+        'f4.ts',
+        'f5.ts',
+      ]);
+      expect(new Set(reobserved)).toEqual(
+        new Set(['f6.ts', 'f7.ts', 'f8.ts', 'f9.ts', 'f10.ts', 'f11.ts']),
+      );
+      vi.unstubAllGlobals();
+    });
+
+    it("leaves its files to its own observer, not the previous selection's", () => {
+      const observed: Array<{ observer: number; path: string | undefined }> = [];
+      let created = 0;
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          private readonly id = created++;
+          observe(node: HTMLElement) {
+            observed.push({ observer: this.id, path: node.dataset.filePath });
+          }
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const container = document.createElement('div');
+      const Files = ({ diffData }: { diffData: DiffResponse }) => {
+        const { registerLazyFileContainer } = useLazyDiffRendering({
+          diffData,
+          diffScrollContainerRef: { current: container },
+          setDiffData: () => {},
+        });
+        return diffData.files.map(({ path }) =>
+          createElement('div', {
+            key: `${diffData.commit}:${path}`,
+            'data-file-path': path,
+            ref: (node: HTMLDivElement | null) => registerLazyFileContainer(path, node),
+          }),
+        );
+      };
+      const paths = (count: number, prefix: string) =>
+        Array.from({ length: count }, (_, index) => `${prefix}${index}.ts`);
+
+      const { rerender } = render(
+        createElement(Files, { diffData: selection('one', paths(12, 'a')) }),
+      );
+      const firstObserver = created - 1;
+      rerender(createElement(Files, { diffData: selection('two', paths(12, 'x')) }));
+
+      const newFiles = observed.filter(({ path }) => path?.startsWith('x'));
+      expect(newFiles.length).toBeGreaterThan(0);
+      expect(newFiles.every(({ observer }) => observer > firstObserver)).toBe(true);
+      vi.unstubAllGlobals();
     });
   });
 });

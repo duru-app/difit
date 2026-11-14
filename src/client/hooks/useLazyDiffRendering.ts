@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { type DiffResponse } from '../../types/diff';
 import { getFileElementId, stickyHeaderCover } from '../utils/domUtils';
 
-const INITIAL_RENDERED_FILE_COUNT = 8;
+const INITIAL_RENDERED_FILE_COUNT = 2;
 const LAZY_RENDER_ROOT_MARGIN = '1200px 0px';
+const MAX_FILES_DRAWN_AT_ONCE = 4;
 const SIDEBAR_SCROLL_MAX_ATTEMPTS = 60;
 const SIDEBAR_SCROLL_CORRECTION_DELAY_MS = 180;
 // How long an element may take to be drawn after the scroll reached its file.
@@ -19,6 +20,9 @@ const isTextField = (element: HTMLElement) =>
   element instanceof HTMLInputElement ||
   element instanceof HTMLTextAreaElement ||
   element instanceof HTMLSelectElement;
+
+export const diffRevisionKey = (diffData: DiffResponse) =>
+  `${diffData.requestedBaseCommitish ?? ''}:${diffData.requestedTargetCommitish ?? ''}:${diffData.requestedBaseMode ?? 'direct'}`;
 
 interface UseLazyDiffRenderingOptions {
   diffData: DiffResponse | null;
@@ -48,8 +52,32 @@ export function useLazyDiffRendering({
   const lazyFileObserverRef = useRef<IntersectionObserver | null>(null);
   const lazyFileNodesRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const generatedStatusCheckedRef = useRef<Set<string>>(new Set());
-  const renderedRevisionKeyRef = useRef<string | null>(null);
   const scrollRequestIdRef = useRef(0);
+
+  // Reset while rendering, so the first render of another selection draws only its first files.
+  const revisionKey = diffData ? diffRevisionKey(diffData) : null;
+  const [renderedRevisionKey, setRenderedRevisionKey] = useState<string | null>(null);
+  if (renderedRevisionKey !== revisionKey) {
+    const nextPaths = new Set(
+      (diffData?.files ?? []).slice(0, INITIAL_RENDERED_FILE_COUNT).map((file) => file.path),
+    );
+    renderedFilePathsRef.current = nextPaths;
+    // Left to the previous selection's observer, its files would all be drawn while the first
+    // files are still empty; its effect cleanup disconnects it.
+    lazyFileObserverRef.current = null;
+    generatedStatusCheckedRef.current.clear();
+    setRenderedRevisionKey(revisionKey);
+    setRenderedFilePaths(nextPaths);
+  }
+
+  const shownRevisionKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const previous = shownRevisionKeyRef.current;
+    shownRevisionKeyRef.current = revisionKey;
+    if (previous !== null && revisionKey !== null && previous !== revisionKey) {
+      diffScrollContainerRef.current?.scrollTo({ top: 0 });
+    }
+  }, [revisionKey, diffScrollContainerRef]);
 
   // The user scrolling the diff drops a scroll still waiting for its target.
   useEffect(() => {
@@ -121,31 +149,6 @@ export function useLazyDiffRendering({
     };
   }, [diffScrollContainerRef]);
 
-  useEffect(() => {
-    if (!diffData) {
-      const nextPaths = new Set<string>();
-      renderedFilePathsRef.current = nextPaths;
-      setRenderedFilePaths(nextPaths);
-      generatedStatusCheckedRef.current.clear();
-      renderedRevisionKeyRef.current = null;
-      return;
-    }
-
-    const revisionKey = `${diffData.requestedBaseCommitish ?? ''}:${diffData.requestedTargetCommitish ?? ''}:${diffData.requestedBaseMode ?? 'direct'}`;
-    if (renderedRevisionKeyRef.current === revisionKey) {
-      return;
-    }
-    renderedRevisionKeyRef.current = revisionKey;
-
-    const initialPaths = diffData.files
-      .slice(0, INITIAL_RENDERED_FILE_COUNT)
-      .map((file) => file.path);
-    const nextPaths = new Set(initialPaths);
-    renderedFilePathsRef.current = nextPaths;
-    setRenderedFilePaths(nextPaths);
-    generatedStatusCheckedRef.current.clear();
-  }, [diffData]);
-
   const ensureFileRendered = useCallback((filePath: string) => {
     const node = lazyFileNodesRef.current.get(filePath);
     if (node && lazyFileObserverRef.current) {
@@ -192,16 +195,26 @@ export function useLazyDiffRendering({
 
     const observer = new IntersectionObserver(
       (entries) => {
+        const distanceFromTop = (entry: IntersectionObserverEntry) =>
+          Math.abs(entry.boundingClientRect.top - (entry.rootBounds?.top ?? 0));
+        const near = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => distanceFromTop(a) - distanceFromTop(b));
+        const drawn = near.slice(0, MAX_FILES_DRAWN_AT_ONCE);
+        drawn.forEach((entry) => observer.unobserve(entry.target));
+        near.slice(MAX_FILES_DRAWN_AT_ONCE).forEach((entry) => {
+          observer.unobserve(entry.target);
+          observer.observe(entry.target);
+        });
+
         setRenderedFilePaths((prev) => {
           let changed = false;
           const next = new Set(prev);
 
-          entries.forEach((entry) => {
-            if (!entry.isIntersecting) return;
+          drawn.forEach((entry) => {
             const path = (entry.target as HTMLElement).dataset.filePath;
             if (!path || next.has(path)) return;
             next.add(path);
-            observer.unobserve(entry.target);
             changed = true;
           });
 
