@@ -9,6 +9,7 @@ import { useDiffLineLinks } from '../contexts/DiffLineLinkContext';
 import { diffLineTargetOf, remarkDiffLineLinks } from '../utils/diffLineLinks';
 import { extractMarkdownText, isElementWithCodeProps, isSafeUrl } from '../utils/markdownUtils';
 
+import { CommentMermaidDiagram } from './CommentMermaidDiagram';
 import { DiffCodeLine } from './DiffCodeLine';
 import { PrismSyntaxHighlighter } from './PrismSyntaxHighlighter';
 import type { AppearanceSettings } from './SettingsModal';
@@ -199,6 +200,10 @@ const getCommentMarkdownComponents = (syntaxTheme?: AppearanceSettings['syntaxTh
 
     if (language === 'diff' && normalizedCodeText) {
       return <CommentDiffCodeBlock code={normalizedCodeText} />;
+    }
+
+    if (language === 'mermaid' && normalizedCodeText.trim()) {
+      return <CommentMermaidDiagram chart={normalizedCodeText} />;
     }
 
     if (!codeText.trim()) {
