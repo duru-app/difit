@@ -15,11 +15,13 @@ import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
 import { withCurrentFixupShas } from '../utils/fixupLines.js';
 import {
+  endOfLine,
   extraLinesOfPosition,
   isOnCommit,
   lineOfPosition,
   lineOfRange,
   positionOfLines,
+  startOfLine,
 } from '../utils/commentPosition.js';
 import {
   mergeCommentImports,
@@ -55,7 +57,7 @@ import { validateCommitish } from '../cli/utils.js';
 import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
 import { commitDirectEdit, commitDirectReword, type EditedView } from './direct-edit.js';
-import { chooseFixupTarget } from './fixup-target.js';
+import { chooseFixupTarget, type FixupTargetQuery } from './fixup-target.js';
 import { FileWatcherService } from './file-watcher.js';
 import { GitDiffParser } from './git-diff.js';
 import { findLibrarySource, sourceLocations } from './library-source.js';
@@ -578,7 +580,11 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   const commentSessions = new Map<string, CommentSessionState>();
-  const initialCommentThreads = mergeCommentImports([], initialCommentImports).threads;
+  const boundCommentImports = await bindImportedThreads(
+    currentCommentSelection,
+    initialCommentImports,
+  );
+  const initialCommentThreads = mergeCommentImports([], boundCommentImports).threads;
   if (initialCommentThreads.length > 0) {
     commentSessions.set(createCommentSessionKey(currentCommentSelection), {
       threads: initialCommentThreads,
@@ -709,7 +715,7 @@ export async function startServer(options: ServerOptions): Promise<{
       requestedBaseMode,
       cleanRunId,
       repositoryId,
-      commentImports: shouldIncludeCommentImports ? initialCommentImports : undefined,
+      commentImports: shouldIncludeCommentImports ? boundCommentImports : undefined,
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,
       review,
     });
@@ -1183,14 +1189,11 @@ export async function startServer(options: ServerOptions): Promise<{
       res.status(404).json({ error: 'No review shows this view' });
       return;
     }
-    const commits = commitsOfView(view, review).map((commit) => commit.sha);
     try {
-      const fixupTarget = await chooseFixupTarget(repositoryPath, {
-        view: { base: view.baseCommitish, target: view.targetCommitish },
+      const fixupTarget = await chooseFixupTargetIn(review, view, {
         filePath: filepathResult.path,
         ...(wholeFile ? {} : { startLine, endLine, extraRanges: extraRanges ?? [] }),
         side,
-        ...(commits.length > 0 ? { commits } : {}),
       });
       res.json({ fixupTarget });
     } catch (error) {
@@ -1198,6 +1201,71 @@ export async function startServer(options: ServerOptions): Promise<{
       res.status(500).json({ error: 'Failed to choose fixup target' });
     }
   });
+
+  function chooseFixupTargetIn(
+    review: ReviewScope,
+    view: DiffSelection,
+    place: Omit<FixupTargetQuery, 'view' | 'commits'>,
+  ): Promise<string> {
+    const commits = commitsOfView(view, review).map((commit) => commit.sha);
+    return chooseFixupTarget(repositoryPath, {
+      view: { base: view.baseCommitish, target: view.targetCommitish },
+      ...place,
+      ...(commits.length > 0 ? { commits } : {}),
+    });
+  }
+
+  async function bindImportedThreads(
+    selection: DiffSelection,
+    commentImports: CommentImport[],
+  ): Promise<CommentImport[]> {
+    const review = options.stdinDiff ? undefined : findReviewOf(selection);
+    if (!review) return commentImports;
+    return Promise.all(
+      commentImports.map(async (commentImport) => {
+        if (
+          commentImport.type !== 'thread' ||
+          isOnCommit(commentImport) ||
+          commentImport.fixupTarget !== undefined
+        ) {
+          return commentImport;
+        }
+        const view = commentImport.view ?? review.selection;
+        const filepathResult = parseRepositoryRelativePath(commentImport.filePath);
+        if (!isViewOfReview(view, review) || !filepathResult.ok) return commentImport;
+        const { position } = commentImport;
+        const line = lineOfPosition(position);
+        let fixupTarget: string | undefined;
+        try {
+          fixupTarget = await chooseFixupTargetIn(review, view, {
+            filePath: filepathResult.path,
+            side: position.side,
+            ...(line === undefined
+              ? {}
+              : {
+                  startLine: startOfLine(line),
+                  endLine: endOfLine(line),
+                  extraRanges: (extraLinesOfPosition(position) ?? []).map((extra) => ({
+                    start: startOfLine(extra.line),
+                    end: endOfLine(extra.line),
+                    side: extra.side,
+                  })),
+                }),
+          });
+        } catch (error) {
+          console.error('Error choosing fixup target:', error);
+        }
+        const binding = bindingForView(review, view, fixupTarget);
+        return binding
+          ? {
+              ...commentImport,
+              ...(binding.view ? { view: binding.view } : {}),
+              fixupTarget: binding.fixupTarget,
+            }
+          : commentImport;
+      }),
+    );
+  }
 
   // `range=12-12&range=old:40-41`; null when any of them is not a range of lines.
   function parseLineRanges(
@@ -1600,17 +1668,18 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
 
-  app.post('/api/comment-imports', (req, res) => {
+  app.post('/api/comment-imports', async (req, res) => {
     try {
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
-      const session = getOrCreateCommentSession(selection);
       const commentImports = parseCommentImportsPayload(req.body);
       const importId = createHash('sha256')
         .update(serializeCommentImports(commentImports))
         .digest('hex');
+      const bound = await bindImportedThreads(selection, commentImports);
+      const session = getOrCreateCommentSession(selection);
       const merged = mergeCommentImports(
         session.threads,
-        commentImports,
+        bound,
         (thread) => !isThreadDeleted(thread.id, session.decisions),
         (thread) => isThreadResolved(thread.id, session.decisions),
       );

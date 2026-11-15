@@ -7,8 +7,9 @@ import { fetch } from 'undici';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 
 import { startServer } from './server.js';
-import type { DiffResponse } from '../types/diff.js';
+import type { DiffCommentThread, DiffResponse } from '../types/diff.js';
 import { bindingForView, createDiffSelection } from '../utils/diffSelection.js';
+import { countOpenThreadsByCommit } from '../utils/openCommentCounts.js';
 
 let home: string;
 const savedEnv = { ...process.env };
@@ -782,4 +783,148 @@ it('approves nothing when a fixup on the card is rejected while the edit is bein
   expect((await (await fetch(api('/api/comments-json'))).json()) as unknown).toMatchObject({
     decisions: [{ kind: 'rejected', fixupSha: rejected }],
   });
+});
+
+it('binds a comment added by import to the commit that last changed its lines, as the screen does', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const base = commit(repo, 'base', {
+    'discount.js': 'export function discount(price) {\n  return price * 0.1;\n}\n',
+  });
+  const pin = commit(repo, 'test: pin current discount', { 'discount.test.js': PINNING_TEST });
+  const fix = commit(repo, 'fix: round discount down', {
+    'discount.js': 'export function discount(price) {\n  return Math.floor(price * 0.1);\n}\n',
+  });
+  const docs = commit(repo, 'docs: say discounts round down', { 'README.md': 'Rounds down.\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, docs),
+    repoPath: repo,
+    preferredPort: 9340,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  const review = ((await (await fetch(api('/api/diff'))).json()) as DiffResponse).review!;
+  const at = '2026-11-14T00:00:00Z';
+  const post = (path: string, body: unknown) =>
+    fetch(api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const thread = (id: string, filePath: string, position: unknown, extra = {}) => ({
+    type: 'thread',
+    id,
+    filePath,
+    position,
+    body: `Fix ${id}.`,
+    author: 'Agent',
+    createdAt: at,
+    ...extra,
+  });
+
+  await post('/api/comments', {
+    threads: [
+      {
+        id: 'earlier',
+        filePath: 'discount.js',
+        createdAt: at,
+        updatedAt: at,
+        position: { side: 'new', line: 2 },
+        messages: [{ id: 'earlier', body: 'Why?', author: 'User', createdAt: at, updatedAt: at }],
+      },
+    ],
+  });
+  const imported = await post('/api/comment-imports', [
+    thread('test-line', 'discount.test.js', { side: 'new', line: 3 }),
+    thread('unchanged-line', 'discount.js', { side: 'new', line: 3 }),
+    thread('removed-line', 'discount.js', { side: 'old', line: 2 }),
+    thread('with-extra', 'discount.js', { side: 'new', line: 3, extraRanges: [2] }),
+    thread(
+      'on-run',
+      'discount.test.js',
+      { side: 'new', line: 3 },
+      { view: { baseCommitish: base, targetCommitish: fix } },
+    ),
+    thread('named', 'discount.test.js', { side: 'new', line: 1 }, { fixupTarget: fix }),
+    thread('whole-file', 'discount.test.js', { side: 'new', scope: 'file' }),
+    {
+      type: 'reply',
+      threadId: 'earlier',
+      filePath: 'discount.js',
+      position: { side: 'new', line: 2 },
+      body: 'Because.',
+      author: 'Agent',
+      createdAt: at,
+    },
+  ]);
+  expect(imported.status).toBe(200);
+
+  const { threads } = (await (await fetch(api('/api/comments-json'))).json()) as {
+    threads: DiffCommentThread[];
+  };
+  expect(threads.map(({ id, view, fixupTarget }) => ({ id, view, fixupTarget }))).toEqual([
+    { id: 'earlier', view: undefined, fixupTarget: undefined },
+    { id: 'test-line', view: undefined, fixupTarget: pin },
+    { id: 'unchanged-line', view: undefined, fixupTarget: docs },
+    { id: 'removed-line', view: undefined, fixupTarget: docs },
+    { id: 'with-extra', view: undefined, fixupTarget: fix },
+    { id: 'on-run', view: { baseCommitish: base, targetCommitish: fix }, fixupTarget: pin },
+    { id: 'named', view: undefined, fixupTarget: fix },
+    { id: 'whole-file', view: undefined, fixupTarget: pin },
+  ]);
+  expect(threads[0]?.messages.map(({ body }) => body)).toEqual(['Why?', 'Because.']);
+  expect(await (await fetch(api('/api/comments-output'))).text()).toContain(
+    `discount.test.js:L3 [답변 대기]\n고쳐 넣을 커밋: ${pin.slice(0, 7)} test: pin current discount\n`,
+  );
+  expect(Object.fromEntries(countOpenThreadsByCommit(threads, new Map(), [], review))).toEqual({
+    [pin]: 3,
+    [fix]: 2,
+    [docs]: 2,
+  });
+});
+
+it('binds comments given at startup the same way and hands the screen the bound imports', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const base = commit(repo, 'base', { 'discount.js': 'export const rate = 0.1;\n' });
+  const pin = commit(repo, 'test: pin current discount', { 'discount.test.js': PINNING_TEST });
+  const docs = commit(repo, 'docs: say discounts round down', { 'README.md': 'Rounds down.\n' });
+  const onTest = {
+    type: 'thread' as const,
+    id: 't1',
+    filePath: 'discount.test.js',
+    position: { side: 'new' as const, line: 3 },
+    body: 'Say what it pins.',
+  };
+
+  const pinned = await startServer({
+    selection: createDiffSelection(base, docs),
+    repoPath: repo,
+    preferredPort: 9345,
+    commentImports: [onTest],
+  });
+  cleanups.push(() => new Promise<void>((resolve) => pinned.server?.close(() => resolve())));
+  const following = await startServer({
+    selection: createDiffSelection(base, 'main'),
+    repoPath: repo,
+    preferredPort: 9350,
+    commentImports: [onTest],
+  });
+  cleanups.push(() => new Promise<void>((resolve) => following.server?.close(() => resolve())));
+  const read = async (port: number) => {
+    const api = (path: string) => `http://localhost:${port}${path}`;
+    const diff = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+    const stored = (await (await fetch(api('/api/comments-json'))).json()) as {
+      threads: DiffCommentThread[];
+    };
+    return [diff.commentImports?.[0]?.fixupTarget, stored.threads[0]?.fixupTarget];
+  };
+
+  expect(await read(pinned.port)).toEqual([pin, pin]);
+  expect(await read(following.port)).toEqual([undefined, undefined]);
 });

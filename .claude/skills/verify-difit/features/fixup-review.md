@@ -46,6 +46,10 @@ A fixup that renames a file, in a repository that turns rename detection off, ru
 
 Proof: `/api/fixups` lists the first with `status` `renamed`, `path` `calc.js` and `oldPath` `math.js`, and the second with its changed lines under `calc.js`. `get` shows `[승인 대기]`, and `/api/diff` still shows `math.js` on the reviewed commit.
 
+A thread added with `comment add` (or `--comment` at startup) on a review pinned to a range of several commits gets its `fixupTarget` when the server takes it in, by the rule the screen uses. Start the server on the range (`difit HEAD HEAD~3 --background`) and add a thread on a line an earlier commit of the range wrote.
+
+Proof: `get` prints `고쳐 넣을 커밋: <that commit>` under the thread, and `get --format json` carries its full SHA as `fixupTarget`. A line the range did not change gets the range's last commit. A reply, and a thread on a review that follows a branch or the working tree, get none.
+
 ## Gotchas
 
 - The body of `/api/decisions` is a bare array. An object answers 400 `Expected an array of review decisions`.
