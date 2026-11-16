@@ -81,10 +81,11 @@ Keep at most one live difit server per Git root and review target. When you edit
 - If one is running for the same target, do not start another and do not reopen its URL. For working-tree targets (`.`, `working`, `staged`) difit watches the repository, and the open page prompts the user to reload when the diff changes.
 - If review rounds are expected to repeat, start the server with `--keep-alive` (the server survives browser disconnects) or `--background` (a detached keep-alive server; prints JSON like `{"port":4966,"url":"http://localhost:4966","pid":123}` and does not auto-open a browser, so share the URL with the user once).
 - While the server stays alive, exchange feedback without restarting it:
-  - `<difit-command> comment get --port <port>` — read the user's review comments (`--format json` for structured output).
+  - `<difit-command> comment get --port <port>` — read the user's review comments (`--format json` for structured output). A line `바뀐 줄:` under a comment's location means the commented code is no longer in the diff, so the line number above it is the one from when the comment was made.
   - `<difit-command> comment add --port <port> '<json>'` — add new comments to the running server (same JSON shape as `--comment`).
   - `<difit-command> comment resolve <threadId...> --port <port>` — resolve threads only you wrote (every message by `Agent`, never reopened by the reviewer). Any other thread, including one the reviewer replied to or reopened, one imported from GitHub or one added with another author, is refused with exit 1 and nothing is recorded; only the reviewer closes it, with ✓ or by approving a fixup. Answer such a thread by fixup or reply and leave it open. A thread the reviewer already closed with ✓ is reported under `resolved` with nothing recorded.
 - If the review target changes (for example, a different commit range), stop the existing server and start a new one rather than leaving two servers for the same repository.
+- The server stores every thread, reply and decision on disk as it changes, per repository (`~/.difit/reviews/`, shared by the repository's worktrees). A server started again on the same range shows them as they were, and one started after more commits were stacked on the old target, with the same compare-with side, takes them over; do not add them again. `--clean` forgets them.
 
 ## Answering Review Comments With Fixup Commits
 
@@ -272,6 +273,12 @@ jq '.decisions' old.json | curl -X POST "http://localhost:<new port>/api/decisio
 ```
 
 The copied `view` and `fixupTarget` still name pre-fold SHAs, so in the new review such a comment shows only on the whole view, and its commit line shows the short SHA alone. For one you have not answered yet, fix up the commit on the same `git rev-list` line as above.
+
+A thread on a file the new diff does not have is left out of the new review: the viewer, its counts, `Copy All Prompt`, `comment get` and `comment wait` do not show it, and `comment add` reports it in `warnings`. The same happens to stored threads when a review is started again on a diff without their file, which is what starting over after opening the wrong compare-with side looks like. The user sees nothing about them on screen, so right after moving comments or starting a review again, list them and tell the user in the conversation the file, line and text of each:
+
+```bash
+difit comment get --port <new port> --left-out   # prints nothing when no thread is left out
+```
 
 ## Constraints
 

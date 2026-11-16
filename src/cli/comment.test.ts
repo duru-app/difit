@@ -245,6 +245,43 @@ describe('comment subcommand integration', () => {
       expect(consoleOutput[0]).toContain('"threads"');
     });
 
+    it('lists the left-out threads as text with --left-out', async () => {
+      mockFetch.mockResolvedValue(jsonResponse({ threads: [{ id: '1' }], text: 'Left out text' }));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'get', '--port', '4966', '--left-out']);
+
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments-left-out');
+      expect(consoleOutput).toEqual(['Left out text']);
+    });
+
+    it('lists the left-out threads as json with --left-out --format json', async () => {
+      mockFetch.mockResolvedValue(jsonResponse({ threads: [{ id: '1' }], text: 'Left out text' }));
+
+      const command = createCommentCommand();
+      await command.parseAsync([
+        'node',
+        'difit',
+        'get',
+        '--port',
+        '4966',
+        '--left-out',
+        '--format',
+        'json',
+      ]);
+
+      expect(consoleOutput).toEqual(['{"threads":[{"id":"1"}]}']);
+    });
+
+    it('prints nothing with --left-out when no thread is left out', async () => {
+      mockFetch.mockResolvedValue(jsonResponse({ threads: [], text: '' }));
+
+      const command = createCommentCommand();
+      await command.parseAsync(['node', 'difit', 'get', '--port', '4966', '--left-out']);
+
+      expect(consoleOutput).toEqual([]);
+    });
+
     it('leaves deleted threads out of the json output', async () => {
       const deletion = { threadId: 'gone', kind: 'deleted', fixupSha: '', at: '2026-01-01' };
       mockFetch.mockResolvedValue(

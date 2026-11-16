@@ -5,7 +5,7 @@
 ## Sub-features
 
 - `add`: new threads and replies, from an argument or stdin
-- `get`: text for reading, `--format json` for thread IDs and `decisions`
+- `get`: text for reading, `--format json` for thread IDs and `decisions`, `--left-out` for the threads left out because their file is not in the diff
 - `wait`: blocks until a thread is the agent's turn, prints one JSON line per thread, exits 0
 - `wait` after the reviewer's `리뷰 끝` button (`POST /api/review-done`): prints `{"state":"review-done"}` and exits 0
 - `add` reply with `threadId`: attaches to that thread; duplicates are judged inside it
@@ -90,6 +90,19 @@ Two User threads at `math.js` line 2, then replies naming each by `"threadId"`:
 - `threadId` that does not exist prints a `warnings` entry and stores nothing;
 - `threadId` with another `position` stores on the named thread and prints a `warnings` entry;
 - the same replies without `threadId` still go to the newest open thread at the place.
+
+## Stored reviews
+
+The server writes threads, replies and decisions to `$DIFIT_CONFIG_DIR/reviews/<repository>.json` before it answers, and a server started again reads them back. End the server yourself (`kill -TERM` or `kill -KILL` on the `pid` in `$S/server.json`), then `harness.sh start "$S" …` again:
+
+- same range: `get --format json` has the same `threads` and `decisions` as before the kill, `codeSnapshot` included;
+- after a commit that deletes a commented line, started on the same compare-with side: `get` shows that thread with `바뀐 줄:` under its location;
+- after a commit that takes a commented file out of the diff: the thread is in neither `get` output nor `wait`, and `get --left-out` lists it (`--format json` for the threads);
+- `add` of a thread on a file the diff does not have: a `warnings` entry starting `Left out 1 thread(s)`, and the thread only in `get --left-out`;
+- `start "$S" --repo <another worktree of $REPO> …`: the same threads;
+- `start "$S" … --clean`: `get` and `get --left-out` print nothing, and so does the next start without `--clean`.
+
+Give a reviewer thread its `codeSnapshot` (`{"content":"<the line>","commit":"<short target SHA>"}`) as the browser does; without it there is nothing to find the line by.
 
 ## Gotchas
 
