@@ -73,7 +73,7 @@ export GIT_COMMITTER_NAME=verify GIT_COMMITTER_EMAIL=verify@example.com
 export GIT_CONFIG_NOSYSTEM=1
 export EVIDENCE='$sandbox/evidence'
 export REPO='$sandbox/repo'
-unset CLAUDE_CODE_MESSAGING_SOCKET NODE_ENV
+unset CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN NODE_ENV
 if [ -s '$sandbox/server.json' ]; then
   export PORT="\$(sed -E 's/.*"port":([0-9]+).*/\1/' '$sandbox/server.json')"
   export URL="http://localhost:\$PORT"
