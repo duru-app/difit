@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { afterAll, beforeEach, vi } from 'vitest';
 import { Agent, setGlobalDispatcher } from 'undici';
 
 // Disable keep-alive for tests to prevent ECONNRESET errors
@@ -9,6 +13,19 @@ setGlobalDispatcher(new Agent({ pipelining: 0 }));
 // Run from a Claude Code session, the tests would otherwise post review updates into it.
 delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
 delete process.env.CLAUDE_CODE_MESSAGING_TOKEN;
+
+// A server under test would otherwise store its reviews in the real ~/.difit.
+const configRoot = mkdtempSync(join(tmpdir(), 'difit-test-config-'));
+let configDirCount = 0;
+beforeEach(() => {
+  const current = process.env.DIFIT_CONFIG_DIR;
+  if (current === undefined || current.startsWith(configRoot)) {
+    process.env.DIFIT_CONFIG_DIR = join(configRoot, String(configDirCount++));
+  }
+});
+afterAll(() => {
+  rmSync(configRoot, { recursive: true, force: true, maxRetries: 10 });
+});
 
 // Mock fetch globally for component tests, but not for server integration tests
 if (!process.env.VITEST_SERVER_TEST) {

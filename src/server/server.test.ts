@@ -318,7 +318,7 @@ describe('Server Integration Tests', () => {
           {
             type: 'thread',
             id: 'agent-1',
-            filePath: 'src/b.ts',
+            filePath: 'test.js',
             position: { side: 'new', line: 20 },
             body: 'agent finding',
             author: 'Agent',
@@ -441,7 +441,8 @@ describe('Server Integration Tests', () => {
     // Restore process.exit
     process.exit = originalProcessExit;
     vi.unstubAllEnvs();
-    await fs.rm(configDir, { recursive: true, force: true });
+    // A server still saving its review writes here for a moment longer.
+    await fs.rm(configDir, { recursive: true, force: true, maxRetries: 10 });
 
     // Clean up any servers created during tests
     for (const server of servers) {
@@ -1439,7 +1440,7 @@ describe('Server Integration Tests', () => {
       const imports = [
         {
           type: 'thread',
-          filePath: 'src/example.ts',
+          filePath: 'test.js',
           position: { side: 'new', line: 42 },
           body: 'Merged server-side comment',
         },
@@ -1454,7 +1455,7 @@ describe('Server Integration Tests', () => {
       const outputResponse = await fetch(`http://localhost:${port}/api/comments-output`);
       const output = await outputResponse.text();
 
-      expect(output).toContain('src/example.ts:L42');
+      expect(output).toContain('test.js:L42');
       expect(output).toContain('Merged server-side comment');
     });
 
@@ -1466,7 +1467,7 @@ describe('Server Integration Tests', () => {
         body: JSON.stringify([
           {
             type: 'thread',
-            filePath: 'src/reply-test.ts',
+            filePath: 'test.js',
             position: { side: 'new', line: 5 },
             body: 'Original comment',
             author: 'User',
@@ -1481,7 +1482,7 @@ describe('Server Integration Tests', () => {
         body: JSON.stringify([
           {
             type: 'reply',
-            filePath: 'src/reply-test.ts',
+            filePath: 'test.js',
             position: { side: 'new', line: 5 },
             body: 'Reply to comment',
             author: 'AI',
@@ -1492,7 +1493,7 @@ describe('Server Integration Tests', () => {
       const jsonResponse = await fetch(`http://localhost:${port}/api/comments-json`);
       const data = (await jsonResponse.json()) as any;
 
-      const thread = data.threads.find((t: any) => t.filePath === 'src/reply-test.ts');
+      const thread = data.threads.find((t: any) => t.filePath === 'test.js');
       expect(thread).toBeDefined();
       expect(thread.messages).toHaveLength(2);
       expect(thread.messages[0].body).toBe('Original comment');
@@ -1503,7 +1504,7 @@ describe('Server Integration Tests', () => {
       const imports = [
         {
           type: 'thread',
-          filePath: 'src/dedup.ts',
+          filePath: 'test.js',
           position: { side: 'new', line: 1 },
           body: 'Unique comment',
         },
@@ -1524,7 +1525,7 @@ describe('Server Integration Tests', () => {
       const jsonResponse = await fetch(`http://localhost:${port}/api/comments-json`);
       const data = (await jsonResponse.json()) as any;
 
-      const threads = data.threads.filter((t: any) => t.filePath === 'src/dedup.ts');
+      const threads = data.threads.filter((t: any) => t.filePath === 'test.js');
       expect(threads).toHaveLength(1);
     });
 
@@ -1536,7 +1537,7 @@ describe('Server Integration Tests', () => {
           {
             type: 'thread',
             id: 'delete-me',
-            filePath: 'src/delete-test.ts',
+            filePath: 'test.js',
             position: { side: 'new', line: 3 },
             body: 'Thread to delete',
           },
@@ -3075,6 +3076,8 @@ describe('Server Integration Tests', () => {
               ]),
             }),
         ]) {
+          // A fresh record for each run, so the one before does not come back.
+          vi.stubEnv('DIFIT_CONFIG_DIR', await fs.mkdtemp(join(configDir, 'run-')));
           const port = await startWithAgentFixup();
           const parser = parserInstances.at(-1)!;
           const read = parser.readThreadFixup.getMockImplementation()!;

@@ -152,7 +152,7 @@ async function removeLockIfStale(lockPath: string): Promise<void> {
   } catch {}
 }
 
-async function withRecordLock<T>(path: string, work: () => Promise<T>): Promise<T> {
+export async function withRecordLock<T>(path: string, work: () => Promise<T>): Promise<T> {
   await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const lockPath = `${path}.lock`;
   const deadline = Date.now() + LOCK_WAIT_MS;

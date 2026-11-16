@@ -14,6 +14,7 @@ import { type DiffMode, type WatchEvent } from '../types/watch.js';
 import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
 import { withCurrentFixupShas } from '../utils/fixupLines.js';
+import { buildFileLineIndex, placeThread, type Placement } from '../utils/threadPlacement.js';
 import {
   endOfLine,
   extraLinesOfPosition,
@@ -88,6 +89,16 @@ import {
   mergeViewedRecord,
   parseViewedRecordUpdate,
 } from './viewed-record.js';
+import {
+  clearReviewRecord,
+  getReviewRecordPath,
+  isLeftOut,
+  readReviewRecord,
+  reviewsBehind,
+  saveReview,
+  takeOverReviews,
+  updateReviewRecord,
+} from './review-record.js';
 
 import {
   type BaseMode,
@@ -97,6 +108,7 @@ import {
   type Comment,
   type CommentThread,
   type DiffCommentThread,
+  type DiffFile,
   type DiffLineRange,
   type DiffResponse,
   type DiffSelection,
@@ -216,6 +228,8 @@ function setCachedDiffResponse(cache: Map<string, DiffResponse>, key: string, va
 
 interface CommentSessionState {
   threads: DiffCommentThread[];
+  // Threads on files the review's diff does not have. No screen or agent output shows them.
+  leftOut: DiffCommentThread[];
   decisions: ReviewDecision[];
   version: number;
   // The reviewer said the review is over, and has written nothing since.
@@ -589,17 +603,111 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   const commentSessions = new Map<string, CommentSessionState>();
+
+  const reviewRecordPath = options.stdinDiff
+    ? null
+    : await getReviewRecordPath(repositoryPath).catch((error: unknown) => {
+        console.error('Error locating the review record:', error);
+        return null;
+      });
+  let reviewSaves: Promise<void> = Promise.resolve();
+  const commentsSaved = () => reviewSaves;
+  function saveCommentSession(selection: DiffSelection) {
+    if (!reviewRecordPath) return;
+    const { threads, leftOut, decisions } = getOrCreateCommentSession(selection);
+    const review = { selection, threads: [...threads, ...leftOut], decisions };
+    reviewSaves = reviewSaves
+      .then(() => updateReviewRecord(reviewRecordPath, (reviews) => saveReview(reviews, review)))
+      .then(
+        () => undefined,
+        (error: unknown) => console.error('Error saving the review record:', error),
+      );
+  }
+
+  async function diffOfReview(selection: DiffSelection): Promise<DiffResponse> {
+    if (options.stdinDiff) return initialDiffData;
+    const cacheKey = createDiffCacheKey(selection, false);
+    const cached = getCachedDiffResponse(diffDataCache, cacheKey);
+    if (cached) return cached;
+    const diff = await parser.parseDiff(selection, false, options.contextLines);
+    setCachedDiffResponse(diffDataCache, cacheKey, diff);
+    return diff;
+  }
+
+  async function filesOfReview(selection: DiffSelection): Promise<Set<string> | undefined> {
+    try {
+      const pinned = pinnedCommentSessionKeys.has(createCommentSessionKey(selection));
+      const [diff, fixups] = await Promise.all([
+        diffOfReview(selection),
+        !options.stdinDiff && pinned ? parser.listThreadFixups(selection) : [],
+      ]);
+      return new Set(
+        [...diff.files, ...fixups.flatMap((fixup) => fixup.files)].flatMap(({ path, oldPath }) =>
+          oldPath ? [path, oldPath] : [path],
+        ),
+      );
+    } catch (error) {
+      console.error('Error listing the files of a review:', error);
+      return undefined;
+    }
+  }
+
+  const isAncestorCommit = async (older: string, newer: string) =>
+    (await runGit(repositoryPath, ['merge-base', '--is-ancestor', older, newer])).code === 0;
+  const restoredCommentSessions = new Map<string, Promise<void>>();
+  // Only the review the server starts on takes over the reviews behind it.
+  function restoreCommentSession(selection: DiffSelection, takesOver = false): Promise<void> {
+    if (!reviewRecordPath || options.clearComments) return Promise.resolve();
+    const key = createCommentSessionKey(selection);
+    const known = restoredCommentSessions.get(key);
+    if (known) return known;
+    const restored = (async () => {
+      try {
+        let record = await readReviewRecord(reviewRecordPath);
+        if (takesOver) {
+          const behind = await reviewsBehind(record.reviews, selection, isAncestorCommit);
+          if (behind.length > 0) {
+            record = await updateReviewRecord(reviewRecordPath, (reviews) =>
+              takeOverReviews(
+                reviews,
+                selection,
+                behind.map((review) => review.selection),
+              ),
+            );
+          }
+        }
+        const stored = record.reviews.find((review) =>
+          diffSelectionsEqual(review.selection, selection),
+        );
+        if (!stored) return;
+        const files = await filesOfReview(selection);
+        const session = getOrCreateCommentSession(selection);
+        const threads =
+          session.threads.length === 0
+            ? stored.threads
+            : mergeCommentThreads(stored.threads, session.threads).threads;
+        session.leftOut = files ? threads.filter((thread) => isLeftOut(thread, files)) : [];
+        session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
+        session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
+        session.version += 1;
+      } catch (error) {
+        console.error('Error restoring the review record:', error);
+      }
+    })();
+    restoredCommentSessions.set(key, restored);
+    return restored;
+  }
+  await restoreCommentSession(currentCommentSelection, true);
+
   const boundCommentImports = await bindImportedThreads(
     currentCommentSelection,
     initialCommentImports,
   );
-  const initialCommentThreads = mergeCommentImports([], boundCommentImports).threads;
-  if (initialCommentThreads.length > 0) {
-    commentSessions.set(createCommentSessionKey(currentCommentSelection), {
-      threads: initialCommentThreads,
-      decisions: [],
-      version: 1,
-    });
+  if (boundCommentImports.length > 0) {
+    const session = getOrCreateCommentSession(currentCommentSelection);
+    session.threads = mergeCommentImports(session.threads, boundCommentImports).threads;
+    session.version += 1;
+    saveCommentSession(currentCommentSelection);
   }
 
   function getCommentSelectionFromQuery(query: Record<string, unknown>): DiffSelection {
@@ -632,6 +740,7 @@ export async function startServer(options: ServerOptions): Promise<{
 
     const nextSession: CommentSessionState = {
       threads: [],
+      leftOut: [],
       decisions: [],
       version: 0,
     };
@@ -696,6 +805,7 @@ export async function startServer(options: ServerOptions): Promise<{
       Boolean(options.stdinDiff),
     );
     const review = await reviewOf(requestedSelection, viewSelection);
+    await restoreCommentSession(review?.selection ?? viewSelection);
     currentCommentSelection = review?.selection ?? viewSelection;
     indexReviewedCommit(requestedSelection);
 
@@ -1504,10 +1614,11 @@ export async function startServer(options: ServerOptions): Promise<{
     selection: DiffSelection,
     nextThreads: DiffCommentThread[],
     nextDecisions: ReviewDecision[] = getOrCreateCommentSession(selection).decisions,
+    nextLeftOut: DiffCommentThread[] = getOrCreateCommentSession(selection).leftOut,
   ): boolean {
     const session = getOrCreateCommentSession(selection);
-    const previous = JSON.stringify([session.threads, session.decisions]);
-    const next = JSON.stringify([nextThreads, nextDecisions]);
+    const previous = JSON.stringify([session.threads, session.decisions, session.leftOut]);
+    const next = JSON.stringify([nextThreads, nextDecisions, nextLeftOut]);
     if (session.reviewDone) {
       const known = new Map(
         session.threads.flatMap((thread) =>
@@ -1526,11 +1637,13 @@ export async function startServer(options: ServerOptions): Promise<{
     }
     session.threads = nextThreads;
     session.decisions = nextDecisions;
+    session.leftOut = nextLeftOut;
 
     if (previous === next) {
       return false;
     }
 
+    saveCommentSession(selection);
     announceCommentSession(session);
     tellClaudeSessionReviewDone(selection);
     return true;
@@ -1670,7 +1783,7 @@ export async function startServer(options: ServerOptions): Promise<{
     });
   }
 
-  app.post('/api/comments', (req, res) => {
+  app.post('/api/comments', async (req, res) => {
     try {
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const body: unknown =
@@ -1697,6 +1810,7 @@ export async function startServer(options: ServerOptions): Promise<{
       if (updateCommentSession(selection, resolvedThreads, resolvedDecisions)) {
         tellClaudeSession(selection, before);
       }
+      await commentsSaved();
 
       res.json({
         success: true,
@@ -1720,21 +1834,49 @@ export async function startServer(options: ServerOptions): Promise<{
         .update(serializeCommentImports(commentImports))
         .digest('hex');
       const bound = await bindImportedThreads(selection, commentImports);
+      const files = await filesOfReview(selection);
       const session = getOrCreateCommentSession(selection);
       const merged = mergeCommentImports(
-        session.threads,
+        [...session.threads, ...session.leftOut],
         bound,
         (thread) => !isThreadDeleted(thread.id, session.decisions),
         (thread) => isThreadResolved(thread.id, session.decisions),
       );
-      const changed = updateCommentSession(selection, merged.threads);
+      const shownIds = new Set(session.threads.map((thread) => thread.id));
+      const leftOutIds = new Set(session.leftOut.map((thread) => thread.id));
+      const newlyLeftOut = merged.threads.filter(
+        (thread) =>
+          !shownIds.has(thread.id) &&
+          !leftOutIds.has(thread.id) &&
+          files !== undefined &&
+          isLeftOut(thread, files),
+      );
+      const leftOut = merged.threads.filter(
+        (thread) => leftOutIds.has(thread.id) || newlyLeftOut.includes(thread),
+      );
+      const changed = updateCommentSession(
+        selection,
+        merged.threads.filter((thread) => !leftOut.includes(thread)),
+        session.decisions,
+        leftOut,
+      );
+      await commentsSaved();
 
+      const leftOutFiles = [
+        ...new Set(newlyLeftOut.flatMap((thread) => (isOnCommit(thread) ? [] : thread.filePath))),
+      ];
       res.json({
         success: true,
         changed,
         count: commentImports.length,
         importId,
-        warnings: merged.warnings,
+        warnings:
+          newlyLeftOut.length === 0
+            ? merged.warnings
+            : [
+                ...merged.warnings,
+                `Left out ${newlyLeftOut.length} thread(s) on files that are not in this diff: ${leftOutFiles.join(', ')}. The viewer does not show them; list them with "difit comment get --left-out".`,
+              ],
       });
     } catch (error) {
       console.error('Error parsing comment imports:', error);
@@ -1742,7 +1884,7 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
 
-  app.delete('/api/comments/:threadId', (req, res) => {
+  app.delete('/api/comments/:threadId', async (req, res) => {
     const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
     const session = getOrCreateCommentSession(selection);
     const threadId = req.params.threadId;
@@ -1754,6 +1896,7 @@ export async function startServer(options: ServerOptions): Promise<{
     }
 
     updateCommentSession(selection, nextThreads);
+    await commentsSaved();
 
     res.json({
       success: true,
@@ -1785,7 +1928,7 @@ export async function startServer(options: ServerOptions): Promise<{
     res.json({ success: true, reviewDone: true, version: session.version });
   });
 
-  app.post('/api/decisions', (req, res) => {
+  app.post('/api/decisions', async (req, res) => {
     try {
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const session = getOrCreateCommentSession(selection);
@@ -1800,6 +1943,7 @@ export async function startServer(options: ServerOptions): Promise<{
         session.threads,
         mergeReviewDecisions(session.decisions, incoming),
       );
+      await commentsSaved();
       res.json({ success: true, changed, count: incoming.length, version: session.version });
     } catch (error) {
       console.error('Error parsing decisions:', error);
@@ -2072,6 +2216,7 @@ export async function startServer(options: ServerOptions): Promise<{
         })),
       ),
     );
+    await commentsSaved();
     if (cardChanged) {
       const refused = refuse('card-changed');
       return { ...refused, body: { ...refused.body, sha: result.sha } };
@@ -2245,6 +2390,7 @@ export async function startServer(options: ServerOptions): Promise<{
         },
       ]),
     );
+    await commentsSaved();
     return {
       status: 200,
       body: {
@@ -2304,9 +2450,67 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   }
 
-  async function renderCommentsOutput(selection: DiffSelection): Promise<string> {
+  async function placementsOf(
+    selection: DiffSelection,
+    threads: readonly DiffCommentThread[],
+  ): Promise<Map<string, Placement>> {
+    const placements = new Map<string, Placement>();
+    const anchored = threads.filter(
+      (thread) => !isOnCommit(thread) && thread.codeSnapshot?.content !== undefined,
+    );
+    if (anchored.length === 0) return placements;
+    let files: DiffFile[];
+    try {
+      files = (await diffOfReview(selection)).files;
+    } catch (error) {
+      console.error('Error reading the diff of a review:', error);
+      return placements;
+    }
+    const pinned = pinnedCommentSessionKeys.has(createCommentSessionKey(selection));
+    const context = {
+      view: selection,
+      review: pinnedReviews.find((review) => diffSelectionsEqual(review.selection, selection)),
+      targetCommit: pinned ? selection.targetCommitish : null,
+    };
+    for (const thread of anchored) {
+      if (isOnCommit(thread)) continue;
+      const file = files.find(
+        ({ path, oldPath }) => path === thread.filePath || oldPath === thread.filePath,
+      );
+      placements.set(
+        thread.id,
+        placeThread(thread, context, file ? buildFileLineIndex(file) : undefined),
+      );
+    }
+    return placements;
+  }
+
+  // A thread bound to a commit of the review keeps the line numbers of that commit.
+  function atPlacement(
+    shown: ShownThread,
+    thread: DiffCommentThread,
+    placement?: Placement,
+  ): ShownThread {
+    if (!placement || !('file' in shown)) return shown;
+    if (placement.kind === 'stale') {
+      return { ...shown, isOutdated: true, outdatedReason: placement.reason };
+    }
+    if (placement.kind !== 'moved' || thread.fixupTarget !== undefined) return shown;
+    const moved = {
+      ...shown,
+      ...(placement.line === undefined ? {} : { line: placement.line }),
+    };
+    if (placement.extraLines) moved.extraLines = placement.extraLines;
+    else delete moved.extraLines;
+    return moved;
+  }
+
+  async function renderCommentsOutput(
+    selection: DiffSelection,
+    from: 'threads' | 'leftOut' = 'threads',
+  ): Promise<string> {
     const session = getOrCreateCommentSession(selection);
-    const kept = session.threads.filter((thread) => !isThreadDeleted(thread.id, session.decisions));
+    const kept = session[from].filter((thread) => !isThreadDeleted(thread.id, session.decisions));
     if (kept.length === 0) return '';
     const fixupsByThread = await fixupsByThreadOrNone(selection);
     const fixupsOf = (threadId: string) => fixupsByThread?.get(threadId) ?? [];
@@ -2314,6 +2518,8 @@ export async function startServer(options: ServerOptions): Promise<{
       (thread) => !isThreadResolved(thread.id, session.decisions, fixupsOf(thread.id)),
     );
     if (threads.length === 0) return '';
+    const placements =
+      from === 'threads' ? await placementsOf(selection, threads) : new Map<string, Placement>();
     const reviewStates =
       fixupsByThread &&
       new Map<string, ThreadReviewState>(
@@ -2325,11 +2531,30 @@ export async function startServer(options: ServerOptions): Promise<{
     const commits = findReviewOf(selection)?.commits;
     return formatCommentsOutput(
       threads.map((thread) =>
-        withCurrentFixupShas(toCommentThread(thread, commits), fixupsOf(thread.id)),
+        atPlacement(
+          withCurrentFixupShas(toCommentThread(thread, commits), fixupsOf(thread.id)),
+          thread,
+          placements.get(thread.id),
+        ),
       ),
       reviewStates,
+      from === 'leftOut'
+        ? 'Threads left out of this review, on files its diff does not have:'
+        : undefined,
     );
   }
+
+  app.get('/api/comments-left-out', async (req, res) => {
+    const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+    const { leftOut, decisions } = getOrCreateCommentSession(selection);
+    res.json({
+      threads: leftOut.filter(
+        (thread) =>
+          !isThreadDeleted(thread.id, decisions) && !isThreadResolved(thread.id, decisions),
+      ),
+      text: await renderCommentsOutput(selection, 'leftOut'),
+    });
+  });
 
   app.get('/api/comments-output', async (req, res) => {
     const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
@@ -2624,6 +2849,13 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   }
 
+  if (options.clearComments && reviewRecordPath) {
+    await reviewSaves;
+    await clearReviewRecord(reviewRecordPath).catch((error: unknown) => {
+      console.error('Error clearing the review record:', error);
+    });
+    saveCommentSession(currentCommentSelection);
+  }
   if (options.clearComments && listensOnLoopbackOnly) {
     const viewedRecordPath = getViewedRecordPath(repositoryId);
     if (viewedRecordPath) {

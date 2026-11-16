@@ -19,7 +19,7 @@ import {
   rangeOfLineNumber,
   sideOfRange,
 } from './commentPosition.js';
-import { commitsOfView, isSameCommit, isSameView } from './diffSelection.js';
+import { commitsOfView, isCommitHash, isSameCommit, isSameView } from './diffSelection.js';
 
 export interface FileLineIndex {
   old: Map<number, string>;
@@ -116,6 +116,15 @@ export function locateThread(
   return { ...atLines(card?.line ?? lineOfRange(position.line), located), isOutdated: false };
 }
 
+// A view opened by name is not searched for a thread made on it, whose lines are exact. A thread
+// whose code was read from another commit is.
+function commitMovedTo(thread: FileCommentThread, view: DiffSelection | null): string | null {
+  const anchorCommit = thread.codeSnapshot?.commit;
+  if (!anchorCommit || !view || !isCommitHash(view.targetCommitish)) return null;
+  if (!isCommitHash(anchorCommit) || isSameCommit(anchorCommit, view.targetCommitish)) return null;
+  return view.targetCommitish;
+}
+
 function atLines(line: LineNumber, extraLines: readonly SidedLine[]) {
   return {
     line,
@@ -174,7 +183,12 @@ export function placeThread(
         isSameCommit(anchorCommit, indexCommit ?? view.targetCommitish));
   }
 
-  const placement = locateThread(thread, index, targetCommit, madeOnThisView);
+  const placement = locateThread(
+    thread,
+    index,
+    targetCommit ?? commitMovedTo(thread, view),
+    madeOnThisView,
+  );
   if (placement.isOutdated) {
     return {
       kind: 'stale',

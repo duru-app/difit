@@ -554,6 +554,40 @@ Related entries are below.`);
       expect(result).toContain('Total comments: 3');
     });
 
+    it('says under the location that the code of an outdated thread is gone or repeats', () => {
+      const thread = {
+        id: '1',
+        file: 'src/App.tsx',
+        line: 10,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        messages: [
+          {
+            id: '1',
+            body: 'Fix this issue',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          },
+        ],
+      };
+
+      expect(
+        formatCommentsOutput([{ ...thread, isOutdated: true, outdatedReason: 'missing' }]),
+      ).toContain(
+        'src/App.tsx:L10\n바뀐 줄: 지적을 단 코드가 지금 diff 에 없다. 위 줄 번호는 지적을 단 때의 것이다.\nFix this issue',
+      );
+      expect(
+        formatCommentsOutput([{ ...thread, isOutdated: true, outdatedReason: 'ambiguous' }]),
+      ).toContain('바뀐 줄: 지적을 단 코드가 지금 diff 의 여러 곳에 있다.');
+      expect(formatCommentsOutput([thread])).not.toContain('바뀐 줄');
+    });
+
+    it('names what it lists when given another heading', () => {
+      expect(formatCommentsOutput([], undefined, 'Threads left out:').split('\n')[1]).toBe(
+        'Threads left out:',
+      );
+    });
+
     it('should show each thread with its review state', () => {
       const comments: Comment[] = [
         { id: '1', file: 'src/App.tsx', line: 10, body: 'Open', timestamp: '2024-01-01T00:00:00Z' },
