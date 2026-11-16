@@ -310,6 +310,17 @@ describe('comment subcommand integration', () => {
       expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments-wait');
     });
 
+    it('returns the line that says the reviewer ended the review', async () => {
+      mockFetch.mockResolvedValue(
+        streamResponse(': waiting\n\n', 'event: done\ndata: {"state":"review-done"}\n\n'),
+      );
+
+      expect(await waitForAgentTurn(4966)).toEqual({
+        kind: 'done',
+        line: '{"state":"review-done"}',
+      });
+    });
+
     it('reports the end of the review', async () => {
       mockFetch.mockResolvedValue(streamResponse('event: end\ndata: review ended\n\n'));
 
@@ -371,6 +382,21 @@ describe('comment subcommand integration', () => {
       await createCommentCommand().parseAsync(['node', 'difit', 'wait', '--port', '4966']);
 
       expect(written.join('')).toBe(`${JSON.stringify(THREAD)}\n`);
+      expect(process.exit).toHaveBeenCalledWith(0);
+    });
+
+    it('prints the review-done line alone on standard output and exits with 0', async () => {
+      mockFetch.mockResolvedValue(streamResponse('event: done\ndata: {"state":"review-done"}\n\n'));
+      const written: string[] = [];
+      vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string, done?: () => void) => {
+        written.push(chunk);
+        done?.();
+        return true;
+      }) as typeof process.stdout.write);
+
+      await createCommentCommand().parseAsync(['node', 'difit', 'wait', '--port', '4966']);
+
+      expect(written.join('')).toBe('{"state":"review-done"}\n');
       expect(process.exit).toHaveBeenCalledWith(0);
     });
   });

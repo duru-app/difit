@@ -703,6 +703,7 @@ function App() {
     (threadId: string) => recordDecision(threadId, 'resolved', ''),
     [recordDecision],
   );
+  const [reviewDone, setReviewDone] = useState(false);
   const [bootstrappedCommentsKey, setBootstrappedCommentsKey] = useState<string | null>(null);
   const hasBootstrappedComments =
     commentsContextKey !== null && commentsContextKey === bootstrappedCommentsKey;
@@ -731,10 +732,12 @@ function App() {
       version?: number;
       threads?: DiffCommentThread[];
       decisions?: ReviewDecision[];
+      reviewDone?: boolean;
     };
     if (typeof payload.version === 'number') {
       serverCommentVersionRef.current = payload.version;
     }
+    setReviewDone(payload.reviewDone === true);
     const decisions = Array.isArray(payload.decisions) ? payload.decisions : [];
     if (decisions.length > 0) {
       mergeDecisions(decisions);
@@ -765,10 +768,12 @@ function App() {
         merged?: boolean;
         threads?: DiffCommentThread[];
         decisions?: ReviewDecision[];
+        reviewDone?: boolean;
       };
       if (typeof result.version === 'number') {
         serverCommentVersionRef.current = result.version;
       }
+      setReviewDone(result.reviewDone === true);
       // Server merged in a concurrent change; adopt it so we don't push a stale set back.
       if (result.merged && Array.isArray(result.threads)) {
         skipNextCommentSyncRef.current = true;
@@ -780,6 +785,15 @@ function App() {
     },
     [getCommentApiUrl, mergeDecisions, replaceThreads],
   );
+
+  const endReview = useCallback(async () => {
+    try {
+      const response = await fetch(getCommentApiUrl('/api/review-done'), { method: 'POST' });
+      if (response.ok) setReviewDone(true);
+    } catch (reviewDoneError) {
+      console.error('Failed to end the review:', reviewDoneError);
+    }
+  }, [getCommentApiUrl]);
 
   // Viewed files management
   const {
@@ -2642,6 +2656,8 @@ function App() {
         if (isMobile) setIsCommentsDrawerOpen(false);
       }}
       onResolveThread={resolveThread}
+      reviewDone={reviewDone}
+      onReviewDone={() => void endReview()}
       {...(isMobile && { onEscape: () => setIsCommentsDrawerOpen(false) })}
       onClose={() => setCommentsPanelShown(false)}
       inDrawer={isMobile}

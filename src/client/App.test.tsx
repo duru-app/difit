@@ -674,6 +674,58 @@ describe('App Component - Clear Comments Functionality', () => {
       );
     });
 
+    describe('ending the review', () => {
+      const serveComments = (session: Record<string, unknown>) =>
+        vi.mocked(global.fetch).mockImplementation((input) => {
+          const url = String(input);
+          if (url.startsWith('/api/comments-json')) {
+            return Promise.resolve({ ok: true, json: async () => session } as Response);
+          }
+          if (url.startsWith('/api/comments') || url.startsWith('/api/review-done')) {
+            return Promise.resolve({ ok: true, json: async () => ({ success: true }) } as Response);
+          }
+          if (url === '/api/revisions') {
+            return Promise.resolve({ ok: true, json: async () => null } as Response);
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => mockDiffResponse,
+            blob: async () => ({ size: 1024 }),
+          } as Response);
+        });
+
+      const doneButton = async () => {
+        const shown = screen.queryByRole('button', { name: /^리뷰 끝/ });
+        if (shown) return shown;
+        fireEvent.click(await screen.findByTitle('Show comments panel'));
+        return screen.findByRole('button', { name: /^리뷰 끝/ });
+      };
+
+      it('shows a review the server says was ended', async () => {
+        serveComments({ threads: [], reviewDone: true });
+        renderApp();
+
+        const button = await doneButton();
+
+        await waitFor(() => expect(button).toBeDisabled());
+      });
+
+      it('tells the server when the button is pressed', async () => {
+        serveComments({ threads: [] });
+        renderApp();
+        const button = await doneButton();
+        expect(button).toBeEnabled();
+
+        fireEvent.click(button);
+
+        await waitFor(() => expect(button).toBeDisabled());
+        expect(vi.mocked(global.fetch)).toHaveBeenCalledWith(
+          '/api/review-done?base=HEAD%5E&target=HEAD',
+          { method: 'POST' },
+        );
+      });
+    });
+
     it('pushes locally recorded decisions to a server session that has none', async () => {
       const thread = createMockThread({
         id: 'thread-1',

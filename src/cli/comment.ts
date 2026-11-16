@@ -59,6 +59,7 @@ async function parseCommentAddInput(json?: string): Promise<string> {
 
 type WaitResult =
   | { kind: 'threads'; lines: string[] }
+  | { kind: 'done'; line: string }
   | { kind: 'ended' }
   | { kind: 'unreachable' }
   | { kind: 'refused'; status: number };
@@ -103,6 +104,8 @@ export async function waitForAgentTurn(
               ]),
           );
           if (fields.get('event') === 'end') return { kind: 'ended' };
+          if (fields.get('event') === 'done')
+            return { kind: 'done', line: fields.get('data') ?? '' };
           if (fields.get('event') === 'threads') {
             const threads = JSON.parse(fields.get('data') ?? '[]') as unknown[];
             return { kind: 'threads', lines: threads.map((thread) => JSON.stringify(thread)) };
@@ -192,7 +195,7 @@ export function createCommentCommand(): Command {
   comment
     .command('wait')
     .description(
-      'Wait until a review thread is your turn, print each such thread as a JSON line, and exit',
+      'Wait until a review thread is your turn or the reviewer ends the review, print each such thread, or {"state":"review-done"}, as a JSON line, and exit',
     )
     .requiredOption('--port <port>', 'port of the running difit server', parseInt)
     .action(async (opts: { port: number }) => {
@@ -210,8 +213,9 @@ export function createCommentCommand(): Command {
         process.exit(1);
       }
       if (result.kind === 'ended') console.error('Review ended');
-      const output =
-        result.kind === 'threads' ? result.lines.map((line) => `${line}\n`).join('') : '';
+      const lines =
+        result.kind === 'threads' ? result.lines : result.kind === 'done' ? [result.line] : [];
+      const output = lines.map((line) => `${line}\n`).join('');
       process.stdout.write(output, () => process.exit(0));
     });
 
