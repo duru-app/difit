@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DiffCommentThread, DiffFile, DiffLine, FileCommentThread } from '../../types/diff';
+import type { DiffCommentThread, DiffFile, DiffLine, FileCommentThread } from '../types/diff';
 
-import { buildFileLineIndex, locateThread, placeThread } from './outdatedComments';
+import { buildFileLineIndex, locateThread, placeThread } from './threadPlacement';
 
 const buildThread = (overrides: Partial<FileCommentThread> = {}): FileCommentThread => ({
   id: 'thread-1',

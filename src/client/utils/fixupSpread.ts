@@ -9,7 +9,7 @@ import type {
 import { isSameCommit } from '../../utils/diffSelection';
 import { deriveThreadReviewState, pendingFixupsFor } from '../../utils/reviewDecisions';
 
-import type { ThreadPlacement } from './outdatedComments';
+import type { ThreadPlacement } from '../../utils/threadPlacement';
 
 export type FixupFile = ThreadFixup['files'][number];
 

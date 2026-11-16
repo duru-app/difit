@@ -172,7 +172,7 @@ import {
   type Placement,
   placeThread,
   type ThreadPlacement,
-} from './utils/outdatedComments';
+} from '../utils/threadPlacement';
 
 const EMPTY_COMMENT_THREADS: CommentThread[] = [];
 const EMPTY_MERGED_CHUNKS: MergedChunk[] = [];

@@ -9,8 +9,8 @@ import type {
   LineNumber,
   ReviewScope,
   SidedLine,
-} from '../../types/diff';
-import { noVisibleLineContradictsAnchor, relocateAnchor } from '../../utils/anchorRelocation';
+} from '../types/diff.js';
+import { noVisibleLineContradictsAnchor, relocateAnchor } from './anchorRelocation.js';
 import {
   extraLinesOfPosition,
   isOnCommit,
@@ -18,8 +18,8 @@ import {
   lineOfRange,
   rangeOfLineNumber,
   sideOfRange,
-} from '../../utils/commentPosition';
-import { commitsOfView, isSameCommit, isSameView } from '../../utils/diffSelection';
+} from './commentPosition.js';
+import { commitsOfView, isSameCommit, isSameView } from './diffSelection.js';
 
 export interface FileLineIndex {
   old: Map<number, string>;
