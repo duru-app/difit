@@ -2797,6 +2797,23 @@ describe('Server Integration Tests', () => {
       });
     });
 
+    it('takes back the end of the review when the reviewer edits the code', async () => {
+      const port = await startPinned();
+      await fetch(`http://localhost:${port}/api/review-done${PINNED}`, { method: 'POST' });
+      const readDone = async () =>
+        (
+          (await (await fetch(`http://localhost:${port}/api/comments-json${PINNED}`)).json()) as {
+            reviewDone?: boolean;
+          }
+        ).reviewDone;
+      expect(await readDone()).toBe(true);
+
+      const response = await postEdit(port, editBody());
+
+      expect(response.status).toBe(200);
+      expect(await readDone()).toBeUndefined();
+    });
+
     it('accepts an edit spanning a hunk far larger than the default body limit', async () => {
       const port = await startPinned();
       const lines = Array.from({ length: 20_000 }, (_, index) => `// line ${index}`);
@@ -4570,6 +4587,89 @@ describe('Server Integration Tests', () => {
 
         expect((await readState(port)).reviewDone).toBe(true);
         expect(await readWait(port)).toContain(DONE_EVENT);
+      });
+
+      it('takes the end back when the reviewer rewrites a comment they wrote before', async () => {
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+        await endReview(port);
+        const { version } = await readState(port);
+        const rewritten = reviewerThread('c1');
+        rewritten.messages[0]!.body = 'fix c1 another way';
+        rewritten.messages[0]!.updatedAt = '2026-01-03T00:00:00Z';
+
+        await postFromPage(port, { threads: [rewritten], baseVersion: version });
+
+        expect((await readState(port)).reviewDone).toBeUndefined();
+      });
+
+      const agentReply = (port: number) =>
+        fetch(`http://localhost:${port}/api/comment-imports${PINNED}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'reply',
+            filePath: 'test.js',
+            position: { side: 'new', line: 3 },
+            body: 'answered',
+          }),
+        });
+
+      const contents = () =>
+        received.map(
+          (data) =>
+            (JSON.parse(data.trim().split('\n').at(-1)!) as { message: { content: string } })
+              .message.content,
+        );
+
+      it('holds the session message while a thread is the agent’s turn, then sends it once', async () => {
+        await listenOnSocket();
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+
+        await endReview(port);
+        await settle();
+
+        expect(contents()).toHaveLength(1);
+        expect(contents()[0]).toContain('your turn on c1');
+
+        await agentReply(port);
+        await settle();
+        await agentThread(port);
+        await settle();
+
+        expect(contents().slice(1)).toEqual([
+          `difit review: the reviewer ended the review on port ${port}\n{"state":"review-done"}`,
+        ]);
+      });
+
+      it('never sends a held session message once the reviewer writes again', async () => {
+        await listenOnSocket();
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+        await endReview(port);
+        const { version, threads } = await readState(port);
+
+        await postFromPage(port, {
+          threads: [...threads, reviewerThread('c2')],
+          baseVersion: version,
+        });
+        await agentReply(port);
+        await settle();
+        await fetch(`http://localhost:${port}/api/comment-imports${PINNED}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'reply',
+            threadId: 'c2',
+            filePath: 'test.js',
+            position: { side: 'new', line: 3 },
+            body: 'answered too',
+          }),
+        });
+        await settle();
+
+        expect(contents().join('\n')).not.toContain('review-done');
       });
 
       it('tells the Claude Code session once', async () => {

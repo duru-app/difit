@@ -220,6 +220,7 @@ interface CommentSessionState {
   version: number;
   // The reviewer said the review is over, and has written nothing since.
   reviewDone?: boolean;
+  reviewDoneUntold?: boolean;
 }
 
 function createResolvedCommentSelection(
@@ -1508,13 +1509,20 @@ export async function startServer(options: ServerOptions): Promise<{
     const previous = JSON.stringify([session.threads, session.decisions]);
     const next = JSON.stringify([nextThreads, nextDecisions]);
     if (session.reviewDone) {
-      const known = new Set(
-        session.threads.flatMap((thread) => thread.messages.map((message) => message.id)),
+      const known = new Map(
+        session.threads.flatMap((thread) =>
+          thread.messages.map((message) => [message.id, message.body] as const),
+        ),
       );
       const reviewerWrote = nextThreads.some((thread) =>
-        thread.messages.some((message) => !known.has(message.id) && !isAgentMessage(message)),
+        thread.messages.some(
+          (message) => !isAgentMessage(message) && known.get(message.id) !== message.body,
+        ),
       );
-      if (reviewerWrote) session.reviewDone = false;
+      if (reviewerWrote) {
+        session.reviewDone = false;
+        session.reviewDoneUntold = false;
+      }
     }
     session.threads = nextThreads;
     session.decisions = nextDecisions;
@@ -1524,6 +1532,7 @@ export async function startServer(options: ServerOptions): Promise<{
     }
 
     announceCommentSession(session);
+    tellClaudeSessionReviewDone(selection);
     return true;
   }
 
@@ -1649,6 +1658,18 @@ export async function startServer(options: ServerOptions): Promise<{
     });
   }
 
+  function tellClaudeSessionReviewDone(selection: DiffSelection) {
+    const session = getOrCreateCommentSession(selection);
+    if (!session.reviewDoneUntold || !process.env.CLAUDE_CODE_MESSAGING_SOCKET) return;
+    sessionMessages = sessionMessages.then(async () => {
+      if (!session.reviewDone || !session.reviewDoneUntold) return;
+      const { waiting } = await threadsAwaitingAgentFor(selection);
+      if (waiting.length > 0 || !session.reviewDone || !session.reviewDoneUntold) return;
+      session.reviewDoneUntold = false;
+      await sendToClaudeSession(reviewDoneMessageFor(port));
+    });
+  }
+
   app.post('/api/comments', (req, res) => {
     try {
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
@@ -1757,12 +1778,9 @@ export async function startServer(options: ServerOptions): Promise<{
     const session = getOrCreateCommentSession(selection);
     if (!session.reviewDone) {
       session.reviewDone = true;
+      session.reviewDoneUntold = true;
       announceCommentSession(session);
-      if (process.env.CLAUDE_CODE_MESSAGING_SOCKET) {
-        sessionMessages = sessionMessages.then(async () => {
-          await sendToClaudeSession(reviewDoneMessageFor(port));
-        });
-      }
+      tellClaudeSessionReviewDone(selection);
     }
     res.json({ success: true, reviewDone: true, version: session.version });
   });
