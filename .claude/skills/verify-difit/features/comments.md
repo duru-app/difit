@@ -7,6 +7,7 @@
 - `add`: new threads and replies, from an argument or stdin
 - `get`: text for reading, `--format json` for thread IDs and `decisions`
 - `wait`: blocks until a thread is the agent's turn, prints one JSON line per thread, exits 0
+- `wait` after the reviewer's `리뷰 끝` button (`POST /api/review-done`): prints `{"state":"review-done"}` and exits 0
 - `add` reply with `threadId`: attaches to that thread; duplicates are judged inside it
 - `resolve` (alias `remove`): resolves threads by ID, only those every message of which is by `Agent` and the reviewer never reopened, and reports a thread already closed with ✓ as resolved
 
@@ -57,6 +58,28 @@ Proof:
 - `resolve` with `MINE` and an unknown ID prints `MINE` under `resolved` and the second under `notFound`, and exits 1.
 - After the reviewer's own close, `resolve` on that thread prints it under `resolved`, exits 0 and adds no decision.
 - A thread the reviewer reopened with the button (`resolved` then `unresolved` in `decisions`, posted to `/api/decisions` as the browser does) is still refused, and so is `NOTE`, a thread the agent opened that the reviewer reopened.
+
+## Review done
+
+On a review with no thread waiting for the agent (a fresh `harness.sh` server), with the wait started first:
+
+```bash
+( . "$S/env.sh"; cd "$REPO"
+  difit comment wait --port "$PORT" > "$S/wait.out" & WAIT=$!
+  sleep 1
+  curl -s -X POST "$URL/api/review-done"; echo
+  wait $WAIT; echo "wait exit $?"; cat "$S/wait.out"
+  timeout 10 difit comment wait --port "$PORT"; echo "later wait exit $?"
+  difit comment add --port "$PORT" '{"type":"thread","author":"User","filePath":"math.js","position":{"side":"new","line":2},"body":"one more"}'
+  difit comment get --port "$PORT" --format json
+) 2>&1 | tee "$S/evidence/review-done.txt"
+```
+
+Proof:
+
+- the waiting command exits 0 and its standard output is the one line `{"state":"review-done"}`;
+- a wait started afterwards prints the same line at once;
+- `get --format json` has `"reviewDone":true` after the button and loses it once a `User` comment is added.
 
 ## Reply with `threadId`
 
