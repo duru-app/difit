@@ -96,6 +96,7 @@ import { HelpModal } from './components/HelpModal';
 import { Logo } from './components/Logo';
 import { NewerTargetButton } from './components/NewerTargetButton';
 import { ReloadButton } from './components/ReloadButton';
+import { ReviewDoneButton } from './components/ReviewDoneButton';
 import { RevisionDetailModal } from './components/RevisionDetailModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SparkleAnimation } from './components/SparkleAnimation';
@@ -703,6 +704,7 @@ function App() {
     (threadId: string) => recordDecision(threadId, 'resolved', ''),
     [recordDecision],
   );
+  const [reviewDone, setReviewDone] = useState(false);
   const [bootstrappedCommentsKey, setBootstrappedCommentsKey] = useState<string | null>(null);
   const hasBootstrappedComments =
     commentsContextKey !== null && commentsContextKey === bootstrappedCommentsKey;
@@ -731,10 +733,12 @@ function App() {
       version?: number;
       threads?: DiffCommentThread[];
       decisions?: ReviewDecision[];
+      reviewDone?: boolean;
     };
     if (typeof payload.version === 'number') {
       serverCommentVersionRef.current = payload.version;
     }
+    setReviewDone(payload.reviewDone === true);
     const decisions = Array.isArray(payload.decisions) ? payload.decisions : [];
     if (decisions.length > 0) {
       mergeDecisions(decisions);
@@ -765,10 +769,12 @@ function App() {
         merged?: boolean;
         threads?: DiffCommentThread[];
         decisions?: ReviewDecision[];
+        reviewDone?: boolean;
       };
       if (typeof result.version === 'number') {
         serverCommentVersionRef.current = result.version;
       }
+      setReviewDone(result.reviewDone === true);
       // Server merged in a concurrent change; adopt it so we don't push a stale set back.
       if (result.merged && Array.isArray(result.threads)) {
         skipNextCommentSyncRef.current = true;
@@ -780,6 +786,15 @@ function App() {
     },
     [getCommentApiUrl, mergeDecisions, replaceThreads],
   );
+
+  const endReview = useCallback(async () => {
+    try {
+      const response = await fetch(getCommentApiUrl('/api/review-done'), { method: 'POST' });
+      if (response.ok) setReviewDone(true);
+    } catch (reviewDoneError) {
+      console.error('Failed to end the review:', reviewDoneError);
+    }
+  }, [getCommentApiUrl]);
 
   // Viewed files management
   const {
@@ -1143,6 +1158,13 @@ function App() {
     () => [...commitThreads, ...normalizedThreads],
     [commitThreads, normalizedThreads],
   );
+  const nothingRemains = useMemo(() => {
+    const listed = shownThreads.filter((thread) => commentPanelStatusById.has(thread.id));
+    return (
+      listed.length > 0 &&
+      listed.every((thread) => commentPanelStatusById.get(thread.id) === 'resolved')
+    );
+  }, [shownThreads, commentPanelStatusById]);
   const showAuthorBadges = useMemo(
     () => hasMultipleCommentAuthors(shownThreads.flatMap((thread) => thread.messages)),
     [shownThreads],
@@ -2748,6 +2770,14 @@ function App() {
                   {threads.length}
                 </button>
               )}
+              {isMobile && (
+                <ReviewDoneButton
+                  reviewDone={reviewDone}
+                  nothingRemains={nothingRemains}
+                  onReviewDone={() => void endReview()}
+                  compact
+                />
+              )}
               <button
                 onClick={() =>
                   isMobile
@@ -2903,6 +2933,13 @@ function App() {
                   코멘트 {threads.length}
                   <span className="font-mono text-[10px] text-github-text-muted">Shift+L</span>
                 </button>
+              )}
+              {!isMobile && (
+                <ReviewDoneButton
+                  reviewDone={reviewDone}
+                  nothingRemains={nothingRemains}
+                  onReviewDone={() => void endReview()}
+                />
               )}
               <div className="flex flex-col gap-1 items-center">
                 <div className="text-xs relative">

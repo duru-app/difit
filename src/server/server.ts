@@ -41,6 +41,7 @@ import { getFileExtension } from '../utils/fileUtils.js';
 import { isSymbolName } from '../utils/symbolName.js';
 import {
   deriveThreadReviewState,
+  isAgentMessage,
   isAgentResponding,
   isAnswerableByEdit,
   isEditableOnCard,
@@ -54,7 +55,12 @@ import {
 } from '../utils/reviewDecisions.js';
 
 import { validateCommitish } from '../cli/utils.js';
-import { sendToClaudeSession, sessionMessageFor } from './claude-session.js';
+import {
+  REVIEW_DONE_LINE,
+  reviewDoneMessageFor,
+  sendToClaudeSession,
+  sessionMessageFor,
+} from './claude-session.js';
 import { CLIENT_GONE_GRACE_MS, createClientPresence } from './client-presence.js';
 import { commitDirectEdit, commitDirectReword, type EditedView } from './direct-edit.js';
 import { chooseFixupTarget, type FixupTargetQuery } from './fixup-target.js';
@@ -212,6 +218,9 @@ interface CommentSessionState {
   threads: DiffCommentThread[];
   decisions: ReviewDecision[];
   version: number;
+  // The reviewer said the review is over, and has written nothing since.
+  reviewDone?: boolean;
+  reviewDoneUntold?: boolean;
 }
 
 function createResolvedCommentSelection(
@@ -1499,6 +1508,22 @@ export async function startServer(options: ServerOptions): Promise<{
     const session = getOrCreateCommentSession(selection);
     const previous = JSON.stringify([session.threads, session.decisions]);
     const next = JSON.stringify([nextThreads, nextDecisions]);
+    if (session.reviewDone) {
+      const known = new Map(
+        session.threads.flatMap((thread) =>
+          thread.messages.map((message) => [message.id, message.body] as const),
+        ),
+      );
+      const reviewerWrote = nextThreads.some((thread) =>
+        thread.messages.some(
+          (message) => !isAgentMessage(message) && known.get(message.id) !== message.body,
+        ),
+      );
+      if (reviewerWrote) {
+        session.reviewDone = false;
+        session.reviewDoneUntold = false;
+      }
+    }
     session.threads = nextThreads;
     session.decisions = nextDecisions;
 
@@ -1506,6 +1531,12 @@ export async function startServer(options: ServerOptions): Promise<{
       return false;
     }
 
+    announceCommentSession(session);
+    tellClaudeSessionReviewDone(selection);
+    return true;
+  }
+
+  function announceCommentSession(session: CommentSessionState) {
     session.version += 1;
     fileWatcher.broadcast({
       type: 'commentsChanged',
@@ -1513,7 +1544,6 @@ export async function startServer(options: ServerOptions): Promise<{
       timestamp: new Date().toISOString(),
     });
     for (const wait of commentWaits) void wait.check();
-    return true;
   }
 
   async function fixupsByThreadFor(
@@ -1577,6 +1607,7 @@ export async function startServer(options: ServerOptions): Promise<{
   const commentWaits = new Set<CommentWait>();
   let commentWaitsEnded = false;
   const REVIEW_ENDED_EVENT = 'event: end\ndata: review ended\n\n';
+  const REVIEW_DONE_EVENT = `event: done\ndata: ${REVIEW_DONE_LINE}\n\n`;
 
   async function endCommentWaits(): Promise<void> {
     commentWaitsEnded = true;
@@ -1627,6 +1658,18 @@ export async function startServer(options: ServerOptions): Promise<{
     });
   }
 
+  function tellClaudeSessionReviewDone(selection: DiffSelection) {
+    const session = getOrCreateCommentSession(selection);
+    if (!session.reviewDoneUntold || !process.env.CLAUDE_CODE_MESSAGING_SOCKET) return;
+    sessionMessages = sessionMessages.then(async () => {
+      if (!session.reviewDone || !session.reviewDoneUntold) return;
+      const { waiting } = await threadsAwaitingAgentFor(selection);
+      if (waiting.length > 0 || !session.reviewDone || !session.reviewDoneUntold) return;
+      session.reviewDoneUntold = false;
+      await sendToClaudeSession(reviewDoneMessageFor(port));
+    });
+  }
+
   app.post('/api/comments', (req, res) => {
     try {
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
@@ -1661,6 +1704,7 @@ export async function startServer(options: ServerOptions): Promise<{
         version: session.version,
         threads: session.threads,
         decisions: session.decisions,
+        ...(session.reviewDone ? { reviewDone: true } : {}),
       });
     } catch (error) {
       console.error('Error parsing comments:', error);
@@ -1725,7 +1769,20 @@ export async function startServer(options: ServerOptions): Promise<{
       version: session.version,
       threads: session.threads,
       decisions: session.decisions,
+      ...(session.reviewDone ? { reviewDone: true } : {}),
     });
+  });
+
+  app.post('/api/review-done', (req, res) => {
+    const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+    const session = getOrCreateCommentSession(selection);
+    if (!session.reviewDone) {
+      session.reviewDone = true;
+      session.reviewDoneUntold = true;
+      announceCommentSession(session);
+      tellClaudeSessionReviewDone(selection);
+    }
+    res.json({ success: true, reviewDone: true, version: session.version });
   });
 
   app.post('/api/decisions', (req, res) => {
@@ -2468,9 +2525,12 @@ export async function startServer(options: ServerOptions): Promise<{
     const wait: CommentWait = {
       check: async () => {
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(selection);
-        if (waiting.length > 0 && commentWaits.has(wait)) {
+        if (!commentWaits.has(wait)) return;
+        if (waiting.length > 0) {
           await wait.finish(`event: threads\ndata: ${JSON.stringify(waiting)}\n\n`);
           recordHandover(selection, waiting, fixupsByThread);
+        } else if (getOrCreateCommentSession(selection).reviewDone) {
+          await wait.finish(REVIEW_DONE_EVENT);
         }
       },
       finish: (event) => {

@@ -674,6 +674,101 @@ describe('App Component - Clear Comments Functionality', () => {
       );
     });
 
+    describe('ending the review', () => {
+      const serveComments = (session: Record<string, unknown>) =>
+        vi.mocked(global.fetch).mockImplementation((input) => {
+          const url = String(input);
+          if (url.startsWith('/api/comments-json')) {
+            return Promise.resolve({ ok: true, json: async () => session } as Response);
+          }
+          if (url.startsWith('/api/comments') || url.startsWith('/api/review-done')) {
+            return Promise.resolve({ ok: true, json: async () => ({ success: true }) } as Response);
+          }
+          if (url === '/api/revisions') {
+            return Promise.resolve({ ok: true, json: async () => null } as Response);
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => mockDiffResponse,
+            blob: async () => ({ size: 1024 }),
+          } as Response);
+        });
+
+      const doneButton = () => screen.findByRole('button', { name: /^리뷰 끝/ });
+
+      it('shows the button in the header with the comments panel closed', async () => {
+        serveComments({ threads: [] });
+        renderApp();
+
+        const button = await doneButton();
+
+        expect(screen.getByTitle('Show comments panel')).toHaveAttribute('aria-expanded', 'false');
+        expect(button.closest('header')).not.toBeNull();
+        expect(button).not.toHaveAttribute('data-prominent');
+      });
+
+      it('makes the header button stand out once every comment is resolved', async () => {
+        const settled = createMockThread({
+          id: 'settled',
+          filePath: 'test.ts',
+          line: 10,
+          body: 'Settled',
+        });
+        mockComments = [settled];
+        mockDecisions = [
+          { threadId: 'settled', kind: 'resolved', fixupSha: '', at: '2026-01-01T00:00:00Z' },
+        ];
+        serveComments({ threads: [settled] });
+        renderApp();
+
+        const button = await doneButton();
+
+        await waitFor(() => expect(button).toHaveAttribute('data-prominent', 'true'));
+        expect(screen.queryByText('리뷰 끝?')).not.toBeInTheDocument();
+      });
+
+      it('puts the button in the phone header next to the comments drawer toggle', async () => {
+        vi.mocked(useViewport).mockReturnValue({ isMobile: true, isDesktop: false });
+        onTestFinished(() => {
+          vi.mocked(useViewport).mockReturnValue({ isMobile: false, isDesktop: true });
+        });
+        serveComments({ threads: [] });
+        renderApp();
+
+        const button = await doneButton();
+
+        expect(button.closest('header')).not.toBeNull();
+        expect(screen.getByRole('button', { name: 'Toggle comments panel' })).toHaveAttribute(
+          'aria-expanded',
+          'false',
+        );
+      });
+
+      it('shows a review the server says was ended', async () => {
+        serveComments({ threads: [], reviewDone: true });
+        renderApp();
+
+        const button = await doneButton();
+
+        await waitFor(() => expect(button).toBeDisabled());
+      });
+
+      it('tells the server when the button is pressed', async () => {
+        serveComments({ threads: [] });
+        renderApp();
+        const button = await doneButton();
+        expect(button).toBeEnabled();
+
+        fireEvent.click(button);
+
+        await waitFor(() => expect(button).toBeDisabled());
+        expect(vi.mocked(global.fetch)).toHaveBeenCalledWith(
+          '/api/review-done?base=HEAD%5E&target=HEAD',
+          { method: 'POST' },
+        );
+      });
+    });
+
     it('pushes locally recorded decisions to a server session that has none', async () => {
       const thread = createMockThread({
         id: 'thread-1',

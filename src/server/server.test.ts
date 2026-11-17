@@ -2797,6 +2797,23 @@ describe('Server Integration Tests', () => {
       });
     });
 
+    it('takes back the end of the review when the reviewer edits the code', async () => {
+      const port = await startPinned();
+      await fetch(`http://localhost:${port}/api/review-done${PINNED}`, { method: 'POST' });
+      const readDone = async () =>
+        (
+          (await (await fetch(`http://localhost:${port}/api/comments-json${PINNED}`)).json()) as {
+            reviewDone?: boolean;
+          }
+        ).reviewDone;
+      expect(await readDone()).toBe(true);
+
+      const response = await postEdit(port, editBody());
+
+      expect(response.status).toBe(200);
+      expect(await readDone()).toBeUndefined();
+    });
+
     it('accepts an edit spanning a hunk far larger than the default body limit', async () => {
       const port = await startPinned();
       const lines = Array.from({ length: 20_000 }, (_, index) => `// line ${index}`);
@@ -4470,6 +4487,206 @@ describe('Server Integration Tests', () => {
 
       expect(await handovers(port)).toEqual([]);
       errors.mockRestore();
+    });
+
+    describe('when the reviewer ends the review', () => {
+      const DONE_EVENT = 'event: done\ndata: {"state":"review-done"}\n\n';
+
+      const endReview = (port: number) =>
+        fetch(`http://localhost:${port}/api/review-done${PINNED}`, { method: 'POST' });
+
+      const readState = async (port: number) =>
+        (await (await fetch(`http://localhost:${port}/api/comments-json${PINNED}`)).json()) as {
+          version: number;
+          reviewDone?: boolean;
+          threads: unknown[];
+        };
+
+      const agentThread = (port: number) =>
+        fetch(`http://localhost:${port}/api/comment-imports${PINNED}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'thread',
+            filePath: 'test.js',
+            position: { side: 'new', line: 1 },
+            body: 'note from the agent',
+          }),
+        });
+
+      it('tells a waiting command, and one that starts later', async () => {
+        const { port } = await startPinned();
+        const waited = readWait(port);
+        await settle();
+        expect((await readState(port)).reviewDone).toBeUndefined();
+
+        const response = await endReview(port);
+
+        expect(response.status).toBe(200);
+        expect(await waited).toContain(DONE_EVENT);
+        expect(await readWait(port)).toContain(DONE_EVENT);
+        expect((await readState(port)).reviewDone).toBe(true);
+      });
+
+      it('tells the page that the review was ended', async () => {
+        const { port } = await startPinned();
+        const { version } = await readState(port);
+
+        const body = (await (await endReview(port)).json()) as Record<string, unknown>;
+
+        expect(body).toMatchObject({ success: true, reviewDone: true });
+        expect(body.version).toBeGreaterThan(version);
+      });
+
+      it('passes a thread that is the agent’s turn before the end of the review', async () => {
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+
+        await endReview(port);
+
+        const text = await readWait(port);
+        expect(text).toContain('"threadId":"c1"');
+        expect(text).not.toContain('review-done');
+      });
+
+      it('takes the end back when the reviewer adds a comment, until they end it again', async () => {
+        const { port } = await startPinned();
+        await endReview(port);
+        const { version, threads } = await readState(port);
+
+        const saved = (await (
+          await postFromPage(port, {
+            threads: [...threads, reviewerThread('c2')],
+            baseVersion: version,
+          })
+        ).json()) as { reviewDone?: boolean };
+
+        expect(saved.reviewDone).toBeUndefined();
+        expect((await readState(port)).reviewDone).toBeUndefined();
+        expect(await readWait(port)).not.toContain('review-done');
+
+        await endReview(port);
+        expect((await readState(port)).reviewDone).toBe(true);
+      });
+
+      it('keeps the end when the agent adds a comment or the reviewer resolves one', async () => {
+        const { port } = await startPinned();
+        await agentThread(port);
+        await endReview(port);
+
+        await agentThread(port);
+        const { threads } = await readState(port);
+        const [first] = threads as Array<{ id: string }>;
+        await fetch(`http://localhost:${port}/api/decisions${PINNED}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify([
+            { threadId: first!.id, kind: 'resolved', fixupSha: '', at: '2026-01-02T00:00:00Z' },
+          ]),
+        });
+
+        expect((await readState(port)).reviewDone).toBe(true);
+        expect(await readWait(port)).toContain(DONE_EVENT);
+      });
+
+      it('takes the end back when the reviewer rewrites a comment they wrote before', async () => {
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+        await endReview(port);
+        const { version } = await readState(port);
+        const rewritten = reviewerThread('c1');
+        rewritten.messages[0]!.body = 'fix c1 another way';
+        rewritten.messages[0]!.updatedAt = '2026-01-03T00:00:00Z';
+
+        await postFromPage(port, { threads: [rewritten], baseVersion: version });
+
+        expect((await readState(port)).reviewDone).toBeUndefined();
+      });
+
+      const agentReply = (port: number) =>
+        fetch(`http://localhost:${port}/api/comment-imports${PINNED}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'reply',
+            filePath: 'test.js',
+            position: { side: 'new', line: 3 },
+            body: 'answered',
+          }),
+        });
+
+      const contents = () =>
+        received.map(
+          (data) =>
+            (JSON.parse(data.trim().split('\n').at(-1)!) as { message: { content: string } })
+              .message.content,
+        );
+
+      it('holds the session message while a thread is the agent’s turn, then sends it once', async () => {
+        await listenOnSocket();
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+
+        await endReview(port);
+        await settle();
+
+        expect(contents()).toHaveLength(1);
+        expect(contents()[0]).toContain('your turn on c1');
+
+        await agentReply(port);
+        await settle();
+        await agentThread(port);
+        await settle();
+
+        expect(contents().slice(1)).toEqual([
+          `difit review: the reviewer ended the review on port ${port}\n{"state":"review-done"}`,
+        ]);
+      });
+
+      it('never sends a held session message once the reviewer writes again', async () => {
+        await listenOnSocket();
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+        await endReview(port);
+        const { version, threads } = await readState(port);
+
+        await postFromPage(port, {
+          threads: [...threads, reviewerThread('c2')],
+          baseVersion: version,
+        });
+        await agentReply(port);
+        await settle();
+        await fetch(`http://localhost:${port}/api/comment-imports${PINNED}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'reply',
+            threadId: 'c2',
+            filePath: 'test.js',
+            position: { side: 'new', line: 3 },
+            body: 'answered too',
+          }),
+        });
+        await settle();
+
+        expect(contents().join('\n')).not.toContain('review-done');
+      });
+
+      it('tells the Claude Code session once', async () => {
+        await listenOnSocket();
+        const { port } = await startPinned();
+
+        await endReview(port);
+        await endReview(port);
+        await settle();
+
+        expect(received).toHaveLength(1);
+        const message = JSON.parse(received[0]!.trim()) as { message: { content: string } };
+        expect(message.message.content.split('\n')).toEqual([
+          `difit review: the reviewer ended the review on port ${port}`,
+          '{"state":"review-done"}',
+        ]);
+      });
     });
   });
 });

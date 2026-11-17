@@ -95,6 +95,15 @@ const renderFocused = (props: HarnessProps = {}) => {
   return { ...result, ref };
 };
 
+describe('ending the review', () => {
+  it('leaves the button to the header, even once nothing remains', () => {
+    render(<Harness statusById={new Map(THREADS.map((item) => [item.id, 'resolved' as const]))} />);
+
+    expect(screen.queryByRole('button', { name: /^리뷰 끝/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('리뷰 끝?')).not.toBeInTheDocument();
+  });
+});
+
 describe('CommentsPanel', () => {
   const documentKeys: string[] = [];
   const recordKey = (event: KeyboardEvent) => documentKeys.push(event.key);

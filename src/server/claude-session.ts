@@ -12,6 +12,12 @@ export function sessionMessageFor(port: number, threads: ThreadAwaitingAgent[]):
   ].join('\n');
 }
 
+export const REVIEW_DONE_LINE = JSON.stringify({ state: 'review-done' });
+
+export function reviewDoneMessageFor(port: number): string {
+  return `difit review: the reviewer ended the review on port ${port}\n${REVIEW_DONE_LINE}`;
+}
+
 // Resolves to whether the message reached the session's socket.
 export function sendToClaudeSession(
   content: string,
