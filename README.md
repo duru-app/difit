@@ -151,7 +151,7 @@ Stdin mode is selected with intent-first rules:
 | `--port`              | 4966            | Preferred port; falls back to +1 if occupied                                                            |
 | `--host`              | 127.0.0.1       | Host address to bind server to (use 0.0.0.0 for external access)                                        |
 | `--no-open`           | false           | Don't automatically open browser                                                                        |
-| `--clean`             | false           | Clear all existing comments and viewed files on startup                                                 |
+| `--clean`             | false           | Clear all existing comments (the ones stored for the repository included) and viewed files on startup   |
 | `--include-untracked` | false           | Automatically include untracked files in diff (only with `.` or `working`)                              |
 | `--keep-alive`        | false           | Keep server running after browser disconnects (stop manually with Ctrl+C)                               |
 | `--background`        | false           | Keep the server running in the background and output JSON connection info                               |
@@ -277,6 +277,7 @@ coursier bootstrap --standalone -o scip-java com.sourcegraph:scip-java_2.13:0.12
 - All Comments 창 대신 코멘트 패널을 쓰고, 노란 단추 메뉴의 `View All Comments`도 패널을 연다. `Shift+L` 하나로 패널과 diff를 오간다. 패널이 닫혀 있으면 열고 `j`/`k`·`Enter`·`d`가 패널 목록을 움직이며, 열려 있는데 diff를 보고 있으면 패널로 돌아가고, 패널에 있으면 닫는다. `Esc`나 diff 클릭은 `j`/`k`를 diff로 돌려보내고 패널은 열어 둔다(폰에서는 `Esc`가 서랍을 닫는다). 머리글 단추로 열면 `j`/`k`는 diff에 남는다. 지금 `j`/`k`가 움직이는 패널에는 파란 테두리가 붙는다
 - `difit`이나 `difit feature main`처럼 이름으로 연 리뷰도 연 순간의 커밋에 머물러, 브랜치에 커밋이 올라와도 diff가 바뀌지 않는다
 - Viewed 표시는 포트가 달라지거나 다른 브라우저로 열어도 내용이 같은 파일이면 그대로 남는다. `--clean`으로 띄우면 다른 포트의 표시까지 모두 풀린다
+- 지적과 답글, 결정 기록은 서버가 `~/.difit/reviews/`에 저장소별로 적어 둔다. 서버를 껐다가 같은 범위로 다시 띄우면 그대로 보이고, 커밋을 더 쌓고 다시 띄우면 앞 리뷰의 지적을 넘겨받는다. 다시 띄운 diff에 없는 파일의 지적은 보이지 않는다. `--clean`으로 띄우면 적어 둔 지적도 모두 지운다
 
 ## 🤖 Calling from Agents
 

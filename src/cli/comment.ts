@@ -168,9 +168,17 @@ export function createCommentCommand(): Command {
     .addOption(
       new Option('--format <format>', 'output format').choices(['text', 'json']).default('text'),
     )
-    .action(async (opts: { port: number; format: string }) => {
+    .option(
+      '--left-out',
+      'list instead the threads the review leaves out because their file is not in its diff',
+    )
+    .action(async (opts: { port: number; format: string; leftOut?: boolean }) => {
       try {
-        const endpoint = opts.format === 'json' ? '/api/comments-json' : '/api/comments-output';
+        const endpoint = opts.leftOut
+          ? '/api/comments-left-out'
+          : opts.format === 'json'
+            ? '/api/comments-json'
+            : '/api/comments-output';
         const response = await fetch(`http://localhost:${opts.port}${endpoint}`);
 
         if (!response.ok) {
@@ -178,7 +186,14 @@ export function createCommentCommand(): Command {
           process.exit(1);
         }
 
-        if (opts.format === 'json') {
+        if (opts.leftOut) {
+          const { threads, text } = (await response.json()) as { threads?: unknown; text?: string };
+          if (opts.format === 'json') {
+            console.log(JSON.stringify({ threads: Array.isArray(threads) ? threads : [] }));
+          } else if (text?.trim()) {
+            console.log(text);
+          }
+        } else if (opts.format === 'json') {
           const data: unknown = await response.json();
           console.log(JSON.stringify(withoutDeletedThreads(data)));
         } else {

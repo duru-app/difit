@@ -22,10 +22,10 @@ import { useViewport } from './hooks/useViewport';
 import { resetClientSettingsForTests } from './services/userSettings';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { spreadFixups } from './utils/fixupSpread';
-import { placeThread } from './utils/outdatedComments';
+import { placeThread } from '../utils/threadPlacement';
 
-vi.mock('./utils/outdatedComments', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./utils/outdatedComments')>();
+vi.mock('../utils/threadPlacement', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/threadPlacement')>();
   return { ...actual, placeThread: vi.fn(actual.placeThread) };
 });
 

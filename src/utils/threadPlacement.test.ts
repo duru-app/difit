@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DiffCommentThread, DiffFile, DiffLine, FileCommentThread } from '../../types/diff';
+import type { DiffCommentThread, DiffFile, DiffLine, FileCommentThread } from '../types/diff';
 
-import { buildFileLineIndex, locateThread, placeThread } from './outdatedComments';
+import { buildFileLineIndex, locateThread, placeThread } from './threadPlacement';
 
 const buildThread = (overrides: Partial<FileCommentThread> = {}): FileCommentThread => ({
   id: 'thread-1',
@@ -497,6 +497,43 @@ describe('placeThread', () => {
       kind: 'stale',
       reason: 'missing',
       line: 10,
+    });
+  });
+
+  describe('on a diff opened by name, with a thread whose code was read from another commit', () => {
+    const carried = () =>
+      buildThread({ codeSnapshot: { content: 'const value = 1;', commit: '1111111' } });
+    const byName = { view: WHOLE, targetCommit: null };
+
+    it('moves the thread to the one line that holds its code', () => {
+      expect(placeThread(carried(), byName, movedDown)).toEqual({ kind: 'moved', line: 12 });
+    });
+
+    it('marks the thread outdated when its code is gone, or is not in the diff at all', () => {
+      expect(placeThread(carried(), byName, gone)).toEqual({
+        kind: 'stale',
+        reason: 'missing',
+        line: 10,
+      });
+      expect(placeThread(carried(), byName, undefined)).toEqual({
+        kind: 'stale',
+        reason: 'missing',
+        line: 10,
+      });
+    });
+
+    it('still only checks the stored line of uncommitted changes', () => {
+      const working = {
+        view: { baseCommitish: '0000000', targetCommitish: '.' },
+        targetCommit: null,
+      };
+
+      expect(placeThread(carried(), working, movedDown)).toEqual({
+        kind: 'stale',
+        reason: 'missing',
+        line: 10,
+      });
+      expect(placeThread(carried(), working, repeated)).toEqual({ kind: 'stored', line: 10 });
     });
   });
 

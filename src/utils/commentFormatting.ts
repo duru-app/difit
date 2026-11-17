@@ -189,10 +189,16 @@ export function formatAllCommentsPrompt(comments: Comment[]): string {
 const wasEdited = ({ createdAt, updatedAt }: DiffCommentMessage): boolean =>
   (Date.parse(updatedAt) || 0) > (Date.parse(createdAt) || 0);
 
+interface PromptOptions {
+  showEdits?: boolean;
+  // Says so under the location when the thread's code is no longer where it was commented.
+  showOutdated?: boolean;
+}
+
 export function formatCommentThreadPrompt(
   thread: ShownThread,
   reviewState?: ThreadReviewState,
-  { showEdits = false }: { showEdits?: boolean } = {},
+  { showEdits = false, showOutdated = false }: PromptOptions = {},
 ): string {
   const onFile = 'file' in thread;
   const sections: string[] = [
@@ -200,6 +206,13 @@ export function formatCommentThreadPrompt(
       ? formatCommentLocation(thread.file, thread.line, thread.side, reviewState, thread.extraLines)
       : `${commitLocationLabel(thread)}${reviewState ? ` [${reviewStateLabel(reviewState)}]` : ''}`,
   ];
+  if (showOutdated && thread.isOutdated) {
+    sections.push(
+      thread.outdatedReason === 'ambiguous'
+        ? '바뀐 줄: 지적을 단 코드가 지금 diff 의 여러 곳에 있다. 위 줄 번호는 지적을 단 때의 것이다.'
+        : '바뀐 줄: 지적을 단 코드가 지금 diff 에 없다. 위 줄 번호는 지적을 단 때의 것이다.',
+    );
+  }
   if (onFile && thread.fixupCommit) {
     const { shortSha, subject } = thread.fixupCommit;
     sections.push(`고쳐 넣을 커밋: ${subject ? `${shortSha} ${subject}` : shortSha}`);
@@ -224,7 +237,7 @@ export function formatAllCommentThreadsPrompt(
   threads: ShownThread[],
   context?: CommentPromptDiffContext,
   reviewStates?: ReadonlyMap<string, ThreadReviewState>,
-  options?: { showEdits?: boolean },
+  options?: PromptOptions,
 ): string {
   if (threads.length === 0) return '';
 
@@ -244,14 +257,16 @@ export function formatAllCommentThreadsPrompt(
 export function formatCommentsOutput(
   input: Comment[] | ShownThread[],
   reviewStates?: ReadonlyMap<string, ThreadReviewState>,
+  heading = '📝 Comments from review session:',
 ): string {
   const threads = input.map((item) => ('messages' in item ? item : normalizeLegacyComment(item)));
   const allPrompts = formatAllCommentThreadsPrompt(threads, undefined, reviewStates, {
     showEdits: true,
+    showOutdated: true,
   });
 
   return [
-    '\n📝 Comments from review session:',
+    `\n${heading}`,
     '='.repeat(50),
     allPrompts,
     '='.repeat(50),

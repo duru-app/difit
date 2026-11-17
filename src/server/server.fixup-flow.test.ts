@@ -909,6 +909,8 @@ it('binds comments given at startup the same way and hands the screen the bound 
     commentImports: [onTest],
   });
   cleanups.push(() => new Promise<void>((resolve) => pinned.server?.close(() => resolve())));
+  // Its own stored reviews: the same range would otherwise bring back the thread bound above.
+  process.env.DIFIT_CONFIG_DIR = join(home, 'following');
   const following = await startServer({
     selection: createDiffSelection(base, 'main'),
     repoPath: repo,
