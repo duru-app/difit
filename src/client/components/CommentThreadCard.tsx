@@ -592,7 +592,7 @@ export function CommentThreadCard({
               className="min-h-10 w-full rounded border border-github-border bg-github-bg-secondary px-3 text-sm text-github-text-primary"
               title={`${anchorCommit} 커밋을 대상으로 리뷰를 다시 엽니다`}
             >
-              이 지적을 달던 시점으로
+              원래 커밋
             </button>
           )}
 

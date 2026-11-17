@@ -1250,10 +1250,10 @@ describe('CommentThreadCard', () => {
         onUpdateMessage={vi.fn()}
       />
     );
-    const reopenButton = () => screen.queryByRole('button', { name: '이 지적을 달던 시점으로' });
+    const reopenButton = () => screen.queryByRole('button', { name: '원래 커밋' });
 
     const { rerender } = render(renderCard({ ...staleThread, anchorCommit: '6e4f6d5' }));
-    await user.click(screen.getByRole('button', { name: '이 지적을 달던 시점으로' }));
+    await user.click(screen.getByRole('button', { name: '원래 커밋' }));
     expect(onOpenReviewAt).toHaveBeenCalledWith('6e4f6d5');
 
     rerender(renderCard({ ...mockThread, anchorCommit: '6e4f6d5' }));
@@ -1294,9 +1294,7 @@ describe('CommentThreadCard', () => {
     };
 
     const { rerender } = render(renderCard(staleThread));
-    expect(
-      screen.queryByRole('button', { name: '이 지적을 달던 시점으로' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '원래 커밋' })).not.toBeInTheDocument();
     await user.click(madeViewButton()!);
     expect(onShowView).toHaveBeenCalledWith(madeView);
     expect(onOpenReviewAt).not.toHaveBeenCalled();
