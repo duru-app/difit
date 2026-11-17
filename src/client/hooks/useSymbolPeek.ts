@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 
 import type { SymbolIndexState } from '../../types/watch';
@@ -23,8 +23,18 @@ export interface SymbolIndexUpdates {
 
 export const NO_INDEX_UPDATES: SymbolIndexUpdates = { seq: 0, byCommit: new Map() };
 
-export function useSymbolPeek({ base, target, enabled }: ReviewRefs & { enabled: boolean }) {
+export function useSymbolPeek({
+  base,
+  target,
+  enabled,
+  jumpToOnlyDeclaration,
+}: ReviewRefs & {
+  enabled: boolean;
+  jumpToOnlyDeclaration?: (request: SymbolPeekRequest) => Promise<boolean>;
+}) {
   const { enableScope, disableScope } = useHotkeysContext();
+  const jumpRef = useRef(jumpToOnlyDeclaration);
+  jumpRef.current = jumpToOnlyDeclaration;
   const [offer, setOffer] = useState<SymbolPeekOffer | null>(null);
   const [stack, setStack] = useState<SymbolPeekRequest[]>([]);
   const [indexUpdates, setIndexUpdates] = useState(NO_INDEX_UPDATES);
@@ -72,7 +82,18 @@ export function useSymbolPeek({ base, target, enabled }: ReviewRefs & { enabled:
       }
       if (event.metaKey || event.ctrlKey) {
         event.preventDefault();
-        open(request);
+        const jump = jumpRef.current;
+        if (!jump) {
+          open(request);
+          return;
+        }
+        setOffer(null);
+        void jump(request).then(
+          (jumped) => {
+            if (!jumped) open(request);
+          },
+          () => open(request),
+        );
         return;
       }
       setOffer({ request, x: event.clientX, y: event.clientY });

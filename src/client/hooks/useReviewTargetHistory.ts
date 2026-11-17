@@ -81,7 +81,7 @@ interface UseReviewTargetHistoryOptions {
 // is recorded in history state, and Back/Forward go back to it without recording anything.
 export function useReviewTargetHistory(
   options: UseReviewTargetHistoryOptions,
-): (to: ReviewHistoryEntry) => void {
+): (to: ReviewHistoryEntry, fromPlace?: ReviewPlace) => void {
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -94,8 +94,9 @@ export function useReviewTargetHistory(
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  return useCallback((to: ReviewHistoryEntry) => {
-    const from = optionsRef.current.current();
+  return useCallback((to: ReviewHistoryEntry, fromPlace?: ReviewPlace) => {
+    const current = optionsRef.current.current();
+    const from = fromPlace ? { ...current, place: fromPlace } : current;
     if (JSON.stringify(historyState(from)) === JSON.stringify(historyState(to))) return;
     const currentState: unknown = window.history.state;
     const kept: Record<string, unknown> =

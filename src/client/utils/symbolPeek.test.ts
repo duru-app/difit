@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SymbolSearchResponse } from '../../types/diff';
+import type { DiffFile, SymbolSearchResponse } from '../../types/diff';
 
 import {
+  diffPlaceOfPath,
   fetchLibrarySource,
   fetchSymbol,
+  onlyDeclarationElsewhere,
   reselect,
   shortRef,
   symbolRequestFromTarget,
@@ -236,5 +238,90 @@ describe('fetchLibrarySource', () => {
       { signal: undefined },
     );
     await expect(fetchLibrarySource('x')).rejects.toThrow();
+  });
+});
+
+describe('diffPlaceOfPath', () => {
+  const file = (path: string, status: DiffFile['status'], oldPath?: string): DiffFile => ({
+    path,
+    status,
+    additions: 0,
+    deletions: 0,
+    chunks: [],
+    ...(oldPath && { oldPath }),
+  });
+  const files = [
+    file('src/a.ts', 'modified'),
+    file('src/new.ts', 'added'),
+    file('src/gone.ts', 'deleted'),
+    file('src/moved.ts', 'renamed', 'src/was.ts'),
+  ];
+  const at = (path: string, ref: string) => diffPlaceOfPath(path, ref, refs, files);
+
+  it('puts a match found in the target on the new side of its diff file', () => {
+    expect(at('src/a.ts', 'bbb2222')).toEqual({ file: 'src/a.ts', side: 'new' });
+    expect(at('src/moved.ts', 'bbb2222')).toEqual({ file: 'src/moved.ts', side: 'new' });
+  });
+
+  it('puts a match found in the base on the old side, under the diff file of its old path', () => {
+    expect(at('src/a.ts', 'aaa1111')).toEqual({ file: 'src/a.ts', side: 'old' });
+    expect(at('src/was.ts', 'aaa1111')).toEqual({ file: 'src/moved.ts', side: 'old' });
+    expect(at('src/gone.ts', 'aaa1111')).toEqual({ file: 'src/gone.ts', side: 'old' });
+  });
+
+  it('leaves out files the diff does not touch and lines a side does not have', () => {
+    expect(at('src/other.ts', 'bbb2222')).toBeNull();
+    expect(at('src/gone.ts', 'bbb2222')).toBeNull();
+    expect(at('src/new.ts', 'aaa1111')).toBeNull();
+  });
+
+  it('leaves out a match found in any other revision', () => {
+    expect(at('src/a.ts', 'ccc3333')).toBeNull();
+  });
+});
+
+describe('onlyDeclarationElsewhere', () => {
+  const request = { name: 'helper', ref: 'bbb2222', from: 'src/a.ts', line: 7, column: 2 };
+  const match = (path: string, line: number) => ({ path, line, text: '' });
+  const result = (
+    definitions: SymbolSearchResponse['definitions'],
+    extra: Partial<SymbolSearchResponse> = {},
+  ): SymbolSearchResponse => ({
+    name: 'helper',
+    ref: 'bbb2222',
+    definitions,
+    references: [],
+    truncated: false,
+    source: 'index',
+    ...extra,
+  });
+
+  it('gives the one declaration in the repository', () => {
+    expect(onlyDeclarationElsewhere(request, result([match('src/b.ts', 3)]))).toEqual(
+      match('src/b.ts', 3),
+    );
+    expect(
+      onlyDeclarationElsewhere(request, result([match('src/b.ts', 3)], { source: 'name' })),
+    ).toEqual(match('src/b.ts', 3));
+  });
+
+  it('gives nothing for several declarations or none', () => {
+    expect(
+      onlyDeclarationElsewhere(request, result([match('src/b.ts', 3), match('src/c.ts', 9)])),
+    ).toBeNull();
+    expect(onlyDeclarationElsewhere(request, result([]))).toBeNull();
+  });
+
+  it('gives nothing when the declaration lives in a library', () => {
+    expect(
+      onlyDeclarationElsewhere(
+        request,
+        result([match('src/b.ts', 3)], { library: 'lombok-1.18.30.jar' }),
+      ),
+    ).toBeNull();
+  });
+
+  it('gives nothing when the clicked name is the declaration itself', () => {
+    expect(onlyDeclarationElsewhere(request, result([match('src/a.ts', 7)]))).toBeNull();
   });
 });
