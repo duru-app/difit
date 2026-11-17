@@ -10,7 +10,7 @@ import open from 'open';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { AUTOSQUASH_PREFIX, COMMIT_MESSAGE_PATH, REVIEWER_EDIT_AUTHOR } from '../types/diff.js';
-import { type DiffMode, type WatchEvent } from '../types/watch.js';
+import { type DiffMode, type SessionStatus, type WatchEvent } from '../types/watch.js';
 import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
 import { withCurrentFixupShas } from '../utils/fixupLines.js';
@@ -39,6 +39,7 @@ import {
 import { withoutThreadTrailers } from '../utils/commitMessage.js';
 import { createId } from '../utils/createId.js';
 import { getFileExtension } from '../utils/fileUtils.js';
+import { isSessionConnected } from '../utils/sessionStatus.js';
 import { isSymbolName } from '../utils/symbolName.js';
 import {
   deriveThreadReviewState,
@@ -1719,6 +1720,23 @@ export async function startServer(options: ServerOptions): Promise<{
   }
   const commentWaits = new Set<CommentWait>();
   let commentWaitsEnded = false;
+  let commentWaitSeenAt: number | null = null;
+
+  function sessionStatus(): SessionStatus {
+    return {
+      waits: commentWaits.size,
+      checkedAgoMs: commentWaitSeenAt === null ? null : Date.now() - commentWaitSeenAt,
+    };
+  }
+
+  function sessionStatusEvent(): WatchEvent {
+    return { type: 'sessionStatus', ...sessionStatus(), timestamp: new Date().toISOString() };
+  }
+
+  function noteCommentWaitSeen() {
+    commentWaitSeenAt = Date.now();
+    fileWatcher.broadcast(sessionStatusEvent());
+  }
   const REVIEW_ENDED_EVENT = 'event: end\ndata: review ended\n\n';
   const REVIEW_DONE_EVENT = `event: done\ndata: ${REVIEW_DONE_LINE}\n\n`;
 
@@ -2746,7 +2764,10 @@ export async function startServer(options: ServerOptions): Promise<{
     }
     res.write(': waiting\n\n');
     // fetch gives up on a body that stays silent for five minutes.
-    const ping = setInterval(() => res.write(': ping\n\n'), 30_000);
+    const ping = setInterval(() => {
+      res.write(': ping\n\n');
+      noteCommentWaitSeen();
+    }, 30_000);
     const wait: CommentWait = {
       check: async () => {
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(selection);
@@ -2761,15 +2782,22 @@ export async function startServer(options: ServerOptions): Promise<{
       finish: (event) => {
         if (!commentWaits.delete(wait)) return Promise.resolve();
         clearInterval(ping);
+        noteCommentWaitSeen();
         return new Promise((resolve) => res.end(event, () => resolve()));
       },
     };
     commentWaits.add(wait);
+    noteCommentWaitSeen();
     req.on('close', () => {
-      commentWaits.delete(wait);
       clearInterval(ping);
+      if (commentWaits.delete(wait)) noteCommentWaitSeen();
     });
     void wait.check();
+  });
+
+  app.get('/api/session-status', (_req, res) => {
+    const status = sessionStatus();
+    res.json({ ...status, connected: isSessionConnected(status, 0) });
   });
 
   const clientPresence = createClientPresence(() => {
@@ -2819,7 +2847,7 @@ export async function startServer(options: ServerOptions): Promise<{
   );
   server.on('close', () => clientPresence.stop());
   acceptLiveSockets(server, (socket) => {
-    fileWatcher.addClient(socket, [...indexEvents.values()]);
+    fileWatcher.addClient(socket, [...indexEvents.values(), sessionStatusEvent()]);
     const leave = options.keepAlive ? undefined : clientPresence.join();
     socket.on('close', () => {
       fileWatcher.removeClient(socket);

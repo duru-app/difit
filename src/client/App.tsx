@@ -39,6 +39,7 @@ import {
   type RewordResponse,
   type ShownThread,
 } from '../types/diff';
+import type { SessionStatus } from '../types/watch';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
 import {
   inStoredOrder,
@@ -97,6 +98,7 @@ import { Logo } from './components/Logo';
 import { NewerTargetButton } from './components/NewerTargetButton';
 import { ReloadButton } from './components/ReloadButton';
 import { ReviewDoneButton } from './components/ReviewDoneButton';
+import { SessionStatusChip } from './components/SessionStatusChip';
 import { RevisionDetailModal } from './components/RevisionDetailModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SparkleAnimation } from './components/SparkleAnimation';
@@ -1258,11 +1260,20 @@ function App() {
 
   // File watch for reload functionality - initialize with callback
   const handleHeadMoved = useCallback(() => setHeadMoveCount((count) => count + 1), []);
+  const [sessionStatus, setSessionStatus] = useState<{
+    status: SessionStatus;
+    receivedAt: number;
+  } | null>(null);
+  const handleSessionStatus = useCallback(
+    (status: SessionStatus) => setSessionStatus({ status, receivedAt: Date.now() }),
+    [],
+  );
   const { shouldReload, reload, watchState } = useFileWatch(
     handleWatchReload,
     handleCommentsChanged,
     symbolPeek.noteIndexChange,
     handleHeadMoved,
+    handleSessionStatus,
   );
 
   const openCommentsPanelWithKeys = useCallback(() => {
@@ -2905,6 +2916,12 @@ function App() {
                 isMobile ? 'gap-3' : 'gap-4'
               }`}
             >
+              {sessionStatus && (
+                <SessionStatusChip
+                  status={sessionStatus.status}
+                  receivedAt={sessionStatus.receivedAt}
+                />
+              )}
               {!isMobile && threads.length > 0 && (
                 <CommentsDropdown
                   commentsCount={threads.length}
