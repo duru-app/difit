@@ -104,6 +104,22 @@ The server writes threads, replies and decisions to `$DIFIT_CONFIG_DIR/reviews/<
 
 Give a reviewer thread its `codeSnapshot` (`{"content":"<the line>","commit":"<short target SHA>"}`) as the browser does; without it there is nothing to find the line by.
 
+## Session status
+
+`GET /api/session-status` is what the page header shows: `waits` (open `comment wait` connections), `checkedAgoMs` (since the server last saw one connect, ping or close; `null` when none ever came) and `connected` (a wait is open, or the last closed less than two minutes ago).
+
+```bash
+( . "$S/env.sh"; cd "$REPO"
+  curl -s "$URL/api/session-status"; echo
+  ( timeout 40 difit comment wait --port "$PORT" ) &
+  sleep 2; curl -s "$URL/api/session-status"; echo
+  wait; curl -s "$URL/api/session-status"; echo
+  sleep 125; curl -s "$URL/api/session-status"; echo
+) 2>&1 | tee "$S/evidence/session-status.txt"
+```
+
+Proof: `{"waits":0,"checkedAgoMs":null,"connected":false}` before any wait; `waits` 1 and `connected` true while it runs, with `checkedAgoMs` under 30000 even past 30 seconds; `waits` 0 and `connected` true right after it ends; `connected` false once two minutes pass.
+
 ## Gotchas
 
 - `"author":"User"` is what makes a thread the reviewer's. Without it the author is `Agent`, which is never the agent's turn, so `wait` blocks forever. Wrap `wait` in `timeout`.
