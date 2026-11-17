@@ -76,8 +76,6 @@ function Harness({ initialFilter = 'remaining', navigationOff = false, ...props 
         pickedThreadId={null}
         onPick={vi.fn()}
         onResolveThread={vi.fn()}
-        reviewDone={false}
-        onReviewDone={vi.fn()}
         onClose={vi.fn()}
         {...props}
       />
@@ -97,59 +95,12 @@ const renderFocused = (props: HarnessProps = {}) => {
   return { ...result, ref };
 };
 
-const ALL_RESOLVED = new Map<string, CommentPanelStatus>(
-  THREADS.map((item) => [item.id, 'resolved']),
-);
+describe('ending the review', () => {
+  it('leaves the button to the header, even once nothing remains', () => {
+    render(<Harness statusById={new Map(THREADS.map((item) => [item.id, 'resolved' as const]))} />);
 
-describe('ending the review from the comments panel', () => {
-  const doneButton = () => screen.getByRole('button', { name: /^리뷰 끝/ });
-
-  it('offers the button next to the counts without a prompt while comments remain', async () => {
-    const onReviewDone = vi.fn();
-    render(<Harness onReviewDone={onReviewDone} />);
-
-    expect(doneButton()).toHaveTextContent(/^리뷰 끝$/);
-    expect(doneButton()).toBeEnabled();
-    expect(doneButton()).toHaveAttribute('aria-pressed', 'false');
-    expect(doneButton()).not.toHaveAttribute('data-prominent');
-    expect(screen.queryByTestId('review-done-prompt')).not.toBeInTheDocument();
-
-    await userEvent.click(doneButton());
-    expect(onReviewDone).toHaveBeenCalledTimes(1);
-  });
-
-  it('makes the button stand out and asks once nothing remains, without sending anything', () => {
-    const onReviewDone = vi.fn();
-    render(<Harness statusById={ALL_RESOLVED} onReviewDone={onReviewDone} />);
-
-    expect(doneButton()).toHaveAttribute('data-prominent', 'true');
-    expect(doneButton()).toBeEnabled();
-    expect(screen.getByTestId('review-done-prompt')).toHaveTextContent(/^리뷰 끝\?$/);
-    expect(onReviewDone).not.toHaveBeenCalled();
-  });
-
-  it('does not ask on a review with no comments', () => {
-    render(<Harness threads={[]} />);
-
-    expect(doneButton()).toBeEnabled();
-    expect(doneButton()).not.toHaveAttribute('data-prominent');
-    expect(screen.queryByTestId('review-done-prompt')).not.toBeInTheDocument();
-  });
-
-  it('shows the review as ended, and takes a press again once that is taken back', async () => {
-    const onReviewDone = vi.fn();
-    const { rerender } = render(
-      <Harness statusById={ALL_RESOLVED} reviewDone onReviewDone={onReviewDone} />,
-    );
-
-    expect(doneButton()).toBeDisabled();
-    expect(doneButton()).toHaveAttribute('aria-pressed', 'true');
-    expect(doneButton()).not.toHaveAttribute('data-prominent');
-    expect(screen.queryByTestId('review-done-prompt')).not.toBeInTheDocument();
-
-    rerender(<Harness reviewDone={false} onReviewDone={onReviewDone} />);
-    await userEvent.click(doneButton());
-    expect(onReviewDone).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /^리뷰 끝/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('리뷰 끝?')).not.toBeInTheDocument();
   });
 });
 

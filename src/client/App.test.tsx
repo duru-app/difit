@@ -694,12 +694,55 @@ describe('App Component - Clear Comments Functionality', () => {
           } as Response);
         });
 
-      const doneButton = async () => {
-        const shown = screen.queryByRole('button', { name: /^리뷰 끝/ });
-        if (shown) return shown;
-        fireEvent.click(await screen.findByTitle('Show comments panel'));
-        return screen.findByRole('button', { name: /^리뷰 끝/ });
-      };
+      const doneButton = () => screen.findByRole('button', { name: /^리뷰 끝/ });
+
+      it('shows the button in the header with the comments panel closed', async () => {
+        serveComments({ threads: [] });
+        renderApp();
+
+        const button = await doneButton();
+
+        expect(screen.getByTitle('Show comments panel')).toHaveAttribute('aria-expanded', 'false');
+        expect(button.closest('header')).not.toBeNull();
+        expect(button).not.toHaveAttribute('data-prominent');
+      });
+
+      it('makes the header button stand out once every comment is resolved', async () => {
+        const settled = createMockThread({
+          id: 'settled',
+          filePath: 'test.ts',
+          line: 10,
+          body: 'Settled',
+        });
+        mockComments = [settled];
+        mockDecisions = [
+          { threadId: 'settled', kind: 'resolved', fixupSha: '', at: '2026-01-01T00:00:00Z' },
+        ];
+        serveComments({ threads: [settled] });
+        renderApp();
+
+        const button = await doneButton();
+
+        await waitFor(() => expect(button).toHaveAttribute('data-prominent', 'true'));
+        expect(screen.queryByText('리뷰 끝?')).not.toBeInTheDocument();
+      });
+
+      it('puts the button in the phone header next to the comments drawer toggle', async () => {
+        vi.mocked(useViewport).mockReturnValue({ isMobile: true, isDesktop: false });
+        onTestFinished(() => {
+          vi.mocked(useViewport).mockReturnValue({ isMobile: false, isDesktop: true });
+        });
+        serveComments({ threads: [] });
+        renderApp();
+
+        const button = await doneButton();
+
+        expect(button.closest('header')).not.toBeNull();
+        expect(screen.getByRole('button', { name: 'Toggle comments panel' })).toHaveAttribute(
+          'aria-expanded',
+          'false',
+        );
+      });
 
       it('shows a review the server says was ended', async () => {
         serveComments({ threads: [], reviewDone: true });

@@ -1,4 +1,4 @@
-import { Check, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import {
   useEffect,
   useImperativeHandle,
@@ -36,8 +36,6 @@ interface CommentsPanelProps {
   pickedThreadId: string | null;
   onPick: (thread: ShownThread) => void;
   onResolveThread: (threadId: string) => void;
-  reviewDone: boolean;
-  onReviewDone: () => void;
   onEscape?: () => void;
   onClose: () => void;
   inDrawer?: boolean;
@@ -84,8 +82,6 @@ export function CommentsPanel({
   pickedThreadId,
   onPick,
   onResolveThread,
-  reviewDone,
-  onReviewDone,
   onEscape,
   onClose,
   inDrawer = false,
@@ -117,10 +113,6 @@ export function CommentsPanel({
   );
   const shown = filter === 'remaining' ? remaining : listed;
   const choosingCount = listed.filter((thread) => statusById.get(thread.id) === 'choosing').length;
-  const nothingRemains = !reviewDone && listed.length > 0 && remaining.length === 0;
-  const reviewDoneHint = reviewDone
-    ? '에이전트에게 리뷰가 끝났다고 알렸습니다. 코멘트를 새로 달면 풀립니다.'
-    : '에이전트에게 리뷰가 끝났다고 알립니다.';
 
   let activeIndex = shown.findIndex((thread) => thread.id === activeThreadId);
   if (activeIndex === -1 && shown.length > 0) {
@@ -224,36 +216,6 @@ export function CommentsPanel({
               선택 대기 {choosingCount}
             </span>
           )}
-          <span className="ml-auto flex items-center gap-1.5">
-            {nothingRemains && (
-              <span
-                data-testid="review-done-prompt"
-                title="남은 코멘트가 없고 fixup을 모두 승인했습니다. 리뷰를 끝내려면 「리뷰 끝」을 누르세요."
-                className="text-xs font-medium text-github-accent"
-              >
-                리뷰 끝?
-              </span>
-            )}
-            <button
-              type="button"
-              disabled={reviewDone}
-              aria-pressed={reviewDone}
-              data-prominent={nothingRemains ? 'true' : undefined}
-              onClick={onReviewDone}
-              title={reviewDoneHint}
-              aria-label={`리뷰 끝: ${reviewDoneHint}`}
-              className={`${FILTER_BUTTON_CLASS} inline-flex items-center gap-1 ${
-                reviewDone
-                  ? 'cursor-default border-github-accent text-github-accent'
-                  : nothingRemains
-                    ? 'border-github-accent bg-github-accent font-semibold text-white hover:bg-github-accent/90'
-                    : FILTER_OFF_CLASS
-              }`}
-            >
-              {reviewDone && <Check size={12} aria-hidden="true" />}
-              리뷰 끝
-            </button>
-          </span>
         </div>
       </div>
 

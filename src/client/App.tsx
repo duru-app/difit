@@ -96,6 +96,7 @@ import { HelpModal } from './components/HelpModal';
 import { Logo } from './components/Logo';
 import { NewerTargetButton } from './components/NewerTargetButton';
 import { ReloadButton } from './components/ReloadButton';
+import { ReviewDoneButton } from './components/ReviewDoneButton';
 import { RevisionDetailModal } from './components/RevisionDetailModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SparkleAnimation } from './components/SparkleAnimation';
@@ -1157,6 +1158,13 @@ function App() {
     () => [...commitThreads, ...normalizedThreads],
     [commitThreads, normalizedThreads],
   );
+  const nothingRemains = useMemo(() => {
+    const listed = shownThreads.filter((thread) => commentPanelStatusById.has(thread.id));
+    return (
+      listed.length > 0 &&
+      listed.every((thread) => commentPanelStatusById.get(thread.id) === 'resolved')
+    );
+  }, [shownThreads, commentPanelStatusById]);
   const showAuthorBadges = useMemo(
     () => hasMultipleCommentAuthors(shownThreads.flatMap((thread) => thread.messages)),
     [shownThreads],
@@ -2656,8 +2664,6 @@ function App() {
         if (isMobile) setIsCommentsDrawerOpen(false);
       }}
       onResolveThread={resolveThread}
-      reviewDone={reviewDone}
-      onReviewDone={() => void endReview()}
       {...(isMobile && { onEscape: () => setIsCommentsDrawerOpen(false) })}
       onClose={() => setCommentsPanelShown(false)}
       inDrawer={isMobile}
@@ -2763,6 +2769,14 @@ function App() {
                   <MessageSquare size={18} />
                   {threads.length}
                 </button>
+              )}
+              {isMobile && (
+                <ReviewDoneButton
+                  reviewDone={reviewDone}
+                  nothingRemains={nothingRemains}
+                  onReviewDone={() => void endReview()}
+                  compact
+                />
               )}
               <button
                 onClick={() =>
@@ -2919,6 +2933,13 @@ function App() {
                   코멘트 {threads.length}
                   <span className="font-mono text-[10px] text-github-text-muted">Shift+L</span>
                 </button>
+              )}
+              {!isMobile && (
+                <ReviewDoneButton
+                  reviewDone={reviewDone}
+                  nothingRemains={nothingRemains}
+                  onReviewDone={() => void endReview()}
+                />
               )}
               <div className="flex flex-col gap-1 items-center">
                 <div className="text-xs relative">
