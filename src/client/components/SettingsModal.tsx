@@ -16,6 +16,7 @@ import {
   getThemesForResolvedTheme,
   isSyntaxThemeForResolvedTheme,
 } from '../utils/themeLoader';
+import { requestNotificationPermission } from '../utils/replyNotifications';
 import { Tooltip } from './Tooltip';
 
 interface EditorSettings {
@@ -32,6 +33,7 @@ interface AppearanceSettings {
   editor: EditorSettings;
   colorVision: ColorVisionMode;
   autoViewedPatterns: string[];
+  replyNotifications: boolean;
 }
 
 interface SettingsModalProps {
@@ -56,6 +58,7 @@ const DEFAULT_SETTINGS: AppearanceSettings = {
   },
   colorVision: 'normal',
   autoViewedPatterns: [],
+  replyNotifications: true,
 };
 
 const FONT_FAMILIES = [
@@ -168,6 +171,7 @@ export function SettingsModal({ isOpen, onClose, settings, onSettingsChange }: S
       ...settings,
       editor: { ...DEFAULT_SETTINGS.editor },
       autoViewedPatterns: DEFAULT_SETTINGS.autoViewedPatterns,
+      replyNotifications: DEFAULT_SETTINGS.replyNotifications,
     });
     setAutoViewedPatternsInput(formatAutoViewedPatterns(DEFAULT_SETTINGS.autoViewedPatterns));
   };
@@ -345,6 +349,24 @@ export function SettingsModal({ isOpen, onClose, settings, onSettingsChange }: S
 
             {activeSection === 'system' && (
               <div className="space-y-6">
+                <div>
+                  <label className="flex items-center gap-2 text-sm font-medium text-github-text-primary">
+                    <input
+                      type="checkbox"
+                      checked={settings.replyNotifications}
+                      onChange={(e) => {
+                        if (e.target.checked) requestNotificationPermission();
+                        onSettingsChange({ ...settings, replyNotifications: e.target.checked });
+                      }}
+                      className="accent-github-accent"
+                    />
+                    Reply Notifications
+                  </label>
+                  <p className="mt-1 text-sm text-github-text-secondary">
+                    Show a browser notification when the agent answers a comment.
+                  </p>
+                </div>
+
                 <div>
                   <label
                     htmlFor="auto-viewed-patterns"
