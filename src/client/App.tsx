@@ -1789,10 +1789,10 @@ function App() {
         chosen.rangeStart === undefined ? null : { view: chosen.view, sha: chosen.rangeStart },
       );
       if (!chosen.selection) return;
-      setIsCommitDrawerOpen(false);
+      if (canHover || chosen.view.kind !== 'commit') setIsCommitDrawerOpen(false);
       showDiff(chosen.selection, place);
     },
-    [review, shownView, shownAnchor, rangeStart, showDiff],
+    [review, shownView, shownAnchor, rangeStart, showDiff, canHover],
   );
   const closeCommitDrawer = useCallback(() => {
     selectView({ kind: 'cancel' });

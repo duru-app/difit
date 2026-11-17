@@ -4183,17 +4183,27 @@ describe('App Component - Commits of the review', () => {
         fireEvent.touchEnd(commitButton(name), { changedTouches: [{ clientX: 10, clientY: 10 }] });
       };
 
+      const mediaQueryMatching = (canHover: boolean) => (query: string) =>
+        ({
+          matches: canHover && query === '(hover: hover)',
+          media: query,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        }) as unknown as MediaQueryList;
+
       beforeEach(() => {
         vi.mocked(useViewport).mockReturnValue({ isMobile: true, isDesktop: false });
         vi.spyOn(document, 'elementFromPoint').mockReturnValue(null);
+        vi.spyOn(window, 'matchMedia').mockImplementation(mediaQueryMatching(false));
       });
 
       afterEach(() => {
         vi.mocked(useViewport).mockReturnValue({ isMobile: false, isDesktop: true });
         vi.mocked(document.elementFromPoint).mockRestore();
+        vi.mocked(window.matchMedia).mockRestore();
       });
 
-      it('opens the commits in a drawer from the header and closes it once a commit is tapped', async () => {
+      it('opens the commits in a drawer from the header and keeps it open once a commit is tapped', async () => {
         renderApp();
         await screen.findByText('Look here');
         expect(drawerButton()).toHaveAttribute('aria-expanded', 'false');
@@ -4206,8 +4216,34 @@ describe('App Component - Commits of the review', () => {
         await waitFor(() =>
           expect(diffQueries().at(-1)).toEqual([COMMITS[1]!.parentSha, COMMITS[1]!.sha]),
         );
-        await waitFor(() => expect(drawerButton()).toHaveAttribute('aria-expanded', 'false'));
         await waitFor(() => expect(drawerButton()).toHaveTextContent('abc1234'));
+        expect(drawerButton()).toHaveAttribute('aria-expanded', 'true');
+        expect(commitButton(/abc1234/)).toHaveAttribute('aria-current', 'true');
+      });
+
+      it('closes the drawer once a commit is clicked on a device with hover', async () => {
+        vi.mocked(window.matchMedia).mockImplementation(mediaQueryMatching(true));
+        renderApp();
+        await screen.findByText('Look here');
+        fireEvent.click(drawerButton());
+
+        fireEvent.click(commitButton(/abc1234/));
+
+        await waitFor(() => expect(drawerButton()).toHaveTextContent('abc1234'));
+        expect(drawerButton()).toHaveAttribute('aria-expanded', 'false');
+      });
+
+      it('closes the drawer once 전체 is tapped', async () => {
+        renderApp();
+        await screen.findByText('Look here');
+        fireEvent.click(drawerButton());
+        fireEvent.click(commitButton(/abc1234/));
+        await waitFor(() => expect(drawerButton()).toHaveTextContent('abc1234'));
+
+        fireEvent.click(commitButton('전체'));
+
+        await waitFor(() => expect(drawerButton()).toHaveAttribute('aria-expanded', 'false'));
+        expect(drawerButton()).toHaveTextContent('전체');
       });
 
       it('closes the drawer from outside it without changing what is shown', async () => {

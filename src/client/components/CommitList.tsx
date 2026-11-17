@@ -459,6 +459,8 @@ export function CommitList({
           {graph.map(({ commit, cell, merged }, index) => {
             const isCurrent = isOnlyCommit || (index >= shownStart && index <= shownEnd);
             const isPreviewed = index >= previewStart && index <= previewEnd;
+            const isOpenInDrawer =
+              inDrawer && isCurrent && (isOnlyCommit || shown.kind === 'commit');
             const amendedMessage = amendedMessages?.get(commit.sha);
             const isActionPinned =
               rewording === commit.sha || commenting === commit.sha || copiedSha === commit.sha;
@@ -513,7 +515,7 @@ export function CommitList({
             // With an open count the comment button stays in line, so the subject stops before
             // it and the other buttons open over the subject to its left.
             const rowActions = inDrawer ? (
-              <div className={`contents ${ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}>
+              <div className={`contents ${isOpenInDrawer ? '' : ROW_ACTIONS_OFF_ON_TOUCH_CLASS}`}>
                 {hoverButtons}
                 {commentButton}
               </div>
@@ -561,6 +563,7 @@ export function CommitList({
                 ))}
                 <li className="group">
                   <div
+                    data-commit-sha={commit.sha}
                     className="relative flex items-stretch"
                     onMouseEnter={(event) => {
                       if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
@@ -569,7 +572,6 @@ export function CommitList({
                   >
                     <button
                       type="button"
-                      data-commit-sha={commit.sha}
                       onMouseDown={(event) => {
                         if (event.button === 0 && !event.shiftKey) {
                           setDrag({ fromSha: commit.sha, overSha: null });
@@ -630,7 +632,11 @@ export function CommitList({
                       )}
                       <span
                         className={
-                          onAddCommitComment ? 'hidden [@media(hover:none)]:contents' : 'contents'
+                          !onAddCommitComment
+                            ? 'contents'
+                            : isOpenInDrawer
+                              ? 'hidden'
+                              : 'hidden [@media(hover:none)]:contents'
                         }
                       >
                         {openCountOf(commit.sha)}
