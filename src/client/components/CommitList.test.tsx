@@ -965,6 +965,116 @@ describe('CommitList', () => {
       expect(actionsOf(/2222222/).className.split(' ')).toContain(TOUCH_HIDDEN);
     });
 
+    describe('in the drawer of a touch device', () => {
+      function renderDrawer(
+        shown: ReviewView,
+        {
+          commits = COMMITS,
+          openCounts,
+        }: { commits?: ReviewCommit[]; openCounts?: Map<string, number> } = {},
+      ) {
+        render(
+          <CommitList
+            review={{ ...REVIEW, commits }}
+            shown={shown}
+            onSelect={vi.fn()}
+            inDrawer
+            reword={{ load: vi.fn(async () => 'change the behavior'), save: vi.fn() }}
+            onAddCommitComment={vi.fn(async () => {})}
+            openCounts={openCounts}
+          />,
+        );
+      }
+      const isOffOnTouch = (name: RegExp) =>
+        actionsOf(name).className.split(' ').includes(TOUCH_HIDDEN);
+
+      it('shows the copy, message and comment buttons on the row of the open commit only', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        expect(isOffOnTouch(/2222222/)).toBe(false);
+        expect(
+          within(actionsOf(/2222222/))
+            .getAllByRole('button')
+            .map((button) => button.getAttribute('aria-label')),
+        ).toEqual(['해시 복사', '메시지 고치기', '커밋에 지적 달기']);
+        expect(isOffOnTouch(/1111111/)).toBe(true);
+        expect(isOffOnTouch(/3333333/)).toBe(true);
+        expect(isOffOnTouch(/4444444/)).toBe(true);
+      });
+
+      it('paints the row of the open commit under its buttons too', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        const OPEN_ROW = '[@media(hover:none)]:bg-github-bg-tertiary';
+        expect(row(/2222222/).parentElement!.className.split(' ')).toContain(OPEN_ROW);
+        expect(row(/1111111/).parentElement!.className.split(' ')).not.toContain(OPEN_ROW);
+      });
+
+      it('outlines the whole open row, buttons included, while a drag would choose it', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        fireEvent.mouseDown(row(/3333333/), { button: 0 });
+        fireEvent.mouseEnter(row(/2222222/));
+
+        const classes = (element: Element) => element.className.split(' ');
+        expect(classes(row(/2222222/).parentElement!)).toContain('outline-dashed');
+        expect(classes(row(/2222222/))).not.toContain('outline-dashed');
+        expect(classes(row(/3333333/))).toContain('outline-dashed');
+      });
+
+      it('draws the comment button as a bubble with a plus', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        const comment = within(actionsOf(/2222222/)).getByRole('button', {
+          name: '커밋에 지적 달기',
+        });
+        expect(comment.querySelector('.lucide-message-square')).not.toBeNull();
+        const plus = comment.querySelector('.lucide-plus');
+        expect(plus).not.toBeNull();
+        expect(plus!.getAttribute('class')!.split(' ')).not.toContain('opacity-0');
+      });
+
+      it('opens the comment form from that row', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        fireEvent.click(
+          within(actionsOf(/2222222/)).getByRole('button', { name: '커밋에 지적 달기' }),
+        );
+
+        expect(screen.getByPlaceholderText(/comment/i)).toBeInTheDocument();
+      });
+
+      it('leaves the open count to the comment button on that row', () => {
+        renderDrawer(
+          { kind: 'commit', sha: COMMITS[1]!.sha },
+          { openCounts: new Map([[COMMITS[1]!.sha, 2]]) },
+        );
+
+        const count = within(row(/2222222/)).getByTitle('열린 지적 2개');
+        expect(count.parentElement!.className.split(' ')).toEqual(['hidden']);
+        expect(
+          within(actionsOf(/2222222/)).getByRole('button', { name: '커밋에 지적 달기' }),
+        ).toHaveTextContent('2');
+      });
+
+      it.each<[string, ReviewView]>([
+        ['전체', { kind: 'all' }],
+        ['a run', { kind: 'range', startSha: COMMITS[1]!.sha, endSha: COMMITS[2]!.sha }],
+      ])('shows them on no row while %s is shown', (_what, shown) => {
+        renderDrawer(shown);
+
+        for (const name of [/1111111/, /2222222/, /3333333/, /4444444/]) {
+          expect(isOffOnTouch(name)).toBe(true);
+        }
+      });
+
+      it('shows them on the only commit of the review', () => {
+        renderDrawer({ kind: 'all' }, { commits: COMMITS.slice(0, 1) });
+
+        expect(isOffOnTouch(/1111111/)).toBe(false);
+      });
+    });
+
     it('takes the open count button out of the row on touch devices too', () => {
       render(
         <CommitList
@@ -1295,6 +1405,29 @@ describe('CommitList on a phone', () => {
       kind: 'drop',
       fromSha: COMMITS[1]!.sha,
       toSha: COMMITS[3]!.sha,
+    });
+  });
+
+  it('drags across the buttons of the open commit as across the rest of its row', () => {
+    const { onSelect, pickFrom } = renderList(
+      { kind: 'commit', sha: COMMITS[2]!.sha },
+      { inDrawer: true },
+    );
+    const copyOfThird = within(rowUnder(30).closest('li')!).getByRole('button', {
+      name: COPY_NAME,
+    });
+
+    hold(20);
+    pickFrom(COMMITS[1]!.sha);
+    vi.mocked(document.elementFromPoint).mockReturnValue(copyOfThird);
+    fireEvent.touchMove(rowUnder(20), at(30));
+    expect(previewed()).toEqual(['2222222', '3333333']);
+    fireEvent.touchEnd(rowUnder(20), ended(30));
+
+    expect(onSelect).toHaveBeenLastCalledWith({
+      kind: 'drop',
+      fromSha: COMMITS[1]!.sha,
+      toSha: COMMITS[2]!.sha,
     });
   });
 
