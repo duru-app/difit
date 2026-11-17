@@ -1,14 +1,25 @@
 import React, { useEffect, useState } from 'react';
 
-import type { RewordRequest } from '../../types/diff';
+import type { RewordRequest, RewriteWarning } from '../../types/diff';
 import { withoutThreadTrailers } from '../../utils/commitMessage';
 import type { DirectEditFailure } from '../contexts/FixupOverlayContext';
 import { rewordFailureMessage } from '../utils/directEdit';
 
+export interface RewordFailure extends DirectEditFailure {
+  // Saving again with these acknowledged goes ahead.
+  warnings?: RewriteWarning[];
+}
+
+export interface RewordSaved {
+  saved: true;
+  // Local branches other than HEAD's that the rewrite moved onto the new commits.
+  movedBranches: string[];
+}
+
 export interface RewordControls {
   // The message the review shows for the commit; null when it could not be read.
   load: (sha: string) => Promise<string | null>;
-  save: (request: RewordRequest) => Promise<DirectEditFailure | null>;
+  save: (request: RewordRequest) => Promise<RewordFailure | RewordSaved>;
 }
 
 interface CommitMessageFormProps {
@@ -22,7 +33,7 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
   const [loadFailed, setLoadFailed] = useState(false);
   const [text, setText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [failure, setFailure] = useState<DirectEditFailure | null>(null);
+  const [failure, setFailure] = useState<RewordFailure | null>(null);
   const cleaned = withoutThreadTrailers(text);
   const unchanged = original === null || cleaned === withoutThreadTrailers(original);
   const blank = cleaned === '';
@@ -47,7 +58,7 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
     };
   }, [load, sha]);
 
-  const save = async () => {
+  const save = async (acknowledged?: RewriteWarning[]) => {
     if (original === null || unchanged || blank || isSaving) return;
     setIsSaving(true);
     setFailure(null);
@@ -55,9 +66,10 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
       commit: sha,
       original,
       message: text,
+      ...(acknowledged ? { acknowledged } : {}),
     });
     setIsSaving(false);
-    if (result) {
+    if (!('saved' in result)) {
       setFailure(result);
       return;
     }
@@ -121,6 +133,15 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
               {failure.output}
             </pre>
           )}
+          {failure.warnings && (
+            <button
+              type="button"
+              onClick={() => void save(failure.warnings)}
+              className="mt-1 rounded border border-github-danger bg-github-danger/20 px-3 py-1 text-xs font-medium text-github-text-primary transition-all hover:opacity-80"
+            >
+              그래도 저장
+            </button>
+          )}
         </div>
       )}
 
@@ -129,7 +150,7 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
       </p>
 
       <p className="mb-2 text-xs text-github-text-secondary">
-        저장하면 이 커밋의 메시지만 바꾸는 amend! 커밋이 만들어지고, 마무리 때 접힙니다.
+        저장하면 이 커밋의 메시지가 바로 바뀌고, 이 커밋과 뒤 커밋의 SHA가 달라집니다.
       </p>
 
       <div className="flex justify-end gap-2">

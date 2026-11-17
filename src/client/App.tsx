@@ -41,6 +41,7 @@ import {
 } from '../types/diff';
 import type { SessionStatus } from '../types/watch';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
+import { movedSelection } from '../utils/rewrittenShas';
 import {
   inStoredOrder,
   isOnCommit,
@@ -89,7 +90,11 @@ import { FileChips } from './components/FileChips';
 import { FilePathText } from './components/FilePathText';
 import { CommitCommentsSection } from './components/CommitCommentsSection';
 import { CommitList, ShownCommits } from './components/CommitList';
-import { type RewordControls } from './components/CommitMessageForm';
+import {
+  type RewordControls,
+  type RewordFailure,
+  type RewordSaved,
+} from './components/CommitMessageForm';
 import { FileList, type FileListHandle } from './components/FileList';
 import { FixupOnlySections } from './components/FixupOnlySections';
 import { GitHubIcon } from './components/GitHubIcon';
@@ -1274,6 +1279,7 @@ function App() {
     symbolPeek.noteIndexChange,
     handleHeadMoved,
     handleSessionStatus,
+    handleWatchReload,
   );
 
   const openCommentsPanelWithKeys = useCallback(() => {
@@ -1480,6 +1486,15 @@ function App() {
         if (diffRequestIdRef.current !== requestId) {
           return;
         }
+        // Before the new SHAs reach the state: the comment and viewed hooks read the moved records.
+        if (data.rewritten) {
+          storageService.moveRewrittenRecords(data.rewritten, data.repositoryId);
+          const moved = movedSelection(selectedRevisionRef.current, data.rewritten);
+          if (!diffSelectionsEqual(moved, selectedRevisionRef.current)) {
+            selectedRevisionRef.current = moved;
+            setSelectedRevision(moved);
+          }
+        }
         setDiffData(data);
         setDiffDataVersion((prev) => prev + 1);
 
@@ -1683,7 +1698,8 @@ function App() {
     saveClientSettings({ commentsPanelOpen: isCommentsPanelOpen });
   }, [isCommentsPanelOpen]);
 
-  // Fetch revision options on mount
+  const rewrittenCommitCount = Object.keys(diffData?.rewritten ?? {}).length;
+
   useEffect(() => {
     fetch('/api/revisions')
       .then((res) => (res.ok ? res.json() : null))
@@ -1700,7 +1716,7 @@ function App() {
         }
       })
       .catch(() => setRevisionOptions(null));
-  }, []);
+  }, [rewrittenCommitCount]);
 
   // Handle revision change
   const handleRevisionChange = useCallback(
@@ -1893,7 +1909,7 @@ function App() {
     [getCommentApiUrl],
   );
   const submitReword = useCallback(
-    async (request: RewordRequest): Promise<DirectEditFailure | null> => {
+    async (request: RewordRequest): Promise<RewordFailure | RewordSaved> => {
       let response: Response;
       try {
         response = await fetch(getCommentApiUrl('/api/reword'), {
@@ -1913,20 +1929,17 @@ function App() {
           message: rewordFailureMessage(
             payload.reason,
             payload.error ?? `${response.status} ${response.statusText}`,
+            payload.warnings,
+            payload.warningBranches,
           ),
           ...(payload.output ? { output: payload.output } : {}),
+          ...(payload.warnings ? { warnings: payload.warnings } : {}),
         };
       }
-      if (typeof payload.version === 'number') {
-        serverCommentVersionRef.current = payload.version;
-      }
-      skipNextCommentSyncRef.current = true;
-      replaceThreads(payload.threads ?? []);
-      mergeDecisions(payload.decisions ?? []);
-      setDirectEditCount((count) => count + 1);
-      return null;
+      await fetchDiffDataRef.current?.();
+      return { saved: true, movedBranches: payload.branches?.moved ?? [] };
     },
-    [getCommentApiUrl, mergeDecisions, replaceThreads],
+    [getCommentApiUrl],
   );
   const reword = useMemo<RewordControls | undefined>(
     () =>

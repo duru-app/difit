@@ -46,6 +46,123 @@ Object.defineProperty(window, 'localStorage', {
   configurable: true,
 });
 
+describe('StorageService - moving records after a history rewrite', () => {
+  const OLD_PARENT = 'a'.repeat(40);
+  const OLD_TIP = 'b'.repeat(40);
+  const NEW_TIP = 'c'.repeat(40);
+  const OLD_FIXUP = 'd'.repeat(40);
+  const NEW_FIXUP = 'e'.repeat(40);
+  const REWRITTEN = { [OLD_TIP]: NEW_TIP, [OLD_FIXUP]: NEW_FIXUP };
+  const at = '2026-01-01T00:00:00Z';
+  const thread: DiffCommentThread = {
+    id: 't1',
+    filePath: 'a.ts',
+    createdAt: at,
+    updatedAt: at,
+    position: { side: 'new', line: 2 },
+    fixupTarget: OLD_TIP,
+    messages: [{ id: 't1', body: 'x', createdAt: at, updatedAt: at }],
+  };
+  const save = (service: StorageService, base: string, target: string, repo: string) =>
+    service.saveDiffContextData(
+      base,
+      target,
+      {
+        version: 2,
+        baseCommitish: base,
+        targetCommitish: target,
+        createdAt: at,
+        lastModifiedAt: at,
+        threads: [thread],
+        viewedFiles: [{ filePath: 'a.ts', viewedAt: at, diffContentHash: 'h' }],
+        appliedCommentImportIds: ['import-1'],
+        decisions: [{ threadId: 't1', kind: 'approved', fixupSha: OLD_FIXUP, at }],
+      },
+      undefined,
+      undefined,
+      repo,
+    );
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it('moves a record to the new SHAs with what it names, and leaves nothing under the old', () => {
+    const service = new StorageService();
+    save(service, OLD_PARENT, OLD_TIP, 'repo');
+
+    service.moveRewrittenRecords(REWRITTEN, 'repo');
+
+    const get = (target: string) =>
+      service.getDiffContextData(OLD_PARENT, target, undefined, undefined, 'repo');
+    expect(get(OLD_TIP)).toBeNull();
+    expect(get(NEW_TIP)).toMatchObject({
+      targetCommitish: NEW_TIP,
+      threads: [{ id: 't1', fixupTarget: NEW_TIP }],
+      decisions: [{ threadId: 't1', fixupSha: NEW_FIXUP }],
+      viewedFiles: [{ filePath: 'a.ts' }],
+      appliedCommentImportIds: ['import-1'],
+    });
+  });
+
+  it('moves the record of a one-commit review, whose base is written with a caret', () => {
+    const service = new StorageService();
+    save(service, `${OLD_TIP}^`, OLD_TIP, 'repo');
+
+    service.moveRewrittenRecords(REWRITTEN, 'repo');
+
+    expect(
+      service.getDiffContextData(`${NEW_TIP}^`, NEW_TIP, undefined, undefined, 'repo'),
+    ).toMatchObject({ threads: [{ id: 't1' }] });
+  });
+
+  it('leaves records of other commits and other repositories alone', () => {
+    const service = new StorageService();
+    save(service, OLD_PARENT, OLD_PARENT, 'repo');
+    save(service, OLD_PARENT, OLD_TIP, 'other-repo');
+
+    service.moveRewrittenRecords(REWRITTEN, 'repo');
+
+    expect(
+      service.getDiffContextData(OLD_PARENT, OLD_PARENT, undefined, undefined, 'repo'),
+    ).not.toBeNull();
+    expect(
+      service.getDiffContextData(OLD_PARENT, OLD_TIP, undefined, undefined, 'other-repo'),
+    ).toMatchObject({ threads: [{ fixupTarget: OLD_TIP }] });
+  });
+
+  it('keeps a record written under the new SHAs and drops the old one', () => {
+    const service = new StorageService();
+    save(service, OLD_PARENT, OLD_TIP, 'repo');
+    service.saveDiffContextData(
+      OLD_PARENT,
+      NEW_TIP,
+      {
+        version: 2,
+        baseCommitish: OLD_PARENT,
+        targetCommitish: NEW_TIP,
+        createdAt: at,
+        lastModifiedAt: at,
+        threads: [],
+        viewedFiles: [],
+        appliedCommentImportIds: [],
+        decisions: [],
+      },
+      undefined,
+      undefined,
+      'repo',
+    );
+
+    service.moveRewrittenRecords(REWRITTEN, 'repo');
+
+    expect(
+      service.getDiffContextData(OLD_PARENT, NEW_TIP, undefined, undefined, 'repo')?.threads,
+    ).toEqual([]);
+    expect(
+      service.getDiffContextData(OLD_PARENT, OLD_TIP, undefined, undefined, 'repo'),
+    ).toBeNull();
+  });
+});
+
 describe('StorageService - Repository Isolation', () => {
   let service: StorageService;
 

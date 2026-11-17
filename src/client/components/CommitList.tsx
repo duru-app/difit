@@ -35,6 +35,7 @@ import {
   useCommitHoverCard,
 } from './CommitMessageBody';
 import { CommitMessageForm, type RewordControls } from './CommitMessageForm';
+import { MovedBranchesNotice } from './MovedBranchesNotice';
 
 interface CommitListProps {
   review: Pick<ReviewScope, 'requested' | 'commits'>;
@@ -184,7 +185,12 @@ export function CommitList({
   const [isOpen, setIsOpen] = useState(true);
   const [rewording, setRewording] = useState<string | null>(null);
   const [commenting, setCommenting] = useState<string | null>(null);
-  const { reword: guardedReword, isSaving: isSavingMessage } = useGuardedReword(reword);
+  const {
+    reword: guardedReword,
+    isSaving: isSavingMessage,
+    movedBranches,
+    dismissMovedBranches,
+  } = useGuardedReword(reword);
   const [drag, setDrag] = useState<Drag | null>(null);
   const isDragging = drag !== null;
   const listRef = useRef<HTMLUListElement>(null);
@@ -438,6 +444,7 @@ export function CommitList({
           onLeave={hoverCard.leave}
         />
       )}
+      <MovedBranchesNotice branches={movedBranches} onDismiss={dismissMovedBranches} />
       {isListShown && (
         <ul
           ref={listRef}

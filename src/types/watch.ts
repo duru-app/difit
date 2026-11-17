@@ -43,6 +43,11 @@ interface HeadMovedWatchEvent {
   timestamp: string;
 }
 
+interface HistoryRewrittenWatchEvent {
+  type: 'historyRewritten';
+  timestamp: string;
+}
+
 // `no-java`: the commit has no Java source. `no-build-file`: it has no build.gradle,
 // settings.gradle or pom.xml (or a .kts variant) at the root.
 export type SymbolIndexUnavailableReason = 'no-java' | 'no-build-file' | 'no-scip-java';
@@ -97,6 +102,7 @@ export type WatchEvent =
   | ErrorWatchEvent
   | CommentsChangedWatchEvent
   | HeadMovedWatchEvent
+  | HistoryRewrittenWatchEvent
   | SymbolIndexChangedWatchEvent
   | SessionStatusWatchEvent;
 

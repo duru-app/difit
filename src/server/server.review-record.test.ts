@@ -492,3 +492,30 @@ it('restores the review of another range when the browser opens it', async () =>
 
   expect((await second.threads()).map(({ id }) => id)).toEqual(['t1']);
 });
+
+it('brings the threads back on the new SHAs after a reword rewrote the history', async () => {
+  const { repo, base, head } = createRepo();
+  const first = await open(repo, createDiffSelection(base, head));
+  await first.post('/api/comments', {
+    threads: [thread('t1', 'a.txt', 2, 'TWO', short(head))],
+    decisions: [resolved('t1')],
+  });
+  const { rewritten } = (await first.post(`/api/reword?base=${base}&target=${head}`, {
+    commit: head,
+    original: 'change',
+    message: 'change a and b',
+    acknowledged: ['default-branch'],
+  })) as { rewritten: Record<string, string> };
+  const newHead = rewritten[head]!;
+  await first.stop();
+
+  const second = await open(repo, createDiffSelection(base, newHead));
+
+  const [t1] = await second.threads();
+  expect(t1).toMatchObject({ id: 't1', codeSnapshot: { commit: short(newHead) } });
+  expect((await second.state()).decisions.map(({ threadId }) => threadId)).toEqual(['t1']);
+  const path = (await getReviewRecordPath(repo))!;
+  expect((await readReviewRecord(path)).reviews.map(({ selection }) => selection)).toEqual([
+    createDiffSelection(short(base), short(newHead)),
+  ]);
+});
