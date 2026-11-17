@@ -1591,7 +1591,7 @@ describe('App Component - Returning from the review a comment was made on', () =
     renderApp();
     const lengthBefore = window.history.length;
 
-    fireEvent.click(await screen.findByRole('button', { name: '이 지적을 달던 시점으로' }));
+    fireEvent.click(await screen.findByRole('button', { name: '원래 커밋' }));
 
     await waitFor(() => expect(diffTargets()).toContain('def5678'));
     expect(window.history.length).toBe(lengthBefore + 1);
@@ -1600,7 +1600,7 @@ describe('App Component - Returning from the review a comment was made on', () =
   it('switches back to the original review on Back and forward again on Forward', async () => {
     renderApp();
 
-    fireEvent.click(await screen.findByRole('button', { name: '이 지적을 달던 시점으로' }));
+    fireEvent.click(await screen.findByRole('button', { name: '원래 커밋' }));
     await waitFor(() => expect(diffTargets().at(-1)).toBe('def5678'));
 
     act(() => window.history.back());
@@ -1660,7 +1660,7 @@ describe('App Component - Returning from the review a comment was made on', () =
       renderApp();
       await waitFor(() => expect(chips()).toEqual(['답변 대기', '해결됨']));
 
-      fireEvent.click(await screen.findByRole('button', { name: '이 지적을 달던 시점으로' }));
+      fireEvent.click(await screen.findByRole('button', { name: '원래 커밋' }));
       await waitFor(() => expect(chips()).toEqual(['다시 수정 중']));
 
       act(() => window.history.back());
@@ -1962,7 +1962,7 @@ describe(
       await screen.findAllByTitle('c.ts');
       await scrollTo(6100);
 
-      fireEvent.click(await screen.findByRole('button', { name: '이 지적을 달던 시점으로' }));
+      fireEvent.click(await screen.findByRole('button', { name: '원래 커밋' }));
       await waitFor(() => expect(diffTargets().at(-1)).toBe('def5678'));
       await screen.findAllByTitle('c.ts');
       await scrollTo(0);
@@ -4760,9 +4760,7 @@ describe('App Component - Commits of the review', () => {
     const lengthBefore = window.history.length;
 
     expect(screen.getByLabelText('Outdated comment')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: '이 지적을 달던 시점으로' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '원래 커밋' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '이 지적을 단 화면으로' }));
 
     await waitFor(() => expect(commitButton(/1111111/)).toHaveAttribute('aria-current', 'true'));
