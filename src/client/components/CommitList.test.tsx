@@ -1002,6 +1002,26 @@ describe('CommitList', () => {
         expect(isOffOnTouch(/4444444/)).toBe(true);
       });
 
+      it('paints the row of the open commit under its buttons too', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        const OPEN_ROW = '[@media(hover:none)]:bg-github-bg-tertiary';
+        expect(row(/2222222/).parentElement!.className.split(' ')).toContain(OPEN_ROW);
+        expect(row(/1111111/).parentElement!.className.split(' ')).not.toContain(OPEN_ROW);
+      });
+
+      it('outlines the whole open row, buttons included, while a drag would choose it', () => {
+        renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
+
+        fireEvent.mouseDown(row(/3333333/), { button: 0 });
+        fireEvent.mouseEnter(row(/2222222/));
+
+        const classes = (element: Element) => element.className.split(' ');
+        expect(classes(row(/2222222/).parentElement!)).toContain('outline-dashed');
+        expect(classes(row(/2222222/))).not.toContain('outline-dashed');
+        expect(classes(row(/3333333/))).toContain('outline-dashed');
+      });
+
       it('draws the comment button as a bubble with a plus', () => {
         renderDrawer({ kind: 'commit', sha: COMMITS[1]!.sha });
 

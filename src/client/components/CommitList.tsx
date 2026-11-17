@@ -82,6 +82,7 @@ const ROW_ACTIONS_HIDDEN_CLASS =
 const ROW_PLUS_HIDDEN_CLASS =
   'opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100';
 const ROW_ACTIONS_OFF_ON_TOUCH_CLASS = '[@media(hover:none)]:hidden';
+const OPEN_ROW_ON_TOUCH_CLASS = '[@media(hover:none)]:bg-github-bg-tertiary';
 const MERGED_CLASS = 'flex items-center gap-2 px-4 text-sm text-github-text-muted';
 const CURRENT_MERGED_CLASS =
   'bg-github-bg-tertiary text-github-text-secondary shadow-[inset_2px_0_0_var(--color-github-accent)]';
@@ -564,7 +565,7 @@ export function CommitList({
                 <li className="group">
                   <div
                     data-commit-sha={commit.sha}
-                    className="relative flex items-stretch"
+                    className={`relative flex items-stretch ${isOpenInDrawer ? OPEN_ROW_ON_TOUCH_CLASS : ''} ${isOpenInDrawer && isPreviewed ? PREVIEW_CLASS : ''}`}
                     onMouseEnter={(event) => {
                       if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
                     }}
@@ -621,7 +622,7 @@ export function CommitList({
                           ? cardId
                           : undefined
                       }
-                      className={`${itemClass} min-w-0 flex-1 group-hover:bg-github-bg-tertiary ${isCurrent ? CURRENT_COMMIT_CLASS : 'text-github-text-secondary'} ${isPreviewed ? PREVIEW_CLASS : ''} ${isActionPinned && !inDrawer ? 'bg-github-bg-tertiary' : ''}`}
+                      className={`${itemClass} min-w-0 flex-1 group-hover:bg-github-bg-tertiary ${isCurrent ? CURRENT_COMMIT_CLASS : 'text-github-text-secondary'} ${isPreviewed && !isOpenInDrawer ? PREVIEW_CLASS : ''} ${isActionPinned && !inDrawer ? 'bg-github-bg-tertiary' : ''}`}
                     >
                       <CommitGraph cell={cell} bleed={graphBleed} />
                       <code className="shrink-0 font-mono text-xs">{commit.shortSha}</code>
