@@ -281,6 +281,24 @@ describe('useFileWatch', () => {
       expect(MockWebSocket.instances).toHaveLength(1);
     });
 
+    it('passes on the session status', () => {
+      const onSessionStatus = vi.fn();
+      renderHook(() => useFileWatch(undefined, undefined, undefined, undefined, onSessionStatus));
+
+      act(() => {
+        MockWebSocket.instances[0]!.dispatchMessage(
+          JSON.stringify({
+            type: 'sessionStatus',
+            waits: 1,
+            checkedAgoMs: 1200,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      });
+
+      expect(onSessionStatus).toHaveBeenCalledWith({ waits: 1, checkedAgoMs: 1200 });
+    });
+
     it('reconnects after giving up when the comments callback changes', () => {
       vi.useFakeTimers();
       try {

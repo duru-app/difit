@@ -79,13 +79,26 @@ interface SymbolIndexChangedWatchEvent {
   timestamp: string;
 }
 
+// `waits`: open `difit comment wait` connections. `checkedAgoMs`: how long before the event was
+// sent the server last saw one open (connected, pinged or closed); null when none ever came.
+export interface SessionStatus {
+  waits: number;
+  checkedAgoMs: number | null;
+}
+
+interface SessionStatusWatchEvent extends SessionStatus {
+  type: 'sessionStatus';
+  timestamp: string;
+}
+
 export type WatchEvent =
   | ConnectedWatchEvent
   | ReloadWatchEvent
   | ErrorWatchEvent
   | CommentsChangedWatchEvent
   | HeadMovedWatchEvent
-  | SymbolIndexChangedWatchEvent;
+  | SymbolIndexChangedWatchEvent
+  | SessionStatusWatchEvent;
 
 export interface ClientWatchState {
   isWatchEnabled: boolean;

@@ -3922,6 +3922,79 @@ describe('Server Integration Tests', () => {
       if (socketDir) await fs.rm(socketDir, { recursive: true, force: true });
     });
 
+    describe('session status', () => {
+      const readStatus = async (port: number) =>
+        (await (await fetch(`http://localhost:${port}/api/session-status`)).json()) as {
+          waits: number;
+          checkedAgoMs: number | null;
+          connected: boolean;
+        };
+
+      it('reports no session before any wait was open', async () => {
+        const { port } = await startPinned();
+
+        expect(await readStatus(port)).toEqual({ waits: 0, checkedAgoMs: null, connected: false });
+      });
+
+      it('reports a session while a wait is open and for a while after it closed', async () => {
+        const { port } = await startPinned();
+        const controller = new AbortController();
+        const response = await fetch(`http://localhost:${port}/api/comments-wait${PINNED}`, {
+          signal: controller.signal,
+        });
+        const open = await readStatus(port);
+        controller.abort();
+        await response.text().catch(() => '');
+        await vi.waitFor(async () => expect((await readStatus(port)).waits).toBe(0));
+        const closed = await readStatus(port);
+
+        expect(open).toMatchObject({ waits: 1, connected: true });
+        expect(open.checkedAgoMs).toBeLessThan(1000);
+        expect(closed).toMatchObject({ waits: 0, connected: true });
+        expect(closed.checkedAgoMs).toBeLessThan(1000);
+      });
+
+      it('counts a wait that ended by handing over threads as seen', async () => {
+        const { port } = await startPinned();
+        await postFromPage(port, { threads: [reviewerThread('c1')] });
+
+        await readWait(port);
+
+        expect(await readStatus(port)).toMatchObject({ waits: 0, connected: true });
+      });
+
+      it('sends the status to the page when it connects and when a wait opens', async () => {
+        const { port } = await startPinned();
+        const socket = new WebSocket(`ws://localhost:${port}/api/live`);
+        const statuses: Array<{ waits: number; checkedAgoMs: number | null }> = [];
+        socket.on('message', (message: Buffer) => {
+          const event = JSON.parse(message.toString()) as {
+            type: string;
+            waits: number;
+            checkedAgoMs: number | null;
+          };
+          if (event.type === 'sessionStatus') {
+            statuses.push({ waits: event.waits, checkedAgoMs: event.checkedAgoMs });
+          }
+        });
+        await vi.waitFor(() => expect(statuses).toHaveLength(1));
+        const controller = new AbortController();
+        const response = await fetch(`http://localhost:${port}/api/comments-wait${PINNED}`, {
+          signal: controller.signal,
+        });
+        await vi.waitFor(() => expect(statuses).toHaveLength(2));
+        controller.abort();
+        await response.text().catch(() => '');
+        await vi.waitFor(() => expect(statuses).toHaveLength(3));
+        socket.close();
+
+        expect(statuses[0]).toEqual({ waits: 0, checkedAgoMs: null });
+        expect(statuses.slice(1).map(({ waits }) => waits)).toEqual([1, 0]);
+        expect(statuses[1]!.checkedAgoMs).toBeLessThan(1000);
+        expect(statuses[2]!.checkedAgoMs).toBeLessThan(1000);
+      });
+    });
+
     it('shows a thread as being fixed when the agent’s reply says a fixup follows', async () => {
       const { port } = await startPinned();
       await postFromPage(port, { threads: [reviewerThread('c1')] });
