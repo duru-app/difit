@@ -50,6 +50,17 @@ export function useLazyDiffRendering({
   const generatedStatusCheckedRef = useRef<Set<string>>(new Set());
   const renderedRevisionKeyRef = useRef<string | null>(null);
   const scrollRequestIdRef = useRef(0);
+  const scrollCorrectionTimersRef = useRef<Set<number>>(new Set());
+
+  // Unmounting drops a pending scroll, whose callbacks read a document that may be gone by then.
+  useEffect(() => {
+    const timers = scrollCorrectionTimersRef.current;
+    return () => {
+      scrollRequestIdRef.current += 1;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
 
   // The user scrolling the diff drops a scroll still waiting for its target.
   useEffect(() => {
@@ -337,12 +348,14 @@ export function useLazyDiffRendering({
       };
 
       const correctLater = () => {
-        window.setTimeout(() => {
+        const timer = window.setTimeout(() => {
+          scrollCorrectionTimersRef.current.delete(timer);
           if (scrollRequestIdRef.current !== requestId) {
             return;
           }
           scrollToFile();
         }, SIDEBAR_SCROLL_CORRECTION_DELAY_MS);
+        scrollCorrectionTimersRef.current.add(timer);
       };
 
       const waitForElement = (id: string, deadline: number) => {

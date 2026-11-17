@@ -107,14 +107,14 @@ describe('useLazyDiffRendering', () => {
         stubRect(element, top);
         document.body.appendChild(element);
       });
-      const { result } = renderHook(() =>
+      const { result, unmount } = renderHook(() =>
         useLazyDiffRendering({
           diffData,
           diffScrollContainerRef: { current: container },
           setDiffData: () => {},
         }),
       );
-      return { scroll: result.current.scrollFileIntoDiffContainer, scrollTo };
+      return { scroll: result.current.scrollFileIntoDiffContainer, scrollTo, unmount };
     }
 
     const reviewSections = [
@@ -136,6 +136,20 @@ describe('useLazyDiffRendering', () => {
       scroll('b.ts', 'box');
 
       await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 400 }));
+    });
+
+    // The document may already be gone by then, as when a test environment is torn down.
+    it('does not touch the document after it is unmounted while a scroll correction is pending', async () => {
+      const { scroll, scrollTo, unmount } = setup([...reviewSections, { id: 'box', top: 520 }]);
+      scroll('b.ts', 'box');
+      await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 520 }));
+
+      const getElementById = vi.spyOn(document, 'getElementById');
+      unmount();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      expect(getElementById).not.toHaveBeenCalled();
+      getElementById.mockRestore();
     });
 
     it('does not scroll to an element below the reviewed files while one of them is not drawn', async () => {
