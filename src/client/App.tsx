@@ -130,9 +130,10 @@ import {
   type MergedChunk,
 } from './hooks/useExpandedLines';
 import { useFileWatch } from './hooks/useFileWatch';
+import type { CursorPosition } from './hooks/keyboardNavigation/types';
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation';
 import { useChunkChangeKinds } from './hooks/useChunkChangeKinds';
-import { useLazyDiffRendering } from './hooks/useLazyDiffRendering';
+import { diffRevisionKey, useLazyDiffRendering } from './hooks/useLazyDiffRendering';
 import {
   type ReviewHistoryEntry,
   type ReviewPlace,
@@ -543,12 +544,14 @@ function App() {
       },
     [review, resolvedSelection],
   );
+  // While another view loads, the commit list already marks it.
+  const listedView = (loading && review && reviewViewShown(selectedRevision, review)) || shownView;
   const [viewAnchor, setViewAnchor] = useState<{
     view: ReviewView;
     sha: string | null;
   } | null>(null);
-  const shownAnchor =
-    viewAnchor && JSON.stringify(viewAnchor.view) === JSON.stringify(shownView)
+  const listedAnchor =
+    viewAnchor && JSON.stringify(viewAnchor.view) === JSON.stringify(listedView)
       ? viewAnchor.sha
       : null;
   const [rangePick, setRangePick] = useState<{
@@ -556,7 +559,7 @@ function App() {
     sha: string;
   } | null>(null);
   const rangeStart =
-    rangePick && JSON.stringify(rangePick.view) === JSON.stringify(shownView)
+    rangePick && JSON.stringify(rangePick.view) === JSON.stringify(listedView)
       ? rangePick.sha
       : undefined;
   const takesComments = !showsPartOfReview || shownView.kind !== 'all';
@@ -1410,13 +1413,20 @@ function App() {
     [toggleFileReviewed, diffData, rememberFilePosition],
   );
 
+  const cursorAwaitingRenderRef = useRef<CursorPosition | null>(null);
   useEffect(() => {
     if (!diffData || !cursor) return;
 
     const filePath = diffData.files[cursor.fileIndex]?.path;
-    if (!filePath || renderedFilePaths.has(filePath)) return;
+    if (!filePath) return;
+    if (!renderedFilePaths.has(filePath)) {
+      cursorAwaitingRenderRef.current = cursor;
+      ensureFilesRenderedUpTo(filePath);
+      return;
+    }
+    if (cursorAwaitingRenderRef.current !== cursor) return;
 
-    ensureFilesRenderedUpTo(filePath);
+    cursorAwaitingRenderRef.current = null;
     requestAnimationFrame(() => {
       setCursorPosition(cursor);
     });
@@ -1849,8 +1859,8 @@ function App() {
       const chosen = selectReviewView(
         review,
         {
-          view: shownView,
-          anchor: shownAnchor,
+          view: listedView,
+          anchor: listedAnchor,
           ...(rangeStart !== undefined && { rangeStart }),
         },
         action,
@@ -1864,7 +1874,7 @@ function App() {
       if (canHover || chosen.view.kind !== 'commit') setIsCommitDrawerOpen(false);
       showDiff(chosen.selection, place);
     },
-    [review, shownView, shownAnchor, rangeStart, showDiff, canHover],
+    [review, listedView, listedAnchor, rangeStart, showDiff, canHover],
   );
   const closeCommitDrawer = useCallback(() => {
     selectView({ kind: 'cancel' });
@@ -2803,7 +2813,7 @@ function App() {
     />
   );
 
-  if (loading) {
+  if (loading && !diffData) {
     return (
       <div className="flex items-center justify-center h-screen bg-github-bg-primary">
         <div className="text-github-text-secondary text-base">Loading diff...</div>
@@ -2829,6 +2839,7 @@ function App() {
     );
   }
 
+  const diffRevision = diffRevisionKey(diffData);
   const canOpenInEditor =
     diffData.openInEditorAvailable !== false &&
     settings.editor.id !== 'none' &&
@@ -3196,7 +3207,7 @@ function App() {
             >
               <CommitList
                 review={review}
-                shown={shownView}
+                shown={listedView}
                 onSelect={selectView}
                 rangeStart={rangeStart}
                 inDrawer
@@ -3269,6 +3280,7 @@ function App() {
             >
               <div className="flex-1 overflow-y-auto">
                 <FileList
+                  key={diffRevision}
                   ref={fileListRef}
                   files={diffData.files}
                   onScrollToFile={jumpToFile}
@@ -3296,7 +3308,7 @@ function App() {
               {showsCommitList && (
                 <CommitList
                   review={review}
-                  shown={shownView}
+                  shown={listedView}
                   onSelect={selectView}
                   rangeStart={rangeStart}
                   openCounts={openCountsByCommit}
@@ -3348,7 +3360,8 @@ function App() {
             <DiffLineLinkProvider value={diffLineLinks}>
               <main
                 ref={diffScrollContainerRef}
-                className={`flex-1 overflow-y-auto ${showMobileCommentsBar ? 'pb-16' : ''}`}
+                aria-busy={loading}
+                className={`flex-1 overflow-y-auto transition-opacity ${showMobileCommentsBar ? 'pb-16' : ''} ${loading ? 'opacity-50 pointer-events-none' : ''}`}
                 style={
                   isMobile
                     ? undefined
@@ -3359,6 +3372,7 @@ function App() {
               >
                 {review && (
                   <CommitCommentsSection
+                    key={`commits\0${diffRevision}`}
                     commits={viewCommits}
                     threads={drawnCommitThreads}
                     onAddComment={takesComments ? handleAddCommitComment : undefined}
@@ -3382,7 +3396,7 @@ function App() {
                   const isRendered = renderedFilePaths.has(file.path);
                   return (
                     <div
-                      key={file.path}
+                      key={`file\0${diffRevision}\0${file.path}`}
                       id={getFileElementId(file.path)}
                       data-file-path={file.path}
                       data-rendered={isRendered ? 'true' : 'false'}
@@ -3462,6 +3476,7 @@ function App() {
                   );
                 })}
                 <FixupOnlySections
+                  key={`fixup-only\0${diffRevision}`}
                   groups={fixupSpread.fixupOnly}
                   threadsByFixupFile={threadsByFixupOnlyFile}
                   firstFileIndex={diffData.files.length}
