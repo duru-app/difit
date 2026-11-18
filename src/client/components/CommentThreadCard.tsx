@@ -1,4 +1,13 @@
-import { Check, ChevronDown, ChevronRight, Copy, Edit2, MessageSquare, Trash2 } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Edit2,
+  MessageSquare,
+  Route,
+  Trash2,
+} from 'lucide-react';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
@@ -21,6 +30,7 @@ import {
 } from '../../utils/reviewDecisions';
 import { type ThreadReviewControls, useFixupOverlay } from '../contexts/FixupOverlayContext';
 import { usePickedThreadId } from '../contexts/PickedThreadContext';
+import { useOpenWalkthrough } from '../contexts/WalkthroughContext';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { copyTextToClipboard } from '../utils/clipboard';
 import { runsOffTheTopOf, visibleTopOf } from '../utils/domUtils';
@@ -74,6 +84,25 @@ function ThreadMessageItem({
   const showAuthorHeader = showAuthorBadge && Boolean(message.author);
   const isUserAuthoredMessage = author === REVIEWER_AUTHOR;
   const isAgentAuthored = Boolean(author) && isAgentMessage({ author });
+
+  const openWalkthrough = useOpenWalkthrough();
+  const walkthroughSteps = message.walkthrough?.cases[0]?.steps.length ?? 0;
+  const opensWalkthrough =
+    openWalkthrough && walkthroughSteps > 0
+      ? () => openWalkthrough(threadId, message.id)
+      : undefined;
+  const handleWalkthroughClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!opensWalkthrough) return;
+    if (event.target instanceof Element && event.target.closest('a, button, input, textarea')) {
+      return;
+    }
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && event.currentTarget.contains(selection.anchorNode)) {
+      return;
+    }
+    event.stopPropagation();
+    opensWalkthrough();
+  };
 
   useClickOutside(confirmContainerRef, () => setIsConfirming(false), isConfirming);
 
@@ -130,7 +159,8 @@ function ThreadMessageItem({
         <div
           className={`group flow-root min-w-0 rounded-lg border border-github-border px-[9px] py-[5px] ${
             isAgentAuthored ? 'bg-agent-bg' : ''
-          }`}
+          } ${opensWalkthrough ? 'cursor-pointer hover:border-[var(--color-walkthrough-step-border)]' : ''}`}
+          {...(opensWalkthrough && { onClick: handleWalkthroughClick })}
         >
           {isConfirming ? (
             <div
@@ -221,6 +251,21 @@ function ThreadMessageItem({
             filename={filename}
             syntaxTheme={syntaxTheme}
           />
+          {opensWalkthrough && (
+            <button
+              type="button"
+              aria-label="따라가기 열기"
+              title="따라가기 열기"
+              onClick={(event) => {
+                event.stopPropagation();
+                opensWalkthrough();
+              }}
+              className="mt-1 inline-flex items-center gap-1 rounded-full border border-[var(--color-walkthrough-step-border)] px-2 py-0.5 text-xs text-github-text-primary hover:bg-github-bg-tertiary"
+            >
+              <Route size={12} />
+              따라가기 {walkthroughSteps}단계
+            </button>
+          )}
         </div>
       ) : (
         <CommentForm

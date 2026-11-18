@@ -18,6 +18,7 @@ import { type CursorPosition } from '../hooks/keyboardNavigation';
 import { useCanHover } from '../hooks/useCanHover';
 import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
+import { useIsWalkthroughStepLine } from '../contexts/WalkthroughContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { quoteSelection } from '../utils/codeSelection';
 import { endsOnRow, pickHolds, threadHoldsLine } from '../utils/linePick';
@@ -123,6 +124,7 @@ export const DiffChunk = memo(function DiffChunk({
   const [dragStart, setDragStart] = useState<LineSelection | null>(null);
   const [dragEnd, setDragEnd] = useState<LineSelection | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const isWalkthroughStepLine = useIsWalkthroughStepLine(filename);
   const linePick = useLinePick(
     chunk.lines,
     cursor ? cursorLineOf(chunk.lines[cursor.lineIndex], cursor.side) : null,
@@ -542,6 +544,7 @@ export const DiffChunk = memo(function DiffChunk({
                   isCurrentLine={isCurrentLine || false}
                   hoveredLineIndex={hoveredLine}
                   selectedLineStyle={getSelectedLineStyle(line, index)}
+                  isWalkthroughStep={isWalkthroughStepLine(line.newLineNumber)}
                   onMouseEnter={() => {
                     setHoveredLine(index);
                   }}

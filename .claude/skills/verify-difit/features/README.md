@@ -10,5 +10,6 @@ Each file says what the feature is, how a user reaches it, how to drive it with 
 | [reword](reword.md)                     | Changing a commit's message, which rewrites the history at once    |
 | [release-package](release-package.md)   | Installing the packed tarball and running it                       |
 | [symbol-index](symbol-index.md)         | Building a SCIP index and answering a lookup from it               |
+| [walkthrough](walkthrough.md)           | `difit walkthrough add`, `get`, `remove` and the step bar          |
 
 When a feature's behavior changes, update its file in the same change.

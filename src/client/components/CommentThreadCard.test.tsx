@@ -9,6 +9,7 @@ import {
   type FixupOverlayState,
 } from '../contexts/FixupOverlayContext';
 import { PickedThreadProvider } from '../contexts/PickedThreadContext';
+import { OpenWalkthroughProvider } from '../contexts/WalkthroughContext';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import { copyTextToClipboard } from '../utils/clipboard';
 
@@ -1561,5 +1562,93 @@ describe('CommentThreadCard', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(onRemoveMessage).toHaveBeenCalledWith('thread-1', 'message-2');
+  });
+});
+
+describe('CommentThreadCard walkthrough reply', () => {
+  afterEach(cleanup);
+
+  const walkthrough = {
+    commit: 'abc1234',
+    cases: [
+      {
+        steps: [
+          { file: 'src/a.ts', line: 3, description: '요청을 받는다.' },
+          { file: 'src/a.ts', line: 8, description: '결과를 돌려준다.' },
+        ],
+      },
+    ],
+  };
+  const answered: CommentThread = {
+    ...mockThread,
+    messages: [
+      mockThread.messages[0]!,
+      {
+        id: 'answer',
+        body: '흐름은 이렇습니다.',
+        author: 'Agent',
+        createdAt: '2024-01-01T00:01:00Z',
+        updatedAt: '2024-01-01T00:01:00Z',
+        walkthrough,
+      },
+    ],
+  };
+
+  function renderCard(thread: CommentThread = answered) {
+    const open = vi.fn();
+    render(
+      <OpenWalkthroughProvider value={open}>
+        <CommentThreadCard
+          thread={thread}
+          onResolveThread={vi.fn()}
+          onReplyToThread={vi.fn().mockResolvedValue(undefined)}
+          onRemoveMessage={vi.fn()}
+          onUpdateMessage={vi.fn()}
+        />
+      </OpenWalkthroughProvider>,
+    );
+    return open;
+  }
+
+  it('opens the walkthrough when the reviewer clicks the reply that carries it', async () => {
+    const user = userEvent.setup();
+    const open = renderCard();
+
+    expect(screen.getByRole('button', { name: '따라가기 열기' })).toHaveTextContent(
+      '따라가기 2단계',
+    );
+    await user.click(screen.getByText('흐름은 이렇습니다.'));
+
+    expect(open).toHaveBeenCalledWith('thread-1', 'answer');
+  });
+
+  it('opens it from the keyboard through the cue', async () => {
+    const user = userEvent.setup();
+    const open = renderCard();
+
+    screen.getByRole('button', { name: '따라가기 열기' }).focus();
+    await user.keyboard('{Enter}');
+
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  it('leaves the reply alone when the reviewer copies it or selects its text', async () => {
+    const user = userEvent.setup();
+    const open = renderCard();
+
+    await user.click(screen.getAllByRole('button', { name: 'Copy comment' })[1]!);
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: screen.getByText('흐름은 이렇습니다.'), offset: 0 },
+      { offset: 6 },
+      { keys: '[/MouseLeft]' },
+    ]);
+
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('shows no cue on a reply without a walkthrough', () => {
+    renderCard(mockThread);
+
+    expect(screen.queryByRole('button', { name: '따라가기 열기' })).not.toBeInTheDocument();
   });
 });

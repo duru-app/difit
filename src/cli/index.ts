@@ -29,6 +29,7 @@ import {
 } from './self-update.js';
 import { installBundledSkills } from './skills.js';
 import { getPrPatch, getPrCommentImports } from './github.js';
+import { createWalkthroughCommand } from './walkthrough.js';
 import {
   BACKGROUND_CHILD_ENV,
   emitBackgroundHandshake,
@@ -84,6 +85,7 @@ program
   .version(pkg.version, '-v, --version', 'output the version number')
   .enablePositionalOptions()
   .addCommand(createCommentCommand())
+  .addCommand(createWalkthroughCommand())
   .addCommand(createUpdateCommand())
   .argument(
     '[commit-ish]',

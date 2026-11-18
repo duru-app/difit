@@ -306,6 +306,26 @@ export interface FixupLines {
   ranges: FixupLineRange[];
 }
 
+// A line, or the lines line..endLine, of the file in the review target the walkthrough was
+// uploaded on.
+export interface WalkthroughStep {
+  file: string;
+  line: number;
+  endLine?: number;
+  description: string;
+}
+
+export interface WalkthroughCase {
+  title?: string;
+  steps: WalkthroughStep[];
+}
+
+// `commit` is the review target when the agent uploaded it, so its lines can be told stale later.
+export interface Walkthrough {
+  commit: string;
+  cases: WalkthroughCase[];
+}
+
 export interface DiffCommentMessage {
   id: string;
   body: string;
@@ -316,6 +336,7 @@ export interface DiffCommentMessage {
   answer?: ChoiceAnswer;
   fixupLines?: FixupLines;
   fixPending?: true;
+  walkthrough?: Walkthrough;
 }
 
 export type ReviewerReplyFields = Pick<DiffCommentMessage, 'answer' | 'fixupLines'>;
