@@ -160,11 +160,11 @@ export function saveReview(reviews: StoredReview[], review: StoredReview): Store
 }
 
 // Reviews of the same base whose target is an ancestor of this one's target.
-export async function reviewsBehind(
-  reviews: readonly StoredReview[],
+export async function reviewsBehind<Review extends { selection: DiffSelection }>(
+  reviews: readonly Review[],
   selection: DiffSelection,
   isAncestor: (older: string, newer: string) => Promise<boolean>,
-): Promise<StoredReview[]> {
+): Promise<Review[]> {
   if (!isCommitTarget(selection.targetCommitish)) return [];
   const sameBase = reviews.filter(
     (review) =>

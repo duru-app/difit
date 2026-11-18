@@ -134,6 +134,14 @@ export interface DiffResponse {
   // The review this diff is a view of; comments and decisions belong to it.
   review?: ReviewScope;
   rewritten?: RewrittenShas;
+  // Applied after rewritten, oldest first.
+  reviewMoves?: ReviewMove[];
+}
+
+// From a review of the same base whose target is an ancestor of the newer review's target.
+export interface ReviewMove {
+  from: DiffSelection;
+  to: DiffSelection;
 }
 
 export interface ChangeKindsResponse {

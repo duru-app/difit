@@ -125,6 +125,7 @@ import {
   type RevisionsResponse,
   type ReviewCommit,
   type ReviewScope,
+  type ReviewMove,
   type RewordRejection,
   type RewordRequest,
   type RewordResponse,
@@ -615,6 +616,11 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   const commentSessions = new Map<string, CommentSessionState>();
+  interface CommentWait {
+    check: () => Promise<void>;
+    finish: (event: string) => Promise<void>;
+  }
+  const commentWaits = new Set<CommentWait>();
   // What a tab or an agent still holding old SHAs says lands on the commits that replaced them.
   let rewrittenShas: RewrittenShas = {};
 
@@ -669,41 +675,108 @@ export async function startServer(options: ServerOptions): Promise<{
   const isAncestorCommit = async (older: string, newer: string) =>
     (await runGit(repositoryPath, ['merge-base', '--is-ancestor', older, newer])).code === 0;
   const restoredCommentSessions = new Map<string, Promise<void>>();
-  // Only the review the server starts on takes over the reviews behind it.
+  let reviewMoves: ReviewMove[] = [];
+
+  // Tabs are not told: a tab on a review that was taken over reads the same threads through the
+  // newer one, and the tab that reopened would save them back under the older review before its
+  // new diff arrives.
+  async function takeOverReviewsBehind(selection: DiffSelection): Promise<boolean> {
+    await commentsSaved();
+    const stored =
+      reviewRecordPath && !options.clearComments
+        ? (await readReviewRecord(reviewRecordPath)).reviews
+        : [];
+    const known = new Map(
+      [...stored, ...pinnedReviews, ...commentSessions.values()].map((review) => [
+        createCommentSessionKey(review.selection),
+        { selection: review.selection },
+      ]),
+    );
+    const behind = (await reviewsBehind([...known.values()], selection, isAncestorCommit)).map(
+      (review) => review.selection,
+    );
+    if (behind.length === 0) return false;
+
+    const isBehind = (other: DiffSelection) =>
+      behind.some((older) => diffSelectionsEqual(older, other));
+    const sessions = [...commentSessions.values()];
+    const merged = takeOverReviews(
+      sessions.map(({ selection, threads, leftOut, decisions }) => ({
+        selection,
+        threads: [...threads, ...leftOut],
+        decisions,
+      })),
+      selection,
+      behind,
+    ).find((review) => diffSelectionsEqual(review.selection, selection));
+    const version = Math.max(
+      0,
+      ...sessions
+        .filter((session) => isBehind(session.selection))
+        .map((session) => session.version),
+    );
+    for (const older of behind) {
+      const key = createCommentSessionKey(older);
+      commentSessions.delete(key);
+      pinnedCommentSessionKeys.delete(key);
+      restoredCommentSessions.delete(key);
+    }
+    pinnedReviews.splice(
+      0,
+      pinnedReviews.length,
+      ...pinnedReviews.filter((review) => !isBehind(review.selection)),
+    );
+    reviewMoves = [...reviewMoves, ...behind.map((from) => ({ from, to: selection }))];
+    if (isBehind(currentCommentSelection)) currentCommentSelection = selection;
+    if (merged) {
+      const session = getOrCreateCommentSession(selection);
+      session.threads = merged.threads;
+      session.leftOut = [];
+      session.decisions = merged.decisions;
+      session.version = Math.max(session.version, version);
+    }
+    if (reviewRecordPath) {
+      const recordPath = reviewRecordPath;
+      reviewSaves = reviewSaves
+        .then(() =>
+          updateReviewRecord(recordPath, (reviews) => takeOverReviews(reviews, selection, behind)),
+        )
+        .then(
+          () => undefined,
+          (error: unknown) => console.error('Error saving the review record:', error),
+        );
+      await commentsSaved();
+    }
+    return true;
+  }
+
   function restoreCommentSession(selection: DiffSelection, takesOver = false): Promise<void> {
-    if (!reviewRecordPath || options.clearComments) return Promise.resolve();
     const key = createCommentSessionKey(selection);
     const known = restoredCommentSessions.get(key);
     if (known) return known;
     const restored = (async () => {
       try {
-        let record = await readReviewRecord(reviewRecordPath);
-        if (takesOver) {
-          const behind = await reviewsBehind(record.reviews, selection, isAncestorCommit);
-          if (behind.length > 0) {
-            record = await updateReviewRecord(reviewRecordPath, (reviews) =>
-              takeOverReviews(
-                reviews,
-                selection,
-                behind.map((review) => review.selection),
-              ),
-            );
-          }
-        }
-        const stored = record.reviews.find((review) =>
-          diffSelectionsEqual(review.selection, selection),
-        );
-        if (!stored) return;
+        const tookOver = takesOver && (await takeOverReviewsBehind(selection));
+        const stored =
+          reviewRecordPath && !options.clearComments
+            ? (await readReviewRecord(reviewRecordPath)).reviews.find((review) =>
+                diffSelectionsEqual(review.selection, selection),
+              )
+            : undefined;
+        if (!stored && !tookOver) return;
         const files = await filesOfReview(selection);
         const session = getOrCreateCommentSession(selection);
-        const threads =
-          session.threads.length === 0
+        const held = [...session.threads, ...session.leftOut];
+        const threads = !stored
+          ? held
+          : held.length === 0
             ? stored.threads
-            : mergeCommentThreads(stored.threads, session.threads).threads;
+            : mergeCommentThreads(stored.threads, held).threads;
         session.leftOut = files ? threads.filter((thread) => isLeftOut(thread, files)) : [];
         session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
-        session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
+        if (stored) session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
         session.version += 1;
+        if (tookOver) for (const wait of commentWaits) void wait.check();
       } catch (error) {
         console.error('Error restoring the review record:', error);
       }
@@ -826,7 +899,7 @@ export async function startServer(options: ServerOptions): Promise<{
       Boolean(options.stdinDiff),
     );
     const review = await reviewOf(requestedSelection, viewSelection);
-    await restoreCommentSession(review?.selection ?? viewSelection);
+    await restoreCommentSession(review?.selection ?? viewSelection, review !== undefined);
     currentCommentSelection = review?.selection ?? viewSelection;
     indexReviewedCommit(requestedSelection);
 
@@ -859,6 +932,7 @@ export async function startServer(options: ServerOptions): Promise<{
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,
       review,
       ...(Object.keys(rewrittenShas).length > 0 ? { rewritten: rewrittenShas } : {}),
+      ...(reviewMoves.length > 0 ? { reviewMoves } : {}),
     });
   });
 
@@ -1736,11 +1810,6 @@ export async function startServer(options: ServerOptions): Promise<{
     );
   }
 
-  interface CommentWait {
-    check: () => Promise<void>;
-    finish: (event: string) => Promise<void>;
-  }
-  const commentWaits = new Set<CommentWait>();
   let commentWaitsEnded = false;
   let commentWaitSeenAt: number | null = null;
 
@@ -2460,6 +2529,10 @@ export async function startServer(options: ServerOptions): Promise<{
     initialSelection = movedSelection(initialSelection, rewritten);
     currentSelection = movedSelection(currentSelection, rewritten);
     currentCommentSelection = movedSelection(currentCommentSelection, rewritten);
+    reviewMoves = reviewMoves.map(({ from, to }) => ({
+      from: movedSelection(from, rewritten),
+      to: movedSelection(to, rewritten),
+    }));
     for (const [key, session] of [...commentSessions]) {
       const selection = movedSelection(session.selection, rewritten);
       const movedKey = createCommentSessionKey(selection);
@@ -2893,7 +2966,8 @@ export async function startServer(options: ServerOptions): Promise<{
     }, 30_000);
     const wait: CommentWait = {
       check: async () => {
-        const moved = movedSelection(selection, rewrittenShas);
+        const rewritten = movedSelection(selection, rewrittenShas);
+        const moved = findReviewOf(rewritten)?.selection ?? rewritten;
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(moved);
         if (!commentWaits.has(wait)) return;
         if (waiting.length > 0) {

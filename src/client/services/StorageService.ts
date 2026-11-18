@@ -5,6 +5,7 @@ import {
   type DiffContextStorage,
   type LegacyDiffContextStorage,
   type LegacyDiffComment,
+  type ReviewMove,
   type RewrittenShas,
   type ViewedHashIndex,
   type ViewedHashIndexEntry,
@@ -324,6 +325,38 @@ export class StorageService {
         localStorage.removeItem(key);
       } catch (error) {
         console.error('Error moving a rewritten review record:', error);
+      }
+    }
+  }
+
+  moveReopenedRecords(moves: readonly ReviewMove[], repositoryId: string | undefined): void {
+    if (!repositoryId) return;
+    const keyOf = ({ baseCommitish, targetCommitish, baseMode }: ReviewMove['from']) =>
+      this.getStorageKey(
+        baseCommitish,
+        targetCommitish,
+        undefined,
+        undefined,
+        repositoryId,
+        baseMode,
+      );
+    for (const { from, to } of moves) {
+      try {
+        const key = keyOf(from);
+        const record = localStorage.getItem(key);
+        if (record === null) continue;
+        const movedKey = keyOf(to);
+        if (localStorage.getItem(movedKey) === null) {
+          const movedRecord: DiffContextStorage = {
+            ...(JSON.parse(record) as DiffContextStorage),
+            baseCommitish: to.baseCommitish,
+            targetCommitish: to.targetCommitish,
+          };
+          localStorage.setItem(movedKey, JSON.stringify(movedRecord));
+        }
+        localStorage.removeItem(key);
+      } catch (error) {
+        console.error('Error moving the record of a reopened review:', error);
       }
     }
   }
