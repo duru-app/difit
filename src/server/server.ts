@@ -155,6 +155,7 @@ import {
 } from '../utils/diffSelection.js';
 import {
   afterRewrite,
+  movedCommitish,
   movedDecision,
   movedPlace,
   movedSelection,
@@ -2557,7 +2558,8 @@ export async function startServer(options: ServerOptions): Promise<{
       res.status(415).json({ error: 'Expected application/json' });
       return;
     }
-    const request = parseRewordRequest(req.body);
+    const parsed = parseRewordRequest(req.body);
+    const request = parsed && { ...parsed, commit: movedCommitish(parsed.commit, rewrittenShas) };
     const review = findReviewOf(selection);
     const commit = request ? reviewCommitOf(review, request.commit) : undefined;
     if (!request || !review || !commit) {
