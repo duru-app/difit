@@ -4,6 +4,7 @@ import {
   DiffMode,
   type ClientWatchState,
   type SessionStatus,
+  type HistoryRewrittenWatchEvent,
   type SymbolIndexState,
   type WatchEvent,
 } from '../../types/watch.js';
@@ -23,7 +24,7 @@ export function useFileWatch(
   onSymbolIndexChanged?: (commit: string, state: SymbolIndexState) => void,
   onHeadMoved?: () => void,
   onSessionStatus?: (status: SessionStatus) => void,
-  onHistoryRewritten?: () => Promise<void>,
+  onHistoryRewritten?: (event: HistoryRewrittenWatchEvent) => Promise<void>,
 ): FileWatchHook {
   const socketRef = useRef<WebSocket | null>(null);
   // Read through a ref so a new callback identity never closes and reopens the connection,
@@ -120,7 +121,7 @@ export function useFileWatch(
               break;
 
             case 'historyRewritten':
-              void onHistoryRewrittenRef.current?.();
+              void onHistoryRewrittenRef.current?.(data);
               break;
 
             case 'symbolIndexChanged':

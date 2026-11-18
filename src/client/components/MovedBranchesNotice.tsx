@@ -1,6 +1,6 @@
-import { X } from 'lucide-react';
-
 import { LEFT_BRANCHES_REASON, leftBranchesNotice, movedBranchesNotice } from '../utils/directEdit';
+
+import { NoticeBar } from './NoticeBar';
 
 interface MovedBranchesNoticeProps {
   branches: readonly string[];
@@ -11,23 +11,13 @@ interface MovedBranchesNoticeProps {
 export function MovedBranchesNotice({ branches, left, onDismiss }: MovedBranchesNoticeProps) {
   if (branches.length === 0 && !left?.length) return null;
   return (
-    <div className="shrink-0 flex items-center gap-2 px-4 py-1 text-xs bg-github-bg-tertiary border-t border-github-border">
-      <p role="status" className="min-w-0 flex-1 text-github-text-secondary">
-        {branches.length > 0 && <span className="block">{movedBranchesNotice(branches)}</span>}
-        {left?.length ? (
-          <span className="block" title={LEFT_BRANCHES_REASON}>
-            {leftBranchesNotice(left)}
-          </span>
-        ) : null}
-      </p>
-      <button
-        type="button"
-        aria-label="알림 닫기"
-        onClick={onDismiss}
-        className="shrink-0 p-0.5 text-github-text-muted hover:text-github-text-primary"
-      >
-        <X size={12} />
-      </button>
-    </div>
+    <NoticeBar onDismiss={onDismiss}>
+      {branches.length > 0 && <span className="block">{movedBranchesNotice(branches)}</span>}
+      {left?.length ? (
+        <span className="block" title={LEFT_BRANCHES_REASON}>
+          {leftBranchesNotice(left)}
+        </span>
+      ) : null}
+    </NoticeBar>
   );
 }
