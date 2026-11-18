@@ -804,6 +804,57 @@ it('keeps a local master tracking origin’s default main in place as the defaul
   expect(git(repo, ['log', '-1', '--format=%s', 'HEAD~1'])).toBe('add typo');
 });
 
+it('maps the old SHA in a reword body onto the new SHA and still refuses a message that changed', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const tip = commit(repo, 'tip', { 'c.js': '1\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, tip),
+    repoPath: repo,
+    preferredPort: 9279,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const reword = (commit: string, original: string, message: string, query: string) =>
+    fetch(api(`/api/reword${query}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commit, original, message }),
+    });
+
+  const first = await reword(typo, 'add typpo', 'add typo', `?base=${base}&target=${tip}`);
+  const { rewritten } = (await first.json()) as { rewritten: Record<string, string> };
+  expect(first.status).toBe(200);
+  const newTypo = rewritten[typo]!;
+
+  const stale = await reword(typo, 'add typpo', 'add typo again', `?base=${base}&target=${tip}`);
+  expect(stale.status).toBe(409);
+
+  const second = await reword(typo, 'add typo', 'add typo, final', `?base=${base}&target=${tip}`);
+  expect(second.status).toBe(200);
+  const next = (await second.json()) as { rewritten: Record<string, string> };
+  expect(git(repo, ['log', '--reverse', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'add typo, final',
+    'tip',
+  ]);
+  expect(Object.keys(next.rewritten)).toContain(newTypo);
+
+  const abbreviated = await reword(
+    typo.slice(0, 10),
+    'add typo, final',
+    'add typo, last',
+    `?base=${base}&target=${tip}`,
+  );
+  expect(abbreviated.status).toBe(200);
+  expect(git(repo, ['log', '--format=%s', '-2', 'HEAD~1'])).toContain('add typo, last');
+});
+
 it('refuses to reword while a rebase is stopped and leaves the history', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
   cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
