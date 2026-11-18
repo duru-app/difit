@@ -107,6 +107,8 @@ Each comment thread carries a state in the text output of `comment get`:
 | `[다시 수정 중]` | The user rejected the fixup                                     | Drop the fixup and fix again       |
 | `[되돌림]`       | The user reverted a fix they made in the viewer on a new thread | Drop the fixup only                |
 
+When the lines under a comment moved after it was made, for example because the user reordered commits, `comment get` finds them the way the screen the comment was made on does with its default of ignoring whitespace-only changes, without changing the stored comment. The text output puts the line found now in the location line and adds `처음 단 줄: L<n>` under it. When the commented line is gone or now appears in more than one place, it keeps the stored line and adds `바뀐 줄:` with the reason; read the code to find the place before fixing such a comment. In `--format json`, `threads` stay as stored, and only the threads that moved or went stale appear in `placements`, keyed by thread id: `{"kind": "moved", "line": 33}`, or `{"kind": "stale", "reason": "missing" | "ambiguous", "line": 28}`, with `extraLines` for a comment on several ranges. Line numbers are still in the tree of the comment's `view`. A comment on a file that the diff of its `view` does not include keeps its stored line.
+
 A message the user edited after posting it shows `고친 시각: <ISO time>` above its body (`updatedAt` in `--format json`). An edit made after you replied does not make the thread your turn again, so when that time is later than your reply, read the message again and answer whatever it now adds.
 
 ### Learning when it is your turn

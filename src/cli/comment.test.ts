@@ -241,7 +241,9 @@ describe('comment subcommand integration', () => {
       const command = createCommentCommand();
       await command.parseAsync(['node', 'difit', 'get', '--port', '4966', '--format', 'json']);
 
-      expect(mockFetch).toHaveBeenCalledWith('http://localhost:4966/api/comments-json');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:4966/api/comments-json?placements=true',
+      );
       expect(consoleOutput[0]).toContain('"threads"');
     });
 

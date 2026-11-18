@@ -177,7 +177,7 @@ export function createCommentCommand(): Command {
         const endpoint = opts.leftOut
           ? '/api/comments-left-out'
           : opts.format === 'json'
-            ? '/api/comments-json'
+            ? '/api/comments-json?placements=true'
             : '/api/comments-output';
         const response = await fetch(`http://localhost:${opts.port}${endpoint}`);
 

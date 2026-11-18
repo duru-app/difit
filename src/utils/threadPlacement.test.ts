@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { DiffCommentThread, DiffFile, DiffLine, FileCommentThread } from '../types/diff';
 
-import { buildFileLineIndex, locateThread, placeThread } from './threadPlacement';
+import {
+  buildFileLineIndex,
+  locateThread,
+  placementContextOf,
+  placeThread,
+} from './threadPlacement';
 
 const buildThread = (overrides: Partial<FileCommentThread> = {}): FileCommentThread => ({
   id: 'thread-1',
@@ -583,6 +588,57 @@ describe('placeThread', () => {
 
     it('is hidden on a commit view that does not hold its commit', () => {
       expect(placeThread(onCommit, shownOn(FIX_VIEW), undefined)).toEqual({ kind: 'hidden' });
+    });
+  });
+});
+
+describe('placementContextOf', () => {
+  const HASH = 'a'.repeat(40);
+  const review = {
+    selection: { baseCommitish: 'b'.repeat(40), targetCommitish: HASH },
+    requested: { baseCommitish: 'main', targetCommitish: HASH },
+    commits: [],
+  };
+
+  it('pins fixups to the review target only when a hash was asked for', () => {
+    expect(
+      placementContextOf({
+        baseCommitish: 'b'.repeat(40),
+        targetCommitish: 'c'.repeat(40),
+        requestedTargetCommitish: 'c'.repeat(40),
+      }),
+    ).toEqual({
+      view: { baseCommitish: 'b'.repeat(40), targetCommitish: 'c'.repeat(40) },
+      targetCommit: 'c'.repeat(40),
+    });
+    expect(
+      placementContextOf({
+        baseCommitish: 'b'.repeat(40),
+        targetCommitish: 'c'.repeat(40),
+        requestedTargetCommitish: 'HEAD',
+      }).targetCommit,
+    ).toBeNull();
+  });
+
+  it('counts on the review target when the diff is a view of a review', () => {
+    expect(
+      placementContextOf({
+        baseCommitish: 'b'.repeat(40),
+        targetCommitish: 'd'.repeat(40),
+        requestedTargetCommitish: 'd'.repeat(40),
+        review,
+      }),
+    ).toEqual({
+      view: { baseCommitish: 'b'.repeat(40), targetCommitish: 'd'.repeat(40) },
+      review,
+      targetCommit: HASH,
+    });
+  });
+
+  it('has no view or pinned target without both ends of the diff', () => {
+    expect(placementContextOf({ requestedTargetCommitish: HASH, targetCommitish: HASH })).toEqual({
+      view: null,
+      targetCommit: null,
     });
   });
 });

@@ -50,7 +50,11 @@ import {
   positionOfLines,
   rangeOfLineNumber,
 } from '../utils/commentPosition';
-import { DEFAULT_DIFF_VIEW_MODE, normalizeDiffViewMode } from '../utils/diffMode';
+import {
+  DEFAULT_DIFF_VIEW_MODE,
+  DEFAULT_IGNORE_WHITESPACE,
+  normalizeDiffViewMode,
+} from '../utils/diffMode';
 import { mergeCommentThreads } from '../utils/commentImports';
 import {
   bindingForCommit,
@@ -60,7 +64,6 @@ import {
   diffSelectionsEqual,
   fixupCommitOf,
   getDiffSelectionKey,
-  isCommitHash,
   isViewOfReview,
   madeViewElsewhere,
   normalizeBaseMode,
@@ -191,9 +194,11 @@ import { keepWhileSame } from './utils/keepWhileSame';
 import {
   buildFileLineIndex,
   type FileLineIndex,
+  pinnedTargetCommit,
   type Placement,
   placeThread,
   type ThreadPlacement,
+  viewOfDiff,
 } from '../utils/threadPlacement';
 
 const EMPTY_COMMENT_THREADS: CommentThread[] = [];
@@ -457,7 +462,7 @@ function App() {
   const [diffData, setDiffData] = useState<DiffResponse | null>(null);
   const [diffDataVersion, setDiffDataVersion] = useState(0);
   const [diffMode, setDiffMode] = useState<DiffViewMode>(getInitialDiffViewMode);
-  const [ignoreWhitespace, setIgnoreWhitespace] = useState(true);
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(DEFAULT_IGNORE_WHITESPACE);
   const [foldCommentChanges, setFoldCommentChanges] = useState(true);
   const [showResolvedThreads, setShowResolvedThreads] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -511,17 +516,10 @@ function App() {
     restoring: boolean;
   } | null>(restoredEntry?.place ? { place: restoredEntry.place, restoring: true } : null);
   const activeDiffAbortControllerRef = useRef<AbortController | null>(null);
-  const resolvedSelection = useMemo<DiffSelection | null>(() => {
-    if (!diffData?.baseCommitish || !diffData?.targetCommitish) {
-      return null;
-    }
-
-    return createDiffSelection(
-      diffData.baseCommitish,
-      diffData.targetCommitish,
-      diffData.requestedBaseMode,
-    );
-  }, [diffData]);
+  const resolvedSelection = useMemo<DiffSelection | null>(
+    () => (diffData ? viewOfDiff(diffData) : null),
+    [diffData],
+  );
   const resolvedSelectionKey = useMemo(() => {
     if (!resolvedSelection) {
       return null;
@@ -665,16 +663,10 @@ function App() {
     },
     [commentSessionQueryString],
   );
-  // Only a review pinned to a hash shows fixups; HEAD or a branch moves along with them.
-  const targetCommit = useMemo(() => {
-    const target = commentSelection?.targetCommitish;
-    const requested = review?.requested.targetCommitish ?? diffData?.requestedTargetCommitish;
-    return target && requested && isCommitHash(requested) ? target : null;
-  }, [
-    diffData?.requestedTargetCommitish,
-    review?.requested.targetCommitish,
-    commentSelection?.targetCommitish,
-  ]);
+  const targetCommit = useMemo(
+    () => pinnedTargetCommit(resolvedSelection, diffData),
+    [resolvedSelection, diffData],
+  );
   const [showFixupOverlay, setShowFixupOverlay] = useState(true);
   const [directEditCount, setDirectEditCount] = useState(0);
   const [headMoveCount, setHeadMoveCount] = useState(0);

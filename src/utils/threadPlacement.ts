@@ -3,6 +3,7 @@ import type {
   DiffCommentThread,
   DiffLineRange,
   DiffFile,
+  DiffResponse,
   DiffSelection,
   DiffSide,
   FileCommentThread,
@@ -19,7 +20,13 @@ import {
   rangeOfLineNumber,
   sideOfRange,
 } from './commentPosition.js';
-import { commitsOfView, isCommitHash, isSameCommit, isSameView } from './diffSelection.js';
+import {
+  commitsOfView,
+  createDiffSelection,
+  isCommitHash,
+  isSameCommit,
+  isSameView,
+} from './diffSelection.js';
 
 export interface FileLineIndex {
   old: Map<number, string>;
@@ -143,6 +150,40 @@ export interface PlacementContext {
   view: DiffSelection | null;
   review?: Pick<ReviewScope, 'selection' | 'commits'>;
   targetCommit: string | null;
+}
+
+type PlacedDiff = Pick<
+  DiffResponse,
+  'baseCommitish' | 'targetCommitish' | 'requestedBaseMode' | 'requestedTargetCommitish' | 'review'
+>;
+
+// Only a review pinned to a hash shows fixups; HEAD or a branch moves along with them.
+export function pinnedTargetCommit(
+  view: DiffSelection | null,
+  diff: PlacedDiff | null,
+): string | null {
+  const target = (diff?.review?.selection ?? view)?.targetCommitish;
+  const requested = diff?.review?.requested.targetCommitish ?? diff?.requestedTargetCommitish;
+  return target && requested && isCommitHash(requested) ? target : null;
+}
+
+export function viewOfDiff({
+  baseCommitish,
+  targetCommitish,
+  requestedBaseMode,
+}: PlacedDiff): DiffSelection | null {
+  return baseCommitish && targetCommitish
+    ? createDiffSelection(baseCommitish, targetCommitish, requestedBaseMode)
+    : null;
+}
+
+export function placementContextOf(diff: PlacedDiff): PlacementContext {
+  const view = viewOfDiff(diff);
+  return {
+    view,
+    ...(diff.review ? { review: diff.review } : {}),
+    targetCommit: pinnedTargetCommit(view, diff),
+  };
 }
 
 const sameLines = (a: PlacedLines, b: PlacedLines) =>

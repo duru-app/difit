@@ -14,7 +14,12 @@ import { type DiffMode, type SessionStatus, type WatchEvent } from '../types/wat
 import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
 import { withCurrentFixupShas } from '../utils/fixupLines.js';
-import { buildFileLineIndex, placeThread, type Placement } from '../utils/threadPlacement.js';
+import {
+  buildFileLineIndex,
+  type Placement,
+  placeThread,
+  placementContextOf,
+} from '../utils/threadPlacement.js';
 import {
   endOfLine,
   extraLinesOfPosition,
@@ -38,6 +43,7 @@ import {
 } from '../utils/editorOptions.js';
 import { withoutThreadTrailers } from '../utils/commitMessage.js';
 import { createId } from '../utils/createId.js';
+import { DEFAULT_IGNORE_WHITESPACE } from '../utils/diffMode.js';
 import { getFileExtension } from '../utils/fileUtils.js';
 import { isSessionConnected } from '../utils/sessionStatus.js';
 import { isSymbolName } from '../utils/symbolName.js';
@@ -111,9 +117,9 @@ import {
   type Comment,
   type CommentThread,
   type DiffCommentThread,
-  type DiffFile,
   type DiffLineRange,
   type DiffResponse,
+  type FileCommentThread,
   type DiffSelection,
   type DiffSide,
   type DirectEditRejection,
@@ -1499,6 +1505,7 @@ export async function startServer(options: ServerOptions): Promise<{
   function toCommentThread(
     thread: DiffCommentThread,
     commits: readonly ReviewCommit[] = [],
+    placement?: Placement,
   ): ShownThread {
     if (isOnCommit(thread)) {
       return {
@@ -1510,13 +1517,21 @@ export async function startServer(options: ServerOptions): Promise<{
         fixupCommit: fixupCommitOf(thread.fixupTarget, commits),
       };
     }
-    const line = lineOfPosition(thread.position);
-    const extraLines = extraLinesOfPosition(thread.position);
+    const storedLine = lineOfPosition(thread.position);
+    const storedExtraLines = extraLinesOfPosition(thread.position);
+    const moved = placement?.kind === 'moved';
+    const line = moved ? placement.line : storedLine;
+    const extraLines = moved ? placement.extraLines : storedExtraLines;
     return {
       id: thread.id,
       file: thread.filePath,
       ...(line === undefined ? {} : { line }),
       ...(extraLines ? { extraLines } : {}),
+      ...(moved && storedLine !== undefined ? { storedLine } : {}),
+      ...(moved && storedExtraLines ? { storedExtraLines } : {}),
+      ...(placement?.kind === 'stale'
+        ? { isOutdated: true, outdatedReason: placement.reason }
+        : {}),
       side: thread.position.side,
       createdAt: thread.createdAt,
       updatedAt: thread.updatedAt,
@@ -1981,14 +1996,18 @@ export async function startServer(options: ServerOptions): Promise<{
     });
   });
 
-  app.get('/api/comments-json', (req, res) => {
+  app.get('/api/comments-json', async (req, res) => {
     const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
     const session = getOrCreateCommentSession(selection);
+    const { version, threads, decisions } = session;
+    const placements =
+      req.query.placements === 'true' ? await placementsOrNone(selection, threads) : undefined;
     res.json({
-      version: session.version,
-      threads: session.threads,
-      decisions: session.decisions,
+      version,
+      threads,
+      decisions,
       ...(session.reviewDone ? { reviewDone: true } : {}),
+      ...(placements ? { placements: placementsByThread(placements) } : {}),
     });
   });
 
@@ -2591,59 +2610,57 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   }
 
-  async function placementsOf(
-    selection: DiffSelection,
-    threads: readonly DiffCommentThread[],
-  ): Promise<Map<string, Placement>> {
-    const placements = new Map<string, Placement>();
-    const anchored = threads.filter(
-      (thread) => !isOnCommit(thread) && thread.codeSnapshot?.content !== undefined,
-    );
-    if (anchored.length === 0) return placements;
-    let files: DiffFile[];
-    try {
-      files = (await diffOfReview(selection)).files;
-    } catch (error) {
-      console.error('Error reading the diff of a review:', error);
-      return placements;
+  // Only the threads whose lines differ from the stored ones; the stored ones stay in `threads`.
+  function placementsByThread(placements: ReadonlyMap<string, Placement>) {
+    const changed: Record<string, Placement> = {};
+    for (const [id, placement] of placements) {
+      if (placement.kind === 'moved' || placement.kind === 'stale') changed[id] = placement;
     }
-    const pinned = pinnedCommentSessionKeys.has(createCommentSessionKey(selection));
-    const context = {
-      view: selection,
-      review: pinnedReviews.find((review) => diffSelectionsEqual(review.selection, selection)),
-      targetCommit: pinned ? selection.targetCommitish : null,
-    };
-    for (const thread of anchored) {
-      if (isOnCommit(thread)) continue;
-      const file = files.find(
-        ({ path, oldPath }) => path === thread.filePath || oldPath === thread.filePath,
-      );
-      placements.set(
-        thread.id,
-        placeThread(thread, context, file ? buildFileLineIndex(file) : undefined),
-      );
-    }
-    return placements;
+    return changed;
   }
 
-  // A thread bound to a commit of the review keeps the line numbers of that commit.
-  function atPlacement(
-    shown: ShownThread,
-    thread: DiffCommentThread,
-    placement?: Placement,
-  ): ShownThread {
-    if (!placement || !('file' in shown)) return shown;
-    if (placement.kind === 'stale') {
-      return { ...shown, isOutdated: true, outdatedReason: placement.reason };
+  async function cachedDiffOf(selection: DiffSelection): Promise<DiffResponse> {
+    if (options.stdinDiff) return initialDiffData;
+    const key = createDiffCacheKey(selection, DEFAULT_IGNORE_WHITESPACE);
+    const cached = getCachedDiffResponse(diffDataCache, key);
+    if (cached) return cached;
+    const diff = await parser.parseDiff(selection, DEFAULT_IGNORE_WHITESPACE, options.contextLines);
+    setCachedDiffResponse(diffDataCache, key, diff);
+    return diff;
+  }
+
+  // Each thread is placed as the screen it was made on places it, so its lines stay in that view's
+  // tree. A thread on a file outside that view's diff keeps its stored lines, as the screen leaves it
+  // to the fixups to place.
+  async function placementsOrNone(
+    selection: DiffSelection,
+    threads: readonly DiffCommentThread[],
+  ): Promise<Map<string, Placement> | undefined> {
+    const byView = new Map<string, { view: DiffSelection; threads: FileCommentThread[] }>();
+    for (const thread of threads) {
+      if (isOnCommit(thread)) continue;
+      const view = thread.view ?? selection;
+      const key = getDiffSelectionKey(view);
+      const group = byView.get(key) ?? { view, threads: [] };
+      group.threads.push(thread);
+      byView.set(key, group);
     }
-    if (placement.kind !== 'moved' || thread.fixupTarget !== undefined) return shown;
-    const moved = {
-      ...shown,
-      ...(placement.line === undefined ? {} : { line: placement.line }),
-    };
-    if (placement.extraLines) moved.extraLines = placement.extraLines;
-    else delete moved.extraLines;
-    return moved;
+    try {
+      const placements = new Map<string, Placement>();
+      for (const { view, threads: made } of byView.values()) {
+        const diff = await cachedDiffOf(view);
+        const context = placementContextOf(diff);
+        const indexes = new Map(diff.files.map((file) => [file.path, buildFileLineIndex(file)]));
+        for (const thread of made) {
+          const index = indexes.get(thread.filePath);
+          if (index) placements.set(thread.id, placeThread(thread, context, index));
+        }
+      }
+      return placements;
+    } catch (error) {
+      console.error('Error placing comments:', error);
+      return undefined;
+    }
   }
 
   async function renderCommentsOutput(
@@ -2659,8 +2676,6 @@ export async function startServer(options: ServerOptions): Promise<{
       (thread) => !isThreadResolved(thread.id, session.decisions, fixupsOf(thread.id)),
     );
     if (threads.length === 0) return '';
-    const placements =
-      from === 'threads' ? await placementsOf(selection, threads) : new Map<string, Placement>();
     const reviewStates =
       fixupsByThread &&
       new Map<string, ThreadReviewState>(
@@ -2670,12 +2685,12 @@ export async function startServer(options: ServerOptions): Promise<{
         ]),
       );
     const commits = findReviewOf(selection)?.commits;
+    const placements = from === 'threads' ? await placementsOrNone(selection, threads) : undefined;
     return formatCommentsOutput(
       threads.map((thread) =>
-        atPlacement(
-          withCurrentFixupShas(toCommentThread(thread, commits), fixupsOf(thread.id)),
-          thread,
-          placements.get(thread.id),
+        withCurrentFixupShas(
+          toCommentThread(thread, commits, placements?.get(thread.id)),
+          fixupsOf(thread.id),
         ),
       ),
       reviewStates,

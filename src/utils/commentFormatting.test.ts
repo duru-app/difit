@@ -692,6 +692,45 @@ Related entries are below.`);
       );
     });
 
+    it('should say where a moved thread was made and why a stale one kept its lines', () => {
+      const thread = (id: string, placed: Partial<CommentThread>): CommentThread => ({
+        id,
+        file: 'src/App.tsx',
+        side: 'new',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        messages: [
+          {
+            id,
+            body: `Fix ${id}`,
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          },
+        ],
+        ...placed,
+      });
+      const moved = thread('moved', {
+        line: [33, 34],
+        storedLine: [28, 29],
+        extraLines: [{ side: 'old', line: 30 }],
+        storedExtraLines: [{ side: 'old', line: 25 }],
+      });
+      const stale = thread('stale', { line: 12, isOutdated: true, outdatedReason: 'ambiguous' });
+      const kept = thread('kept', { line: 7 });
+
+      const result = formatCommentsOutput([moved, stale, kept]);
+
+      expect(result).toContain(
+        'src/App.tsx:old:L30,new:L33-L34\n처음 단 줄: old:L25,new:L28-L29\nFix moved',
+      );
+      expect(result).toContain(
+        'src/App.tsx:L12\n바뀐 줄: 지적을 단 코드가 지금 diff 의 여러 곳에 있다. 위 줄 번호는 지적을 단 때의 것이다.\nFix stale',
+      );
+      expect(result).toContain('src/App.tsx:L7\nFix kept');
+      expect(formatCommentThreadPrompt(moved)).not.toContain('처음 단 줄');
+      expect(formatCommentThreadPrompt(stale)).not.toContain('바뀐 줄');
+    });
+
     it('should handle comments with multi-line bodies', () => {
       const comments: Comment[] = [
         {
