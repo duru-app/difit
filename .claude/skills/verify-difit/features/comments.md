@@ -102,6 +102,27 @@ The server writes threads, replies and decisions to `$DIFIT_CONFIG_DIR/reviews/<
 - `start "$S" --repo <another worktree of $REPO> …`: the same threads;
 - `start "$S" … --clean`: `get` and `get --left-out` print nothing, and so does the next start without `--clean`.
 
+A review reopened in the running server takes over the same way. The browser's `다시 열기` asks `/api/diff` for the same base and the newer commit; do that with `curl` after adding threads and a `resolved` decision and committing on top of the target:
+
+```bash
+( . "$S/env.sh"; cd "$REPO"
+  BASE=$(git rev-parse HEAD~2); OLD=$(git rev-parse HEAD~1); NEW=$(git rev-parse HEAD)
+  curl -s "$URL/api/diff?base=$BASE&target=$NEW" | jq -c '{review: .review.selection, reviewMoves}'
+  difit comment get --port "$PORT"
+  timeout 5 difit comment wait --port "$PORT"; echo "wait exit $?"
+  curl -s "$URL/api/comments-json?base=$BASE&target=$NEW" | jq -c '{threads: [.threads[].id], decisions: [.decisions[] | {threadId, kind}]}'
+  curl -s "$URL/api/diff?base=$BASE&target=$OLD" | jq -c '.review.selection'
+  jq -c '[.reviews[] | {selection, threads: [.threads[].id]}]' "$DIFIT_CONFIG_DIR"/reviews/*.json
+) 2>&1 | tee "$S/evidence/reopen.txt"
+```
+
+- `/api/diff` names the new review and one `reviewMoves` entry from the older review to it;
+- `get` lists every open thread, and `wait` prints them at once and exits 0; the resolved thread is in neither;
+- `comments-json` of the new review has every thread and the `resolved` decision;
+- asking for the older target again returns the new review as its `review`;
+- the record file has one entry, the new review, with every thread; a server started on the new target after a kill shows the same threads;
+- a history that was folded does not count: its old target is no ancestor, and the comments stay with the older review.
+
 Give a reviewer thread its `codeSnapshot` (`{"content":"<the line>","commit":"<short target SHA>"}`) as the browser does; without it there is nothing to find the line by.
 
 ## Session status

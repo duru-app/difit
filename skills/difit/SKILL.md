@@ -87,7 +87,7 @@ Keep at most one live difit server per Git root and review target. When you edit
   - `<difit-command> comment add --port <port> '<json>'` — add new comments to the running server (same JSON shape as `--comment`).
   - `<difit-command> comment resolve <threadId...> --port <port>` — resolve threads only you wrote (every message by `Agent`, never reopened by the reviewer). Any other thread, including one the reviewer replied to or reopened, one imported from GitHub or one added with another author, is refused with exit 1 and nothing is recorded; only the reviewer closes it, with ✓ or by approving a fixup. Answer such a thread by fixup or reply and leave it open. A thread the reviewer already closed with ✓ is reported under `resolved` with nothing recorded.
 - If the review target changes (for example, a different commit range), stop the existing server and start a new one rather than leaving two servers for the same repository.
-- The server stores every thread, reply and decision on disk as it changes, per repository (`~/.difit/reviews/`, shared by the repository's worktrees). A server started again on the same range shows them as they were, and one started after more commits were stacked on the old target, with the same compare-with side, takes them over; do not add them again. `--clean` forgets them.
+- The server stores every thread, reply and decision on disk as it changes, per repository (`~/.difit/reviews/`, shared by the repository's worktrees). A server started again on the same range shows them as they were, and one started after more commits were stacked on the old target, with the same compare-with side, takes them over, and so does a review the user reopens on newer commits in the running server (`다시 열기`); do not add them again. A `comment wait` started before the reopen receives the threads of the reopened review. `--clean` forgets them.
 
 ## Answering Review Comments With Fixup Commits
 
@@ -278,7 +278,7 @@ When a fixup targets a commit in the middle of the range and a later commit chan
 
 ### Moving comments to the folded commit
 
-Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. A reorder or a reword within a running review needs none of this, because difit moves the comments. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
+Folding changes the target SHA, and a review reopened on the new SHA starts without the comments. A reorder or a reword within a running review needs none of this, because difit moves the comments, and neither does a review the user reopened on newer commits stacked on the old target. Copy them from the old server, keeping thread ids and `codeSnapshot` so trailers and decisions still point at the same comments, along with `view` and `fixupTarget`, and reply ids with `choices`, `answer` and `fixupLines` so a pick still names the reply it answers and a reply on fixup lines keeps them:
 
 ```bash
 difit comment get --port <old port> --format json > old.json

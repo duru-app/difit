@@ -1525,6 +1525,8 @@ function App() {
             setSelectedRevision(moved);
           }
         }
+        if (data.reviewMoves)
+          storageService.moveReopenedRecords(data.reviewMoves, data.repositoryId);
         setDiffData(data);
         setDiffDataVersion((prev) => prev + 1);
 
