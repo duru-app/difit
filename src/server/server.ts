@@ -151,6 +151,7 @@ import {
   isCommitHash,
   isCommitTarget,
   isSameCommit,
+  normalizeBaseMode,
   isSameView,
   isViewOfReview,
 } from '../utils/diffSelection.js';
@@ -380,8 +381,20 @@ export async function startServer(options: ServerOptions): Promise<{
   const pinnedCommentSessionKeys = new Set<string>();
   // Pinned reviews, newest last.
   const pinnedReviews: ReviewScope[] = [];
+  let reviewMoves: ReviewMove[] = [];
+  const afterReviewMoves = (selection: DiffSelection) =>
+    reviewMoves.reduce(
+      (moved, { from, to }) =>
+        normalizeBaseMode(moved.baseMode) === normalizeBaseMode(from.baseMode) &&
+        isSameCommit(moved.baseCommitish, from.baseCommitish) &&
+        isSameCommit(moved.targetCommitish, from.targetCommitish)
+          ? to
+          : moved,
+      selection,
+    );
   // A part of the review being read stays on it even when a newer review also covers it.
-  const findReviewOf = (view: DiffSelection) => {
+  const findReviewOf = (asked: DiffSelection) => {
+    const view = afterReviewMoves(asked);
     const newestFirst = [...pinnedReviews].reverse();
     const current = newestFirst.find((review) =>
       diffSelectionsEqual(review.selection, currentCommentSelection),
@@ -674,8 +687,7 @@ export async function startServer(options: ServerOptions): Promise<{
 
   const isAncestorCommit = async (older: string, newer: string) =>
     (await runGit(repositoryPath, ['merge-base', '--is-ancestor', older, newer])).code === 0;
-  const restoredCommentSessions = new Map<string, Promise<void>>();
-  let reviewMoves: ReviewMove[] = [];
+  const restoredCommentSessions = new Map<string, { done: Promise<void>; tookOver: boolean }>();
 
   // Tabs are not told: a tab on a review that was taken over reads the same threads through the
   // newer one, and the tab that reopened would save them back under the older review before its
@@ -687,7 +699,7 @@ export async function startServer(options: ServerOptions): Promise<{
         ? (await readReviewRecord(reviewRecordPath)).reviews
         : [];
     const known = new Map(
-      [...stored, ...pinnedReviews, ...commentSessions.values()].map((review) => [
+      [...pinnedReviews, ...commentSessions.values(), ...stored].map((review) => [
         createCommentSessionKey(review.selection),
         { selection: review.selection },
       ]),
@@ -696,6 +708,11 @@ export async function startServer(options: ServerOptions): Promise<{
       (review) => review.selection,
     );
     if (behind.length === 0) return false;
+    await Promise.all(
+      behind.flatMap(
+        (older) => restoredCommentSessions.get(createCommentSessionKey(older))?.done ?? [],
+      ),
+    );
 
     const isBehind = (other: DiffSelection) =>
       behind.some((older) => diffSelectionsEqual(older, other));
@@ -753,8 +770,9 @@ export async function startServer(options: ServerOptions): Promise<{
   function restoreCommentSession(selection: DiffSelection, takesOver = false): Promise<void> {
     const key = createCommentSessionKey(selection);
     const known = restoredCommentSessions.get(key);
-    if (known) return known;
-    const restored = (async () => {
+    if (known && (known.tookOver || !takesOver)) return known.done;
+    const done = (async () => {
+      await known?.done;
       try {
         const tookOver = takesOver && (await takeOverReviewsBehind(selection));
         const stored =
@@ -781,8 +799,8 @@ export async function startServer(options: ServerOptions): Promise<{
         console.error('Error restoring the review record:', error);
       }
     })();
-    restoredCommentSessions.set(key, restored);
-    return restored;
+    restoredCommentSessions.set(key, { done, tookOver: takesOver });
+    return done;
   }
   await restoreCommentSession(currentCommentSelection, true);
 
@@ -1923,14 +1941,16 @@ export async function startServer(options: ServerOptions): Promise<{
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const body: unknown =
         typeof req.body === 'string' ? (JSON.parse(req.body) as unknown) : req.body;
-      const nextThreads = parseCommentsPayload(body).map((thread) =>
-        movedThread(thread, rewrittenShas),
-      );
       const nextDecisions = parseDecisionsPayload(body)?.map((decision) =>
         movedDecision(decision, rewrittenShas),
       );
       const baseVersion = parseBaseVersion(body);
       const session = getOrCreateCommentSession(selection);
+      // A tab may still hold a thread from before it was left out.
+      const leftOutIds = new Set(session.leftOut.map((thread) => thread.id));
+      const nextThreads = parseCommentsPayload(body)
+        .map((thread) => movedThread(thread, rewrittenShas))
+        .filter((thread) => !leftOutIds.has(thread.id));
       const before = {
         threads: session.threads,
         decisions: session.decisions,

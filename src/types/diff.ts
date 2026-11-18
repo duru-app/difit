@@ -134,7 +134,7 @@ export interface DiffResponse {
   // The review this diff is a view of; comments and decisions belong to it.
   review?: ReviewScope;
   rewritten?: RewrittenShas;
-  // Applied after rewritten, oldest first.
+  // Oldest first. The selections carry the SHAs after `rewritten`.
   reviewMoves?: ReviewMove[];
 }
 

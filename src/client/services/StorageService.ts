@@ -295,7 +295,14 @@ export class StorageService {
     }
   }
 
-  // A record already under its new key stays: it was written after the rewrite.
+  // A record already under the new key stays: it was written after the move.
+  private moveRecord(key: string, movedKey: string, moved: DiffContextStorage): void {
+    if (localStorage.getItem(movedKey) === null) {
+      localStorage.setItem(movedKey, JSON.stringify(moved));
+    }
+    localStorage.removeItem(key);
+  }
+
   moveRewrittenRecords(rewritten: RewrittenShas, repositoryId: string | undefined): void {
     if (!repositoryId) return;
     const prefix = this.getFullStorageKey(repositoryId, '');
@@ -312,17 +319,13 @@ export class StorageService {
           repositoryId,
           this.generateStorageKey(moved.baseCommitish, moved.targetCommitish, record.baseMode),
         );
-        if (localStorage.getItem(movedKey) === null) {
-          const movedRecord: DiffContextStorage = {
-            ...record,
-            baseCommitish: moved.baseCommitish,
-            targetCommitish: moved.targetCommitish,
-            threads: record.threads.map((thread) => movedThread(thread, rewritten)),
-            decisions: record.decisions?.map((decision) => movedDecision(decision, rewritten)),
-          };
-          localStorage.setItem(movedKey, JSON.stringify(movedRecord));
-        }
-        localStorage.removeItem(key);
+        this.moveRecord(key, movedKey, {
+          ...record,
+          baseCommitish: moved.baseCommitish,
+          targetCommitish: moved.targetCommitish,
+          threads: record.threads.map((thread) => movedThread(thread, rewritten)),
+          decisions: record.decisions?.map((decision) => movedDecision(decision, rewritten)),
+        });
       } catch (error) {
         console.error('Error moving a rewritten review record:', error);
       }
@@ -345,16 +348,11 @@ export class StorageService {
         const key = keyOf(from);
         const record = localStorage.getItem(key);
         if (record === null) continue;
-        const movedKey = keyOf(to);
-        if (localStorage.getItem(movedKey) === null) {
-          const movedRecord: DiffContextStorage = {
-            ...(JSON.parse(record) as DiffContextStorage),
-            baseCommitish: to.baseCommitish,
-            targetCommitish: to.targetCommitish,
-          };
-          localStorage.setItem(movedKey, JSON.stringify(movedRecord));
-        }
-        localStorage.removeItem(key);
+        this.moveRecord(key, keyOf(to), {
+          ...(JSON.parse(record) as DiffContextStorage),
+          baseCommitish: to.baseCommitish,
+          targetCommitish: to.targetCommitish,
+        });
       } catch (error) {
         console.error('Error moving the record of a reopened review:', error);
       }

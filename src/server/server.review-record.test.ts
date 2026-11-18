@@ -669,3 +669,61 @@ it('carries the comments into the reopened review of a server started with --cle
     createDiffSelection(short(base), short(stacked)),
   ]);
 });
+
+it('answers for the reopened review when asked for an earlier one compared from the merge base', async () => {
+  const { repo, base, head } = createRepo();
+  const review = await open(repo, createDiffSelection(base, head, 'merge-base'));
+  await review.post('/api/comments', { threads: [thread('t1', 'a.txt', 2, 'TWO', short(head))] });
+  const stacked = commit(repo, 'more', { 'b.txt': lines('alpha', 'beta', 'gamma') });
+  const reopened = `base=${short(base)}&target=${short(stacked)}&baseMode=merge-base`;
+  const earlier = `base=${base}&target=${head}&baseMode=merge-base`;
+
+  const diff = (await review.get(`/api/diff?${reopened}`)) as DiffResponse;
+
+  expect(diff.reviewMoves).toHaveLength(1);
+  const older = (await review.get(`/api/diff?${earlier}`)) as DiffResponse;
+  expect(older.review?.selection).toEqual(diff.review?.selection);
+  await review.post(`/api/comments?${earlier}`, {
+    threads: [...(await review.threads()), thread('t2', 'a.txt', 4, 'four', short(head))],
+  });
+  const asked = (await review.get(`/api/comments-json?${reopened}`)) as {
+    threads: DiffCommentThread[];
+  };
+  expect(asked.threads.map(({ id }) => id)).toEqual(['t1', 't2']);
+  const { reviews } = await readReviewRecord((await getReviewRecordPath(repo))!);
+  expect(reviews).toHaveLength(1);
+});
+
+it('keeps a left-out thread out when the browser saves it back', async () => {
+  const { repo, base, head } = createRepo();
+  const review = await open(repo, createDiffSelection(base, head));
+  const earlier = [
+    thread('kept', 'a.txt', 2, 'TWO', short(head)),
+    thread('out', 'b.txt', 1, 'alpha', short(head)),
+  ];
+  await review.post('/api/comments', { threads: earlier });
+  const stacked = commit(repo, 'take b.txt back out', { 'b.txt': null });
+  await review.get(`/api/diff?base=${base}&target=${stacked}`);
+
+  await review.post('/api/comments', { threads: earlier });
+
+  expect((await review.threads()).map(({ id }) => id)).toEqual(['kept']);
+  expect((await review.leftOut()).threads.map(({ id }) => id)).toEqual(['out']);
+  const { reviews } = await readReviewRecord((await getReviewRecordPath(repo))!);
+  expect(reviews[0]?.threads.map(({ id }) => id).sort()).toEqual(['kept', 'out']);
+});
+
+it('takes over when the reopened commit was first opened through a branch name', async () => {
+  const { repo, base, head } = createRepo();
+  const review = await open(repo, createDiffSelection(base, head));
+  await review.post('/api/comments', { threads: [thread('t1', 'a.txt', 2, 'TWO', short(head))] });
+  const stacked = commit(repo, 'more', { 'b.txt': lines('alpha', 'beta', 'gamma') });
+  await review.get(`/api/diff?base=${base}&target=main`);
+
+  await review.get(`/api/diff?base=${base}&target=${stacked}`);
+
+  const asked = (await review.get(`/api/comments-json?base=${base}&target=${stacked}`)) as {
+    threads: DiffCommentThread[];
+  };
+  expect(asked.threads.map(({ id }) => id)).toEqual(['t1']);
+});
