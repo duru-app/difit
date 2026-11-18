@@ -79,6 +79,7 @@ describe('findStackedBranches', () => {
       ],
       left: [],
       pushed: [],
+      defaultBranch: 'main',
     });
   });
 
@@ -126,6 +127,7 @@ describe('findStackedBranches', () => {
         { name: 'opened', why: 'worktree' },
       ],
       pushed: [],
+      defaultBranch: 'main',
     });
   });
 
@@ -144,6 +146,7 @@ describe('findStackedBranches', () => {
     ).toMatchObject({
       moving: [{ name: 'low' }, { name: 'up' }],
       left: [{ name: 'main', why: 'default' }],
+      defaultBranch: 'main',
     });
   });
 

@@ -2498,7 +2498,6 @@ export async function startServer(options: ServerOptions): Promise<{
         commit.sha,
         defaultBranch,
       )),
-      defaultBranch,
       rewordsMerge: commit.isMerge === true,
     });
     const [blocked] = blocks;
