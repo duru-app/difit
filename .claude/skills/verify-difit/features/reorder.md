@@ -7,6 +7,7 @@ The reviewer drags a commit in the commit list by the handle at the left of its 
 - `POST /api/reorder`, which takes every commit the review lists, oldest first, and returns the old-to-new map
 - The warnings on the default branch and on a commit the upstream holds, passed with `acknowledged`
 - Refusals: a git operation in progress, a thread the agent is working on, HEAD moved, a conflict, a list that has gone stale
+- `POST /api/history-rewritten`, where an agent that rebased by hand reports what became of each commit
 - `/api/diff` with `historyMoves`, `/api/fixups`, `/api/comments-json` and `difit comment get` on the new SHAs
 - A selection with old SHAs, which lands on the same commits in the new order
 - Other local branches on the commits that change places: moved, started again on the new tip, or left and named in `branches.left`
@@ -61,9 +62,11 @@ On the default branch, the same POST without `acknowledged` answers 409 `{"reaso
 
 A pushed commit: before `start`, make a bare repository with `git init -q --bare "$S/remote.git"`, then in `$REPO` run `git remote add origin "$S/remote.git"` and `git push -q -u origin feature`. The POST answers 409 `{"reason":"needs-confirmation","warnings":["pushed-commit"]}` and `HEAD` does not move. With `"acknowledged":["pushed-commit"]` it rewrites, and `git -C "$S/remote.git" rev-parse feature` is what it was.
 
-The agent at work: a thread added with `"author":"User"` and no answer makes the POST answer 409 `{"reason":"agent-working"}`.
+The agent at work: a thread added with `"author":"User"` and no answer makes the POST answer 409 `{"reason":"comments-waiting"}` while no `wait` is open and no Claude Code session socket answers, and `{"reason":"agent-working"}` with a listener on `CLAUDE_CODE_MESSAGING_SOCKET`.
 
-A conflict: commit a line and then edit that line, and ask for the edit first. The POST answers 409 `{"reason":"conflict"}` with the git output, and `HEAD` and the working tree stay as they were.
+A conflict: commit a line and then edit that line, and ask for the edit first. The POST answers 409 `{"reason":"conflict","conflict":{"commit":{"sha":…,"subject":…},"agentAttached":false}}` with the git output, and `HEAD` and the working tree stay as they were.
+
+Handing it over: keep `difit comment wait --port "$PORT"` running in the background and repeat the POST; `agentAttached` is `true`. The button is a browser action, so it goes to what the browser writes: `POST /api/comments` with a thread whose `position` is `{"scope":"commit"}` and `fixupTarget` the commit, or real Chromium on the page. `wait` ends with the thread, `comment get` shows it as `[답변 대기]`, and another POST answers `comments-waiting`, because the `wait` has ended and a new one returns at once on that thread. Then, as the agent: rebase by hand, and `POST /api/history-rewritten` with `{"rewritten":{"<old>":"<new>"}}`. `/api/diff` shows `review.commits` on the new SHAs in the new order, `comment get` shows the thread on the new short SHA, and a reply makes it `[답변 완료]`. A fixup waiting above the review stays above it through the agent's rebase and stays `[승인 대기]`; a rebase that moves it below the review's last commit gets 409 `{"reason":"stale-view"}` from that POST.
 
 A merge kept in the range: before `start`, make a side branch and merge it with `--no-ff`, with a commit after the merge. Ask for that commit before the merge. After the POST, `git log --merges` still lists the merge, `git log --first-parent` has the new order, and `git rev-parse HEAD^{tree}` is unchanged. Moving the commit the side branch grows from past that merge answers 409 `{"reason":"conflict"}`.
 
@@ -75,5 +78,5 @@ Stale lists: an `order` that leaves a commit out or names another answers 409 `{
 
 - `order` holds only what `review.commits` lists. Fixups between them go along with the commit before them, or behind their target when it moved past them; fixups of one target keep their original order. Commits above the reviewed target stay above it.
 - The query of `/api/reorder` names the review, not the commit. After a rewrite the old SHAs in it are still understood, because the server keeps the moves until it stops.
-- The fixup comes a second after the comment, because a comment newer than the fixup's author date is the agent's turn and the POST answers `agent-working`.
+- The fixup comes a second after the comment, because a comment newer than the fixup's author date is the agent's turn and the POST is refused with `comments-waiting`.
 - A thread's stored line does not move, so `comment get` still prints it. The page finds the line again from the code snapshot when an earlier commit's lines shifted it.

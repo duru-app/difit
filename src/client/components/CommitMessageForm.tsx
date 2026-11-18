@@ -4,12 +4,13 @@ import type {
   DiffSelection,
   RewordRequest,
   RewriteBlockingThread,
+  RewriteConflict,
   RewriteWarning,
 } from '../../types/diff';
 import { withoutThreadTrailers } from '../../utils/commitMessage';
 import { diffSelectionsEqual } from '../../utils/diffSelection';
 import type { DirectEditFailure } from '../contexts/FixupOverlayContext';
-import { rewordFailureMessage } from '../utils/directEdit';
+import { rewordFailureMessage, rewordHandoffBody } from '../utils/directEdit';
 import { shortRef } from '../utils/symbolPeek';
 
 import { SPECIAL_LABEL_OVERRIDES } from './DiffQuickMenu';
@@ -18,6 +19,7 @@ export interface RewordFailure extends DirectEditFailure {
   // Saving again with these acknowledged goes ahead.
   warnings?: RewriteWarning[];
   blockingThreads?: RewriteBlockingThread[];
+  conflict?: RewriteConflict;
 }
 
 export interface RewordSaved {
@@ -26,6 +28,23 @@ export interface RewordSaved {
   movedBranches: string[];
   // Local branches a new order left on the old commits: no commit holds their files any more.
   leftBranches?: string[];
+}
+
+export const CONFLICT_ACTION_CLASS =
+  'rounded border border-github-danger bg-github-danger/20 px-3 py-1 text-xs font-medium text-github-text-primary transition-all hover:opacity-80';
+
+export function ConflictDetails({ conflict }: { conflict: RewriteConflict }) {
+  return (
+    <>
+      {conflict.commit && (
+        <p className="mt-1">
+          충돌한 커밋: <span className="font-mono">{conflict.commit.sha.slice(0, 7)}</span>{' '}
+          {conflict.commit.subject}
+        </p>
+      )}
+      {!conflict.agentAttached && <p className="mt-1">연결된 에이전트가 없어 맡길 수 없습니다.</p>}
+    </>
+  );
 }
 
 export interface RewordControls {
@@ -116,9 +135,16 @@ interface CommitMessageFormProps {
   controls: RewordControls;
   shownReview: DiffSelection;
   onClose: () => void;
+  onHandOff?: ((sha: string, body: string) => Promise<void>) | undefined;
 }
 
-export function CommitMessageForm({ sha, controls, shownReview, onClose }: CommitMessageFormProps) {
+export function CommitMessageForm({
+  sha,
+  controls,
+  shownReview,
+  onClose,
+  onHandOff,
+}: CommitMessageFormProps) {
   const [original, setOriginal] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [text, setText] = useState('');
@@ -128,6 +154,7 @@ export function CommitMessageForm({ sha, controls, shownReview, onClose }: Commi
   const unchanged = original === null || cleaned === withoutThreadTrailers(original);
   const blank = cleaned === '';
   const blankHint = !unchanged && blank ? rewordFailureMessage('empty-message', '') : '';
+  const conflict = failure?.conflict;
 
   const { load } = controls;
   useEffect(() => {
@@ -163,6 +190,11 @@ export function CommitMessageForm({ sha, controls, shownReview, onClose }: Commi
       setFailure(result);
       return;
     }
+    onClose();
+  };
+
+  const handOff = async (stopped: RewriteConflict) => {
+    await onHandOff?.(sha, rewordHandoffBody(cleaned, stopped));
     onClose();
   };
 
@@ -230,13 +262,23 @@ export function CommitMessageForm({ sha, controls, shownReview, onClose }: Commi
               {failure.output}
             </pre>
           )}
+          {conflict && <ConflictDetails conflict={conflict} />}
           {failure.warnings && (
             <button
               type="button"
               onClick={() => void save(failure.warnings)}
-              className="mt-1 rounded border border-github-danger bg-github-danger/20 px-3 py-1 text-xs font-medium text-github-text-primary transition-all hover:opacity-80"
+              className={`mt-1 ${CONFLICT_ACTION_CLASS}`}
             >
               그래도 저장
+            </button>
+          )}
+          {conflict?.agentAttached && onHandOff && (
+            <button
+              type="button"
+              onClick={() => void handOff(conflict)}
+              className={`mt-1 ${CONFLICT_ACTION_CLASS}`}
+            >
+              에이전트에게 맡기기
             </button>
           )}
         </div>

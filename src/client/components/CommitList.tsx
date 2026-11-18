@@ -40,6 +40,7 @@ import {
   ReorderDropLine,
   ReorderHandle,
   ReorderNotice,
+  reorderHandoff,
   type SaveOrder,
   useCommitReorder,
 } from './CommitReorder';
@@ -475,6 +476,14 @@ export function CommitList({
           onShowThread={reword?.showBlockingThread}
           onRetry={reorder.retry}
           onDismiss={reorder.dismiss}
+          onHandOff={
+            onAddCommitComment &&
+            (({ order }, conflict) => {
+              const handoff = reorderHandoff(commits, order, conflict);
+              if (!handoff) return;
+              void onAddCommitComment(handoff.sha, handoff.body).then(reorder.dismiss);
+            })
+          }
         />
       )}
       {isListShown && (
@@ -727,6 +736,7 @@ export function CommitList({
                       controls={guardedReword}
                       shownReview={review.requested}
                       onClose={() => setRewording(null)}
+                      onHandOff={onAddCommitComment}
                     />
                   )}
                 </li>
