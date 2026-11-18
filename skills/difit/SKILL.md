@@ -42,6 +42,8 @@ Basic Usage:
 <difit-command> <target> [compare-with]     # Compare two commits/branches. ex: difit feature main
 ```
 
+To review a branch against the branch it was cut from, compare with the fork point's SHA, not the base branch's name: `<difit-command> HEAD $(git merge-base HEAD origin/<base>)`. Given the name, the diff also shows every change the base branch received after the fork point, reversed, as if this branch had undone it.
+
 ## Optional Startup Comments
 
 If there is something you want to tell the user when difit opens, attach it as startup comments with `--comment`.
