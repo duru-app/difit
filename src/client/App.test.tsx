@@ -269,7 +269,7 @@ const linedFile = (path: string, count: number): DiffResponse['files'][number] =
 const commentsPanel = () => document.getElementById('comments-panel');
 const commentsPanelBox = () => document.querySelector<HTMLElement>('[data-comments-panel-box]')!;
 const fileListBox = () => document.getElementById('file-tree-panel')!.parentElement!;
-const diffColumn = () => document.querySelector('main')!;
+const diffColumn = () => document.querySelector<HTMLElement>('[data-diff-column]')!;
 // happy-dom does no layout, so a test states the widths the browser would give.
 const layOut = (widths: { row: number; diff: number; fileList?: number; comments?: number }) => {
   const set = (element: Element, width: number) =>
@@ -1884,6 +1884,158 @@ describe(
       back();
 
       await waitForScroll(3000 + 3 * LINE_HEIGHT - 8);
+    });
+
+    describe('a walkthrough on the agent reply', () => {
+      const answered = (): DiffCommentThread => {
+        const thread = createMockThread({
+          id: 't1',
+          filePath: 'a.ts',
+          line: 5,
+          body: '흐름을 보여 주세요.',
+        });
+        return {
+          ...thread,
+          messages: [
+            ...thread.messages,
+            {
+              id: 'answer',
+              body: '이 순서로 돕니다.',
+              author: 'Agent',
+              createdAt: '2024-01-01T00:01:00.000Z',
+              updatedAt: '2024-01-01T00:01:00.000Z',
+              walkthrough: {
+                commit: 'abc1234',
+                cases: [
+                  {
+                    steps: [
+                      { file: 'a.ts', line: 3, description: '요청을 받는다.' },
+                      { file: 'b.ts', line: 10, endLine: 11, description: '값을 검사한다.' },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      };
+      const bar = () => screen.queryByRole('region', { name: '따라가기' });
+      const stepRows = () =>
+        [...document.querySelectorAll('tr[data-walkthrough-step]')].map((row) => [
+          row.closest<HTMLElement>('[data-file-path]')?.dataset.filePath,
+          row.lastElementChild?.textContent?.match(/line \d+/)?.[0],
+        ]);
+      const openFromReply = async (user: ReturnType<typeof userEvent.setup>) => {
+        const main = await diffMain();
+        await user.click(await main.findByText('이 순서로 돕니다.'));
+      };
+
+      beforeEach(() => {
+        mockComments = [answered()];
+      });
+
+      it('waits for the reviewer to click the reply before it opens', async () => {
+        renderApp();
+        await (await diffMain()).findByText('이 순서로 돕니다.');
+
+        expect(bar()).not.toBeInTheDocument();
+        expect(stepRows()).toEqual([]);
+      });
+
+      it('opens on the first step, steps without recording, and closes back to the comment', async () => {
+        const user = userEvent.setup();
+        renderApp();
+        const lengthBefore = window.history.length;
+
+        await openFromReply(user);
+
+        expect(within(bar()!).getByText('1 / 2')).toBeInTheDocument();
+        expect(stepRows()).toEqual([['a.ts', 'line 3']]);
+        expect(window.history.length).toBe(lengthBefore + 1);
+
+        await user.click(screen.getByRole('button', { name: '다음 단계' }));
+        await waitFor(() =>
+          expect(stepRows()).toEqual([
+            ['b.ts', 'line 10'],
+            ['b.ts', 'line 11'],
+          ]),
+        );
+        await waitFor(() => expect(fileShown()).toBe('b.ts'));
+        expect(window.history.length).toBe(lengthBefore + 1);
+
+        await user.click(screen.getByRole('button', { name: '따라가기 닫기' }));
+
+        await waitFor(() => expect(bar()).not.toBeInTheDocument());
+        expect(stepRows()).toEqual([]);
+        await waitFor(() =>
+          expect(window.history.state).toMatchObject({
+            difitPlace: { kind: 'thread', threadId: 't1' },
+          }),
+        );
+      });
+
+      it('forgets the walkthrough the agent took away, so putting it back does not reopen it', async () => {
+        const user = userEvent.setup();
+        const { rerender } = renderApp();
+        const app = () => (
+          <HotkeysProvider initiallyActiveScopes={['navigation']}>
+            <App />
+          </HotkeysProvider>
+        );
+        await openFromReply(user);
+        expect(bar()).toBeInTheDocument();
+
+        const withoutWalkthrough = answered();
+        delete withoutWalkthrough.messages[1]!.walkthrough;
+        mockComments = [withoutWalkthrough];
+        rerender(app());
+        await waitFor(() => expect(bar()).not.toBeInTheDocument());
+
+        mockComments = [answered()];
+        rerender(app());
+        await screen.findByRole('button', { name: '따라가기 열기' });
+        expect(bar()).not.toBeInTheDocument();
+        expect(stepRows()).toEqual([]);
+      });
+
+      it('closes when the reviewer goes back', async () => {
+        const user = userEvent.setup();
+        renderApp();
+        await openFromReply(user);
+
+        back();
+
+        await waitFor(() => expect(bar()).not.toBeInTheDocument());
+        expect(stepRows()).toEqual([]);
+      });
+
+      it('takes a comment on a step line as usual', async () => {
+        const user = userEvent.setup();
+        renderApp();
+        await openFromReply(user);
+        const [row] = document.querySelectorAll<HTMLElement>('tr[data-walkthrough-step]');
+
+        fireEvent.mouseEnter(row!.children[2]!);
+        fireEvent.mouseDown(screen.getByRole('button', { name: 'Add a comment' }), {
+          shiftKey: true,
+        });
+        fireEvent.change(await screen.findByPlaceholderText(/comment/i), {
+          target: { value: '이 줄이 문제네요.' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: '보내기' }));
+
+        await waitFor(() =>
+          expect(
+            vi
+              .mocked(useDiffComments)
+              .mock.results.flatMap(({ value }) => vi.mocked(value.addThread).mock.calls),
+          ).toEqual([
+            [expect.objectContaining({ filePath: 'a.ts', line: 3, body: '이 줄이 문제네요.' })],
+          ]),
+        );
+        expect(bar()).toBeInTheDocument();
+        expect(stepRows()).toEqual([['a.ts', 'line 3']]);
+      });
     });
 
     it('counts ] and Shift+N as jumps but not j and k, and Back puts the cursor back', async () => {

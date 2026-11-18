@@ -9,7 +9,7 @@ import {
   FixupOverlayProvider,
   type FixupOverlayState,
 } from '../contexts/FixupOverlayContext';
-import { WalkthroughStepProvider } from '../contexts/WalkthroughStepContext';
+import { WalkthroughStepProvider } from '../contexts/WalkthroughContext';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import { boxesByAnchor, type FixupBox } from '../utils/fixupSpread';
 import { symbolRequestFromTarget } from '../utils/symbolPeek';

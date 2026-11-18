@@ -15,7 +15,7 @@ import { type CursorPosition } from '../hooks/keyboardNavigation';
 import { useCanHover } from '../hooks/useCanHover';
 import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
-import { useIsWalkthroughStepLine } from '../contexts/WalkthroughStepContext';
+import { useIsWalkthroughStepLine } from '../contexts/WalkthroughContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { codeCellAttributes, quoteSelection } from '../utils/codeSelection';
 import { endOfLine, locationLabel } from '../../utils/commentPosition';
