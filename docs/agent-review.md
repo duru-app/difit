@@ -155,6 +155,30 @@ difit comment add --port <port> '{
 - 리뷰어가 고르지 않고 답글 칸에 글로 답할 수도 있다. 그때는 `answer` 없는 여느 답글이 온다.
 - 텍스트 출력은 고를 거리를 단 답글 아래에 `Choices:` 목록을, 고른 답글 아래에 `Picked B from Reply <n>`을 붙인다.
 
+## 코드가 흐르는 길을 따라가기로 보여 주기
+
+리뷰어가 코드가 어떤 순서로 도는지 물으면, 먼저 `comment add`로 답글을 달고 그 지적에 따라가기를 붙인다. 따라가기는 그 지적의 가장 최근 에이전트 답글에 붙는다. JSON은 인자로 주거나 표준 입력으로 넘긴다.
+
+```sh
+difit walkthrough add <threadId> --port <port> '{
+  "cases": [
+    {
+      "title": "sub(3, 1)",
+      "steps": [
+        { "file": "src/math.ts", "line": 4, "description": "sub 가 add 를 본떠 a + b 를 돌려준다." },
+        { "file": "src/calc.ts", "line": 12, "endLine": 14, "description": "그 값을 그대로 화면에 쓴다." }
+      ]
+    }
+  ]
+}'
+```
+
+- 지금은 `cases`에 경우 하나만 넣는다. 단계마다 `file`(저장소 뿌리에서 본 경로), `line`, `description`을 반드시 넣고, 여러 줄이면 `endLine`을 더한다. 모르는 필드는 저장하지 않고 `warnings`에 알린다.
+- 서버는 지금 리뷰 대상 커밋을 따라가기에 함께 적는다. 그 커밋에 없는 파일이나 줄을 가리키는 단계도 저장하되 `warnings`에 알린다.
+- 리뷰어는 그 답글이나 답글 아래 `따라가기 n단계` 단추를 눌러 연다. 저절로 열리지는 않는다. diff 위의 바에서 `이전`·`다음`으로 단계를 넘기고, 단계의 줄이 diff에 보이면 그 줄로 옮겨 칠한다. 보이지 않으면 바에 `diff 에 안 보이는 줄`이 뜬다.
+- 같은 지적에 다시 `add`하면 앞 따라가기를 바꾼다. `difit walkthrough get <threadId> --port <port>`로 읽고 `remove`로 지운다.
+- 지적이 없거나 지운 지적이면 404, 에이전트 답글이 아직 없으면 409, JSON 모양이 틀리면 400으로 거절하고 아무것도 저장하지 않는다.
+
 ## 승인된 수정 접기와 기록 올리기
 
 브랜치를 마무리할 때 한 번에 접는다. `--autosquash`는 범위 안의 fixup을 모두 접으므로, 남은 fixup이 전부 승인되고 거절된 fixup을 모두 버린 뒤에 돌린다. 리뷰어가 지운 지적의 fixup도 먼저 버린다. 지운 지적은 텍스트 출력에 나오지 않으므로, JSON `decisions`에서 `"kind": "deleted"`인 지적을 찾아 그 지적을 `Review-Thread` 트레일러로 단 fixup을 버린다.

@@ -17,7 +17,7 @@ interface CommentImportResponse {
   warnings?: string[];
 }
 
-function handleCommandError(error: unknown, port: number): never {
+export function handleCommandError(error: unknown, port: number): never {
   if (error instanceof TypeError && error.message.includes('fetch failed')) {
     console.error(`Error: Cannot connect to difit server on port ${port}. Is the server running?`);
   } else {
@@ -40,18 +40,18 @@ function withoutDeletedThreads(data: unknown): unknown {
   };
 }
 
-async function parseCommentAddInput(json?: string): Promise<string> {
+export async function readJsonInput(what: string, json?: string): Promise<string> {
   if (typeof json === 'string') {
     return json;
   }
 
   if (detectStdinSource() === 'tty') {
-    throw new Error('Provide comment JSON as an argument or via stdin');
+    throw new Error(`Provide ${what} JSON as an argument or via stdin`);
   }
 
   const stdin = await readStdin();
   if (!stdin.trim()) {
-    throw new Error('No comment JSON received from stdin');
+    throw new Error(`No ${what} JSON received from stdin`);
   }
 
   return stdin;
@@ -130,7 +130,7 @@ export function createCommentCommand(): Command {
     .requiredOption('--port <port>', 'port of the running difit server', parseInt)
     .action(async (json: string | undefined, opts: { port: number }) => {
       try {
-        const input = await parseCommentAddInput(json);
+        const input = await readJsonInput('comment', json);
         const imports = parseCommentImportValue(input);
 
         const response = await fetch(`http://localhost:${opts.port}/api/comment-imports`, {
