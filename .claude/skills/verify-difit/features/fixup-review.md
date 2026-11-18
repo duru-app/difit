@@ -7,6 +7,7 @@ An agent answers a thread with a fixup commit carrying a `Review-Thread` trailer
 - A fixup commit linked to a thread by its trailer
 - `/api/fixups`, which lists fixups on the reviewed commit with their `threadIds`
 - Approve and reject, recorded in `decisions`
+- Folding approved fixups, reported through `/api/history-rewritten`
 
 ## How to get to it (user POV)
 
@@ -49,6 +50,27 @@ Proof: `/api/fixups` lists the first with `status` `renamed`, `path` `calc.js` a
 A thread added with `comment add` (or `--comment` at startup) on a review pinned to a range of several commits gets its `fixupTarget` when the server takes it in, by the rule the screen uses. Start the server on the range (`difit HEAD HEAD~3 --background`) and add a thread on a line an earlier commit of the range wrote.
 
 Proof: `get` prints `고쳐 넣을 커밋: <that commit>` under the thread, and `get --format json` carries its full SHA as `fixupTarget`. A line the range did not change gets the range's last commit. A reply, and a thread on a review that follows a branch or the working tree, get none.
+
+### Folding
+
+Continue from the approved fixup above, in the same sandbox. The agent folds with autosquash and reports each reviewed commit's SHA before and after, as `skills/difit/SKILL.md` says:
+
+```bash
+( . "$S/env.sh"; cd "$REPO"
+  BASE=$(git rev-parse HEAD~2); OLD=$(git rev-parse HEAD~1)
+  GIT_SEQUENCE_EDITOR=: git rebase -qi --autosquash "$BASE"
+  curl -s -X POST -H 'Content-Type: application/json' \
+    -d "{\"rewritten\":{\"$OLD\":\"$(git rev-parse HEAD)\"}}" "$URL/api/history-rewritten"
+  difit comment get --port "$PORT"
+  curl -s "$URL/api/fixups"
+) 2>&1 | tee "$S/evidence/fold.txt"
+```
+
+Proof:
+
+- The report answers 200, and its `decisions` hold a `folded` record with `fixupSha` the approved fixup and `targetSha` the new HEAD, with no `/api/decisions` call.
+- `get` shows `[접힘]`, and `/api/fixups` lists no fixup.
+- Adding the pair git itself prints for a fold, `"<fixup SHA>":"<new HEAD>"`, changes nothing: the `approved` record keeps the fixup's SHA.
 
 ## Gotchas
 

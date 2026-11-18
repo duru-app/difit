@@ -808,6 +808,34 @@ export class GitDiffParser {
     return { foldTargetBySha, amendedMessageBySha };
   }
 
+  // The commit each fixup folds into the way autosquash groups the history from the review base up
+  // to the fixups, which may stand on a line HEAD no longer holds.
+  async findFoldRoots(
+    selection: DiffSelection,
+    fixupShas: readonly string[],
+  ): Promise<Map<string, string>> {
+    const roots = new Map<string, string>();
+    if (fixupShas.length === 0) return roots;
+    const base = await this.resolveBaseCommitish(selection);
+    const log = await this.git.raw([
+      'log',
+      '--reverse',
+      '--no-merges',
+      '--no-show-signature',
+      FIXUP_LOG_FORMAT,
+      ...fixupShas,
+      `^${base}`,
+      '--',
+    ]);
+    const wanted = new Set(fixupShas);
+    for (const [root, ...folded] of autosquashGroups(parseFixupLog(log))) {
+      for (const { sha } of folded) {
+        if (root && wanted.has(sha)) roots.set(sha, root.sha);
+      }
+    }
+    return roots;
+  }
+
   // Replays the messages of each group in autosquash order: an amend! commit replaces the message
   // with its own past the first paragraph, less the thread trailers taken out after folding. Left
   // out from a squash! on, which git merges by hand.
