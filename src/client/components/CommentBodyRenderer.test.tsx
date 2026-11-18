@@ -176,7 +176,10 @@ describe('CommentBodyRenderer', () => {
       const link = screen.getByRole('button', { name: 'src/client/App.tsx:2302' });
       fireEvent.click(link);
 
-      expect(open).toHaveBeenCalledWith({ file: 'src/client/App.tsx', line: 2302, endLine: 2302 });
+      expect(open).toHaveBeenCalledWith(
+        { file: 'src/client/App.tsx', line: 2302, endLine: 2302 },
+        link,
+      );
       expect(screen.getByText(/Same problem at/)).toHaveTextContent(
         'Same problem at src/client/App.tsx:2302, see there.',
       );
@@ -185,9 +188,10 @@ describe('CommentBodyRenderer', () => {
     it('opens a range of lines', () => {
       const { open } = renderInDiff('Look at src/cli/index.ts:10-20');
 
-      fireEvent.click(screen.getByRole('button', { name: 'src/cli/index.ts:10-20' }));
+      const link = screen.getByRole('button', { name: 'src/cli/index.ts:10-20' });
+      fireEvent.click(link);
 
-      expect(open).toHaveBeenCalledWith({ file: 'src/cli/index.ts', line: 10, endLine: 20 });
+      expect(open).toHaveBeenCalledWith({ file: 'src/cli/index.ts', line: 10, endLine: 20 }, link);
     });
 
     it('links inline code that names a line of a diff file', () => {
@@ -197,11 +201,10 @@ describe('CommentBodyRenderer', () => {
       expect(link.querySelector('code')).not.toBeNull();
       fireEvent.click(link);
 
-      expect(open).toHaveBeenCalledWith({
-        file: 'src/client/components/CommentThreadCard.tsx',
-        line: 120,
-        endLine: 120,
-      });
+      expect(open).toHaveBeenCalledWith(
+        { file: 'src/client/components/CommentThreadCard.tsx', line: 120, endLine: 120 },
+        link,
+      );
     });
 
     it('links a shortened path only when one diff file ends with it', () => {

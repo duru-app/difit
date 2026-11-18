@@ -2499,6 +2499,11 @@ function App() {
     if (place.kind === 'thread') {
       const thread = shownThreads.find(({ id }) => id === place.threadId);
       if (!thread) return;
+      const cardId = `comment-thread-${thread.id}`;
+      if (place.top !== undefined && 'file' in thread && document.getElementById(cardId)) {
+        scrollFileIntoDiffContainer(thread.file, cardId, undefined, place.top);
+        return;
+      }
       setPickedThreadId(thread.id);
       jumpToThread(
         thread,
@@ -2607,9 +2612,23 @@ function App() {
     const around = side === 'old' ? rangesAroundOldLines : rangesAroundNewLines;
     openLines(file, around(file, shown, LINE_LINK_CONTEXT)).then(giveUp, giveUp);
   };
-  const openDiffLineLink = (target: DiffLineTarget) => {
+  const openDiffLineLink = (target: DiffLineTarget, from: HTMLElement) => {
     const file = diffData?.files.find(({ path }) => path === target.file);
-    if (file) openDiffLine(target, file, file.status === 'deleted' ? 'old' : 'new');
+    if (!file) return;
+    const card = from.closest<HTMLElement>('[id^="comment-thread-"]');
+    const container = diffScrollContainerRef.current;
+    openDiffLine(
+      target,
+      file,
+      file.status === 'deleted' ? 'old' : 'new',
+      card && container
+        ? {
+            kind: 'thread',
+            threadId: card.id.slice('comment-thread-'.length),
+            top: card.getBoundingClientRect().top - container.getBoundingClientRect().top,
+          }
+        : undefined,
+    );
   };
   const diffPlaceOf = (path: string, ref: string) =>
     diffPlaceOfPath(
@@ -2654,7 +2673,7 @@ function App() {
   const diffLineLinks = useMemo<DiffLineLinks>(
     () => ({
       resolve: resolveDiffPath,
-      open: (target) => openDiffLineLinkRef.current(target),
+      open: (target, from) => openDiffLineLinkRef.current(target, from),
     }),
     [resolveDiffPath],
   );

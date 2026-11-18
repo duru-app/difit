@@ -7,10 +7,12 @@ const HISTORY_STATE_KEY = 'difitReviewTarget';
 const PLACE_STATE_KEY = 'difitPlace';
 
 // A line place with cursor puts the keyboard cursor back; without it, it only scrolls there.
+// A thread place with top puts its card back that far below the diff's top edge; without it, the
+// card is shown as picking the comment shows it.
 export type ReviewPlace =
   | { kind: 'file'; file: string }
   | { kind: 'line'; file: string; line: number; side: DiffSide; cursor: boolean }
-  | { kind: 'thread'; threadId: string }
+  | { kind: 'thread'; threadId: string; top?: number }
   | { kind: 'fixup'; fixupSha: string; path: string };
 
 export interface ReviewHistoryEntry {
@@ -35,7 +37,7 @@ function placeFromHistoryState(state: unknown): ReviewPlace | null {
   if (typeof state !== 'object' || state === null) return null;
   const place = (state as Record<string, unknown>)[PLACE_STATE_KEY];
   if (typeof place !== 'object' || place === null) return null;
-  const { kind, file, line, side, cursor, threadId, fixupSha, path } = place as Record<
+  const { kind, file, line, side, cursor, threadId, top, fixupSha, path } = place as Record<
     string,
     unknown
   >;
@@ -48,7 +50,9 @@ function placeFromHistoryState(state: unknown): ReviewPlace | null {
   ) {
     return { kind, file, line, side, cursor: cursor === true };
   }
-  if (kind === 'thread' && typeof threadId === 'string') return { kind, threadId };
+  if (kind === 'thread' && typeof threadId === 'string') {
+    return { kind, threadId, ...(typeof top === 'number' && { top }) };
+  }
   if (kind === 'fixup' && typeof fixupSha === 'string' && typeof path === 'string') {
     return { kind, fixupSha, path };
   }
