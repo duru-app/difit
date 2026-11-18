@@ -98,6 +98,7 @@ import {
   isLeftOut,
   readReviewRecord,
   reviewsBehind,
+  type StoredReview,
   saveReview,
   takeOverReviews,
   updateReviewRecord,
@@ -327,6 +328,43 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
   app.use(express.text()); // For sendBeacon text/plain requests
+
+  // Requests that read or change comments run together; opening a review waits for them to end
+  // and holds new ones back, so the sessions it moves do not change under it.
+  let commentRequests = 0;
+  let openings = 0;
+  let lastOpening: Promise<void> = Promise.resolve();
+  const whenNoCommentRequests: Array<() => void> = [];
+  function withoutCommentRequests(open: () => Promise<void>): Promise<void> {
+    openings += 1;
+    const opening = lastOpening
+      .then(async () => {
+        while (commentRequests > 0) {
+          await new Promise<void>((resolve) => whenNoCommentRequests.push(resolve));
+        }
+        await open();
+      })
+      .finally(() => {
+        openings -= 1;
+      });
+    lastOpening = opening.then(
+      () => undefined,
+      () => undefined,
+    );
+    return opening;
+  }
+  app.use(
+    /^\/api\/(comments(-json|-left-out|-output)?(\/.*)?|comment-imports|review-done|decisions|fixups|direct-edit|reword)$/,
+    async (_req, res, next) => {
+      while (openings > 0) await lastOpening;
+      commentRequests += 1;
+      res.once('close', () => {
+        commentRequests -= 1;
+        if (commentRequests === 0) for (const resume of whenNoCommentRequests.splice(0)) resume();
+      });
+      next();
+    },
+  );
 
   app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:*');
@@ -691,16 +729,15 @@ export async function startServer(options: ServerOptions): Promise<{
 
   const isAncestorCommit = async (older: string, newer: string) =>
     (await runGit(repositoryPath, ['merge-base', '--is-ancestor', older, newer])).code === 0;
-  const restoredCommentSessions = new Map<string, Promise<void>>();
+  const openedCommentSessions = new Map<string, { opened: Promise<void>; takesOver: boolean }>();
 
+  // Moves the reviews behind `selection` into it, the stored ones and the ones this server holds.
   // Tabs are not told: a tab on a review that was taken over reads and saves the same threads
   // through the newer one.
-  async function takeOverReviewsBehind(selection: DiffSelection): Promise<boolean> {
-    await commentsSaved();
-    const stored =
-      reviewRecordPath && !options.clearComments
-        ? (await readReviewRecord(reviewRecordPath)).reviews
-        : [];
+  async function takeOverReviewsBehind(
+    selection: DiffSelection,
+    stored: readonly StoredReview[],
+  ): Promise<boolean> {
     const known = new Map(
       [...pinnedReviews, ...commentSessions.values(), ...stored]
         // A name may point at another commit by the next request.
@@ -714,34 +751,33 @@ export async function startServer(options: ServerOptions): Promise<{
       (review) => review.selection,
     );
     if (behind.length === 0) return false;
-    await Promise.all(
-      behind.flatMap((older) => restoredCommentSessions.get(createCommentSessionKey(older)) ?? []),
-    );
+    const files = await filesOfReview(selection);
 
     const isBehind = (other: DiffSelection) =>
       behind.some((older) => diffSelectionsEqual(older, other));
     const sessions = [...commentSessions.values()];
+    const taken = sessions.filter((session) => isBehind(session.selection));
+    const session = getOrCreateCommentSession(selection);
+    const heldOut = new Set(
+      [...taken, session].flatMap(({ leftOut }) => leftOut.map((thread) => thread.id)),
+    );
+    // What this server holds is at least as new as what it stored.
     const merged = takeOverReviews(
-      sessions.map(({ selection, threads, leftOut, decisions }) => ({
-        selection,
-        threads: [...threads, ...leftOut],
-        decisions,
-      })),
+      sessions.reduce(
+        (reviews, { selection, threads, leftOut, decisions }) => [
+          ...reviews.filter((review) => !diffSelectionsEqual(review.selection, selection)),
+          { selection, threads: [...threads, ...leftOut], decisions },
+        ],
+        [...stored],
+      ),
       selection,
       behind,
     ).find((review) => diffSelectionsEqual(review.selection, selection));
-    const taken = sessions.filter((session) => isBehind(session.selection));
-    const version = Math.max(0, ...taken.map((session) => session.version));
-    const leftOutIds = new Set(
-      [...taken, getOrCreateCommentSession(selection)].flatMap((session) =>
-        session.leftOut.map((thread) => thread.id),
-      ),
-    );
     for (const older of behind) {
       const key = createCommentSessionKey(older);
       commentSessions.delete(key);
       pinnedCommentSessionKeys.delete(key);
-      restoredCommentSessions.delete(key);
+      openedCommentSessions.delete(key);
     }
     pinnedReviews.splice(
       0,
@@ -750,18 +786,28 @@ export async function startServer(options: ServerOptions): Promise<{
     );
     reviewMoves = [...reviewMoves, ...behind.map((from) => ({ from, to: selection }))];
     if (isBehind(currentCommentSelection)) currentCommentSelection = selection;
-    if (merged) {
-      const session = getOrCreateCommentSession(selection);
-      session.threads = merged.threads.filter((thread) => !leftOutIds.has(thread.id));
-      session.leftOut = merged.threads.filter((thread) => leftOutIds.has(thread.id));
-      session.decisions = merged.decisions;
-      session.version = Math.max(session.version, version);
-    }
+    const threads = merged?.threads ?? [];
+    session.leftOut = threads.filter((thread) =>
+      files ? isLeftOut(thread, files) : heldOut.has(thread.id),
+    );
+    session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
+    session.decisions = merged?.decisions ?? [];
+    session.version = Math.max(session.version, ...taken.map(({ version }) => version)) + 1;
+
     if (reviewRecordPath) {
       const recordPath = reviewRecordPath;
       reviewSaves = reviewSaves
         .then(() =>
-          updateReviewRecord(recordPath, (reviews) => takeOverReviews(reviews, selection, behind)),
+          updateReviewRecord(recordPath, (reviews) =>
+            saveReview(
+              reviews.filter((review) => !isBehind(review.selection)),
+              {
+                selection,
+                threads: [...session.threads, ...session.leftOut],
+                decisions: session.decisions,
+              },
+            ),
+          ),
         )
         .then(
           () => undefined,
@@ -769,59 +815,50 @@ export async function startServer(options: ServerOptions): Promise<{
         );
       await commentsSaved();
     }
+    for (const wait of commentWaits) void wait.check();
     return true;
   }
 
-  function restoreCommentSession(selection: DiffSelection, tookOver = false): Promise<void> {
-    const key = createCommentSessionKey(selection);
-    const known = restoredCommentSessions.get(key);
-    if (known && !tookOver) return known;
-    const restored = (async () => {
-      await known;
-      try {
-        const stored =
-          reviewRecordPath && !options.clearComments
-            ? (await readReviewRecord(reviewRecordPath)).reviews.find((review) =>
-                diffSelectionsEqual(review.selection, selection),
-              )
-            : undefined;
-        if (!stored && !tookOver) return;
-        const files = await filesOfReview(selection);
-        const session = getOrCreateCommentSession(selection);
-        const held = [...session.threads, ...session.leftOut];
-        const heldOut = new Set(session.leftOut.map((thread) => thread.id));
-        const threads = !stored
-          ? held
-          : held.length === 0
-            ? stored.threads
-            : mergeCommentThreads(stored.threads, held).threads;
-        session.leftOut = threads.filter((thread) =>
-          files ? isLeftOut(thread, files) : heldOut.has(thread.id),
-        );
-        session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
-        if (stored) session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
-        session.version += 1;
-        if (tookOver) for (const wait of commentWaits) void wait.check();
-      } catch (error) {
-        console.error('Error restoring the review record:', error);
-      }
-    })();
-    restoredCommentSessions.set(key, restored);
-    return restored;
+  function restoreCommentSession(selection: DiffSelection, stored: StoredReview | undefined) {
+    if (!stored) return;
+    return filesOfReview(selection).then((files) => {
+      const session = getOrCreateCommentSession(selection);
+      const threads =
+        session.threads.length === 0
+          ? stored.threads
+          : mergeCommentThreads(stored.threads, session.threads).threads;
+      session.leftOut = files ? threads.filter((thread) => isLeftOut(thread, files)) : [];
+      session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
+      session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
+      session.version += 1;
+    });
   }
 
-  let takeovers: Promise<void> = Promise.resolve();
-  // A review that takes over looks behind it each time it is opened, as a restart on it would.
+  // Once for each review: brings back what is stored for it, and for the review the server starts
+  // on or pins later, first takes over the reviews behind it.
   function openCommentSession(selection: DiffSelection, takesOver: boolean): Promise<void> {
-    if (!takesOver) return restoreCommentSession(selection);
-    takeovers = takeovers.then(async () => {
-      const tookOver = await takeOverReviewsBehind(selection).catch((error: unknown) => {
-        console.error('Error taking over the reviews behind:', error);
-        return false;
-      });
-      await restoreCommentSession(selection, tookOver);
+    const key = createCommentSessionKey(selection);
+    const known = openedCommentSessions.get(key);
+    if (known && (known.takesOver || !takesOver)) return known.opened;
+    const opened = withoutCommentRequests(async () => {
+      try {
+        await commentsSaved();
+        const stored =
+          reviewRecordPath && !options.clearComments
+            ? (await readReviewRecord(reviewRecordPath)).reviews
+            : [];
+        if (takesOver && (await takeOverReviewsBehind(selection, stored))) return;
+        await restoreCommentSession(
+          selection,
+          stored.find((review) => diffSelectionsEqual(review.selection, selection)),
+        );
+      } catch (error) {
+        console.error('Error restoring the review record:', error);
+        openedCommentSessions.delete(key);
+      }
     });
-    return takeovers;
+    openedCommentSessions.set(key, { opened, takesOver });
+    return opened;
   }
   await openCommentSession(currentCommentSelection, true);
 
@@ -2592,8 +2629,8 @@ export async function startServer(options: ServerOptions): Promise<{
         decisions: session.decisions.map((decision) => movedDecision(decision, rewritten)),
         version: session.version + 1,
       });
-      const restored = restoredCommentSessions.get(key);
-      if (restored) restoredCommentSessions.set(movedKey, restored);
+      const opened = openedCommentSessions.get(key);
+      if (opened) openedCommentSessions.set(movedKey, opened);
     }
     moveSavedReviews(rewritten);
     fileWatcher.broadcast({ type: 'historyRewritten', timestamp: new Date().toISOString() });
