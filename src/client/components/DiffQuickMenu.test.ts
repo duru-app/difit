@@ -21,6 +21,8 @@ const options = {
   originDefaultBranch: 'origin/main',
 };
 
+const FULL_SHA = '0b6a93f4a1c2d3e4f5061728394a5b6c7d8e9f01';
+
 describe('getPreviousCommitPreset', () => {
   it.each(['', '.', 'staged', 'working'])('uses HEAD as target for %s', (targetRevision) => {
     expect(getPreviousCommitPreset(targetRevision)).toEqual({
@@ -293,6 +295,50 @@ describe('DiffQuickMenu', () => {
     });
 
     expect(screen.getByText('No matching branches or commits')).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      'a target missing from the commit list',
+      { baseCommitish: '1f23cd1', targetCommitish: FULL_SHA },
+      '1f23cd1...0b6a93f',
+    ],
+    [
+      'a base missing from the commit list',
+      { baseCommitish: FULL_SHA, targetCommitish: '1f23cd1' },
+      '0b6a93f...1f23cd1',
+    ],
+    [
+      'a parent of a commit missing from the commit list',
+      { baseCommitish: `${FULL_SHA}^`, targetCommitish: 'main' },
+      '0b6a93f^...main',
+    ],
+  ])('shortens %s in the current label', (_case, selection, label) => {
+    render(
+      createElement(DiffQuickMenu, {
+        options,
+        selection,
+        onSelectDiff: vi.fn(),
+        onOpenAdvanced: vi.fn(),
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: `Revision menu: ${label}` })).toBeInTheDocument();
+  });
+
+  it('keeps a ref name missing from the commit list as written', () => {
+    render(
+      createElement(DiffQuickMenu, {
+        options,
+        selection: { baseCommitish: 'v3.1.5', targetCommitish: 'release/next' },
+        onSelectDiff: vi.fn(),
+        onOpenAdvanced: vi.fn(),
+      }),
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Revision menu: v3.1.5...release/next' }),
+    ).toBeInTheDocument();
   });
 
   it('shows merge-base in the current label', () => {

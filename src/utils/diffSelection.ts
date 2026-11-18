@@ -74,6 +74,10 @@ export function isCommitHash(commitish: string): boolean {
   return HASH_PATTERN.test(commitish);
 }
 
+export function shortRef(ref: string): string {
+  return ref.replace(/^([0-9a-f]{7})(?:[0-9a-f]{33}|[0-9a-f]{57})(?=\^?$)/i, '$1');
+}
+
 export function isSameCommit(a: string, b: string): boolean {
   if (!HASH_PATTERN.test(a) || !HASH_PATTERN.test(b)) return a === b;
   const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
