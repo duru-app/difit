@@ -41,6 +41,7 @@ import { createId } from '../utils/createId.js';
 import { getFileExtension } from '../utils/fileUtils.js';
 import { isSessionConnected } from '../utils/sessionStatus.js';
 import { isSymbolName } from '../utils/symbolName.js';
+import { parseWalkthrough } from '../utils/walkthrough.js';
 import {
   deriveThreadReviewState,
   isAgentMessage,
@@ -72,6 +73,7 @@ import { FileWatcherService } from './file-watcher.js';
 import { GitDiffParser } from './git-diff.js';
 import { findLibrarySource, sourceLocations } from './library-source.js';
 import { type LineChanges, lineChangesBetween } from './line-changes.js';
+import { warningsForMissingLines } from './walkthrough-lines.js';
 import { acceptLiveSockets, isLiveSocketRequest } from './live-socket.js';
 import { runGit } from './run-git.js';
 import { ScipIndexBuilder, indexStateForClient, readBuildLog } from './scip-build.js';
@@ -110,6 +112,7 @@ import {
   type CommentImport,
   type Comment,
   type CommentThread,
+  type DiffCommentMessage,
   type DiffCommentThread,
   type DiffFile,
   type DiffLineRange,
@@ -139,6 +142,7 @@ import {
   type ThreadAwaitingAgent,
   type ThreadFixup,
   type ThreadReviewState,
+  type Walkthrough,
 } from '@/types/diff.js';
 import {
   bindingForView,
@@ -1979,6 +1983,126 @@ export async function startServer(options: ServerOptions): Promise<{
       threadId,
       version: session.version,
     });
+  });
+
+  const countLinesAt = async (ref: string, file: string): Promise<number | null> => {
+    if (!isCommitTarget(ref)) return parser.getLineCount(file, ref).catch(() => null);
+    const run = await runGit(repositoryPath, ['cat-file', 'blob', `${ref}:${file}`]);
+    if (run.code !== 0) return null;
+    const text = run.stdout.toString('utf8');
+    return text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+  };
+
+  const walkthroughReply = (thread: DiffCommentThread | undefined) =>
+    thread?.messages
+      .slice(1)
+      .reverse()
+      .find((message) => isAgentMessage(message));
+  const replyWithWalkthrough = (thread: DiffCommentThread | undefined) =>
+    thread?.messages
+      .slice()
+      .reverse()
+      .find((message) => message.walkthrough !== undefined);
+
+  function setWalkthrough(
+    selection: DiffSelection,
+    threadId: string,
+    messageId: string,
+    walkthrough: Walkthrough | undefined,
+  ) {
+    const { threads } = getOrCreateCommentSession(selection);
+    const now = Date.now();
+    const later = (updatedAt: string) =>
+      new Date(Math.max(now, (Date.parse(updatedAt) || 0) + 1)).toISOString();
+    const withWalkthrough = (message: DiffCommentMessage): DiffCommentMessage => {
+      const { walkthrough: old, ...rest } = message;
+      const next = message.id === messageId ? walkthrough : undefined;
+      if (old === undefined && next === undefined) return message;
+      const updatedAt = later(message.updatedAt);
+      return next ? { ...rest, walkthrough: next, updatedAt } : { ...rest, updatedAt };
+    };
+    updateCommentSession(
+      selection,
+      threads.map((thread) => {
+        if (thread.id !== threadId) return thread;
+        const messages = thread.messages.map(withWalkthrough);
+        const updatedAt = messages.reduce(
+          (latest, message) => (message.updatedAt > latest ? message.updatedAt : latest),
+          thread.updatedAt,
+        );
+        return { ...thread, messages, updatedAt };
+      }),
+    );
+  }
+
+  app.put('/api/threads/:threadId/walkthrough', async (req, res) => {
+    const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+    const session = getOrCreateCommentSession(selection);
+    const { threadId } = req.params;
+    const thread = session.threads.find((candidate) => candidate.id === threadId);
+    if (!thread || isThreadDeleted(threadId, session.decisions)) {
+      res.status(404).json({ error: `Thread not found: ${threadId}` });
+      return;
+    }
+    const reply = walkthroughReply(thread);
+    if (!reply) {
+      res.status(409).json({
+        error: `Thread ${threadId} has no agent reply yet; reply with "difit comment add" first`,
+      });
+      return;
+    }
+    let parsed: ReturnType<typeof parseWalkthrough>;
+    try {
+      parsed = parseWalkthrough(req.body);
+    } catch (error) {
+      res
+        .status(400)
+        .json({ error: error instanceof Error ? error.message : 'Invalid walkthrough' });
+      return;
+    }
+    const target = selection.targetCommitish;
+    const commit = (await resolveCommit(target)) ?? target;
+    const lineWarnings = options.stdinDiff
+      ? []
+      : await warningsForMissingLines(
+          parsed.cases,
+          commit === target ? target : commit.slice(0, 7),
+          (file) => countLinesAt(commit, file),
+        );
+    setWalkthrough(selection, threadId, reply.id, { commit, cases: parsed.cases });
+    await commentsSaved();
+    res.json({
+      success: true,
+      threadId,
+      messageId: reply.id,
+      warnings: [...parsed.warnings, ...lineWarnings],
+    });
+  });
+
+  app.get('/api/threads/:threadId/walkthrough', (req, res) => {
+    const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+    const session = getOrCreateCommentSession(selection);
+    const { threadId } = req.params;
+    const reply = replyWithWalkthrough(session.threads.find(({ id }) => id === threadId));
+    if (!reply?.walkthrough || isThreadDeleted(threadId, session.decisions)) {
+      res.status(404).json({ error: `No walkthrough on thread ${threadId}` });
+      return;
+    }
+    res.json({ threadId, messageId: reply.id, walkthrough: reply.walkthrough });
+  });
+
+  app.delete('/api/threads/:threadId/walkthrough', async (req, res) => {
+    const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
+    const session = getOrCreateCommentSession(selection);
+    const { threadId } = req.params;
+    const reply = replyWithWalkthrough(session.threads.find(({ id }) => id === threadId));
+    if (!reply || isThreadDeleted(threadId, session.decisions)) {
+      res.status(404).json({ error: `No walkthrough on thread ${threadId}` });
+      return;
+    }
+    setWalkthrough(selection, threadId, reply.id, undefined);
+    await commentsSaved();
+    res.json({ success: true, threadId, messageId: reply.id });
   });
 
   app.get('/api/comments-json', (req, res) => {

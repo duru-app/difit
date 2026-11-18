@@ -27,6 +27,7 @@ import {
 } from './commentPosition.js';
 import { createId } from './createId.js';
 import { createDiffSelection, isCommitHash, isSameCommit } from './diffSelection.js';
+import { cloneWalkthrough } from './walkthrough.js';
 
 interface MergeCommentImportsResult {
   threads: DiffCommentThread[];
@@ -725,6 +726,7 @@ function cloneMessage(message: DiffCommentMessage): DiffCommentMessage {
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
     ...replyFields(message),
+    ...(message.walkthrough ? { walkthrough: cloneWalkthrough(message.walkthrough) } : {}),
   };
 }
 
