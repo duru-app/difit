@@ -1142,6 +1142,35 @@ describe('CommentThreadCard', () => {
     ]);
   });
 
+  it('shows a folded thread as folded, not as outdated, though the fold took its line away', () => {
+    const folded: ReviewDecision[] = [
+      { threadId: mockThread.id, kind: 'approved', fixupSha: 'eeee', at: '2026-01-01T00:00:00Z' },
+      {
+        threadId: mockThread.id,
+        kind: 'folded',
+        fixupSha: 'eeee',
+        targetSha: 'ffff',
+        at: '2026-01-01T00:01:00Z',
+      },
+    ];
+    const { container } = render(
+      <FixupOverlayProvider value={{ ...EMPTY_FIXUP_OVERLAY, decisions: folded }}>
+        <CommentThreadCard
+          thread={{ ...mockThread, isOutdated: true, outdatedReason: 'missing' }}
+          review={{ ...awaitingReview, state: 'folded', pendingFixups: [] }}
+          onResolveThread={vi.fn()}
+          onReplyToThread={vi.fn().mockResolvedValue(undefined)}
+          onRemoveMessage={vi.fn()}
+          onUpdateMessage={vi.fn()}
+        />
+      </FixupOverlayProvider>,
+    );
+
+    expect(screen.getByTestId('resolved-chip')).toHaveTextContent('접힘');
+    expect(screen.queryByLabelText('Outdated comment')).not.toBeInTheDocument();
+    expect(container.firstElementChild).not.toHaveClass('border-l-github-danger');
+  });
+
   it('reverts the fixup a reviewer edit made', async () => {
     const user = userEvent.setup();
     const onDecide = vi.fn();

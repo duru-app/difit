@@ -327,6 +327,7 @@ export function CommentThreadCard({
   };
 
   const reviewState = review?.state ?? deriveThreadReviewState(thread.id, [], [], thread);
+  const isStale = thread.isOutdated && !(isFolded && isResolved);
 
   const onFile = 'file' in thread ? thread : undefined;
   const codeContent = onFile?.codeContent;
@@ -335,13 +336,13 @@ export function CommentThreadCard({
 
   const anchorCommit =
     review &&
-    thread.isOutdated &&
+    isStale &&
     onFile?.anchorCommit &&
     !thread.madeView &&
     !(review.targetCommit && isSameCommit(onFile.anchorCommit, review.targetCommit))
       ? onFile.anchorCommit
       : null;
-  const madeView = thread.isOutdated ? thread.madeView : undefined;
+  const madeView = isStale ? thread.madeView : undefined;
 
   const rootMessage = thread.messages[0];
   if (!rootMessage) return null;
@@ -359,7 +360,7 @@ export function CommentThreadCard({
         isPicked ? 'ring-2 ring-blue-500' : ''
       } ${
         review
-          ? thread.isOutdated
+          ? isStale
             ? 'border-github-border border-l-github-danger'
             : 'border-github-border border-l-github-text-muted'
           : 'border-yellow-600/50 border-l-yellow-400 fixup-review:border-github-border fixup-review:border-l-github-text-muted'
@@ -391,7 +392,7 @@ export function CommentThreadCard({
               data-testid="resolved-chip"
               className="inline-flex h-5 shrink-0 items-center rounded-full border border-github-border px-2 text-[10px] font-medium text-github-text-secondary"
             >
-              해결됨
+              {isFolded ? reviewStateLabel('folded') : '해결됨'}
             </span>
           )}
           {!isResolved &&
@@ -411,7 +412,7 @@ export function CommentThreadCard({
               </span>
             )}
           {review?.responding && <RespondingChip />}
-          {thread.isOutdated && (
+          {isStale && (
             <span
               className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium ${
                 review
