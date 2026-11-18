@@ -149,10 +149,6 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
         {blankHint}
       </p>
 
-      <p className="mb-2 text-xs text-github-text-secondary">
-        저장하면 이 커밋의 메시지가 바로 바뀌고, 이 커밋과 뒤 커밋의 SHA가 달라집니다.
-      </p>
-
       <div className="flex justify-end gap-2">
         <button
           type="button"
