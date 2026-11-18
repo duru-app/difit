@@ -10,7 +10,12 @@ import open from 'open';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { AUTOSQUASH_PREFIX, REVIEWER_EDIT_AUTHOR } from '../types/diff.js';
-import { type DiffMode, type SessionStatus, type WatchEvent } from '../types/watch.js';
+import {
+  type DiffMode,
+  type FollowedTerminalRewrite,
+  type SessionStatus,
+  type WatchEvent,
+} from '../types/watch.js';
 import { amendedMessagesByCommit } from '../utils/amendedMessages.js';
 import { formatCommentsOutput } from '../utils/commentFormatting.js';
 import { withCurrentFixupShas } from '../utils/fixupLines.js';
@@ -74,6 +79,7 @@ import {
   rewriteHistory,
 } from './history-rewrite.js';
 import { checkRewrite, threadsAtWork } from './rewrite-check.js';
+import { findTerminalRewrite } from './terminal-rewrite.js';
 import {
   chooseCommitOfUncommittedView,
   chooseFixupTarget,
@@ -367,15 +373,18 @@ export async function startServer(options: ServerOptions): Promise<{
     );
     return opening;
   }
+  async function beginCommentRequest(): Promise<() => void> {
+    while (openings > 0) await lastOpening;
+    commentRequests += 1;
+    return () => {
+      commentRequests -= 1;
+      if (commentRequests === 0) for (const resume of whenNoCommentRequests.splice(0)) resume();
+    };
+  }
   app.use(
     /^\/api\/(comments(-json|-left-out|-output)?(\/.*)?|comment-imports|review-done|decisions|fixups|direct-edit|reword|reorder|history-rewritten)$/,
     async (_req, res, next) => {
-      while (openings > 0) await lastOpening;
-      commentRequests += 1;
-      res.once('close', () => {
-        commentRequests -= 1;
-        if (commentRequests === 0) for (const resume of whenNoCommentRequests.splice(0)) resume();
-      });
+      res.once('close', await beginCommentRequest());
       next();
     },
   );
@@ -2628,7 +2637,7 @@ export async function startServer(options: ServerOptions): Promise<{
 
   // Everything held under the old SHAs moves in one step, with no await between a session and its
   // new key; only the commit lists of the moved reviews are read first.
-  async function followRewrite(move: HistoryMove) {
+  async function followRewrite(move: HistoryMove, terminal?: FollowedTerminalRewrite) {
     const { rewritten } = move;
     const moves = [move];
     rewrittenShas = afterRewrite(rewrittenShas, rewritten);
@@ -2675,7 +2684,11 @@ export async function startServer(options: ServerOptions): Promise<{
       if (opened) openedCommentSessions.set(movedKey, opened);
     }
     moveSavedReviews(move);
-    fileWatcher.broadcast({ type: 'historyRewritten', timestamp: new Date().toISOString() });
+    fileWatcher.broadcast({
+      type: 'historyRewritten',
+      timestamp: new Date().toISOString(),
+      ...(terminal ? { terminal } : {}),
+    });
     for (const wait of commentWaits) void wait.check();
   }
 
@@ -2879,24 +2892,66 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   // `order` holds the old SHAs of the review's commits in the order they now stand.
-  async function followOrder(
+  function followOrder(
     selection: DiffSelection,
     commits: ReviewCommit[],
     order: readonly string[],
     { rewritten }: Rewritten,
   ): Promise<DiffSelection> {
     const newTop = order.at(-1) ?? '';
+    return followTo(selection, commits, rewritten[newTop] ?? newTop, rewritten);
+  }
+
+  // `top` is the new SHA of the commit the review now ends at.
+  async function followTo(
+    selection: DiffSelection,
+    commits: ReviewCommit[],
+    top: string,
+    rewritten: RewrittenShas,
+    terminal?: FollowedTerminalRewrite,
+  ): Promise<DiffSelection> {
     const target = isSameCommit(selection.targetCommitish, commits.at(-1)?.sha ?? '')
-      ? (rewritten[newTop] ?? newTop)
+      ? top
       : movedCommitish(selection.targetCommitish, rewritten);
     const after = await parser.listReviewCommits(
       createDiffSelection(selection.baseCommitish, target, selection.baseMode),
     );
     const place = ({ sha, parentSha }: ReviewCommit) => ({ sha, parentSha });
     const move = { rewritten, reorder: { before: commits.map(place), after: after.map(place) } };
-    await followRewrite(move);
+    await followRewrite(move, terminal);
     await commentsSaved();
     return selectionAfterMoves(selection, [move]);
+  }
+
+  // Review commits a terminal rewrite left without a partner, which a later report may still pair.
+  const leftByTerminalRewrite = new Set<string>();
+
+  async function followTerminalRewrite(): Promise<void> {
+    if (options.stdinDiff || !listensOnLoopbackOnly) return;
+    const end = await beginCommentRequest();
+    try {
+      await followPinnedReviewRewrite();
+      await commentsSaved();
+    } finally {
+      end();
+    }
+  }
+
+  async function followPinnedReviewRewrite(): Promise<void> {
+    for (const { selection, commits } of [...pinnedReviews].reverse()) {
+      const found = await findTerminalRewrite(repositoryPath, {
+        target: commits.at(-1)?.sha ?? '',
+        commits,
+      });
+      if (!found) continue;
+      for (const sha of found.left) leftByTerminalRewrite.add(sha);
+      const left = commits.flatMap(({ sha, shortSha, subject }) =>
+        found.left.includes(sha) ? [{ sha, shortSha, subject }] : [],
+      );
+      const moved = await followTo(selection, commits, found.target, found.rewritten, { left });
+      await recordFolds(moved, found.rewritten);
+      return;
+    }
   }
 
   function parseHistoryRewrittenRequest(body: unknown): RewrittenShas | null {
@@ -2923,10 +2978,12 @@ export async function startServer(options: ServerOptions): Promise<{
     if (reachable.some(({ code }) => code !== 0)) {
       return refuseRewrite('stale-view', 'A new SHA is not in the history of HEAD.');
     }
-    const listed = new Set(commits.map(({ sha }) => sha));
+    const listed = new Set([...commits.map(({ sha }) => sha), ...leftByTerminalRewrite]);
     const reviewed = new Set(commits.map(({ sha }) => reported[sha] ?? sha));
     const rewritten = Object.fromEntries(
-      Object.entries(reported).filter(([old, sha]) => listed.has(old) || !reviewed.has(sha)),
+      Object.entries(reported).filter(
+        ([old, sha]) => rewrittenShas[old] !== sha && (listed.has(old) || !reviewed.has(sha)),
+      ),
     );
     const lineRun = await runGit(repositoryPath, [
       'rev-list',
@@ -3463,7 +3520,10 @@ export async function startServer(options: ServerOptions): Promise<{
     options.preferredPort || 4966,
     options.host || 'localhost',
   );
-  server.on('close', () => clientPresence.stop());
+  server.on('close', () => {
+    clientPresence.stop();
+    void fileWatcher.stop();
+  });
   acceptLiveSockets(server, (socket) => {
     fileWatcher.addClient(socket, [...indexEvents.values(), sessionStatusEvent()]);
     const leave = options.keepAlive ? undefined : clientPresence.join();
@@ -3488,7 +3548,13 @@ export async function startServer(options: ServerOptions): Promise<{
   // Start file watcher
   if (options.diffMode) {
     try {
-      await fileWatcher.start(options.diffMode, repositoryPath, 300, invalidateCache);
+      await fileWatcher.start(options.diffMode, repositoryPath, 300, invalidateCache, () => {
+        const following = directEditQueue.then(followTerminalRewrite).catch((error: unknown) => {
+          console.error('Error following a rewrite made outside difit:', error);
+        });
+        directEditQueue = following;
+        return following;
+      });
     } catch (error) {
       console.warn('⚠️  File watcher failed to start:', error);
       console.warn('   Continuing without file watching...');

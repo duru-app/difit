@@ -310,6 +310,27 @@ describe('FileWatcherService', () => {
       expect(sentTypes()).toEqual(['connected']);
     });
 
+    it('tells clients HEAD moved only once the server has followed it', async () => {
+      vi.mocked(simpleGit).mockReturnValue({
+        checkIgnore: vi.fn().mockRejectedValue(new Error('No ignored files')),
+        revparse: vi.fn().mockResolvedValue('.git'),
+      } as any);
+      let settle = () => {};
+      const following = new Promise<void>((resolve) => (settle = resolve));
+      const onHeadMoved = vi.fn(() => following);
+      await fileWatcher.start(DiffMode.SPECIFIC, TEST_REPO_PATH, 50, undefined, onHeadMoved);
+      fileWatcher.addClient(mockClient);
+      const callback = vi.mocked(subscribe).mock.calls.find((call) => call[0].includes('.git'))![1];
+
+      await callback(null, [{ path: `${TEST_REPO_PATH}/.git/HEAD`, type: 'update' }]);
+      await waitForDebounce();
+      expect(onHeadMoved).toHaveBeenCalledTimes(1);
+      expect(sentTypes()).toEqual(['connected']);
+
+      settle();
+      await vi.waitFor(() => expect(sentTypes()).toEqual(['connected', 'headMoved']));
+    });
+
     it('sends the reload and the HEAD move together in DEFAULT mode', async () => {
       const callback = await startFollowing(DiffMode.DEFAULT);
 

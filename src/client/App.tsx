@@ -43,7 +43,11 @@ import {
   type RewriteBlockingThread,
   type ShownThread,
 } from '../types/diff';
-import type { SessionStatus } from '../types/watch';
+import type {
+  FollowedTerminalRewrite,
+  HistoryRewrittenWatchEvent,
+  SessionStatus,
+} from '../types/watch';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
 import { selectionAfterMoves } from '../utils/rewrittenShas';
 import {
@@ -1302,13 +1306,19 @@ function App() {
     (status: SessionStatus) => setSessionStatus({ status, receivedAt: Date.now() }),
     [],
   );
+  const [terminalRewrite, setTerminalRewrite] = useState<FollowedTerminalRewrite | null>(null);
+  const dismissTerminalRewrite = useCallback(() => setTerminalRewrite(null), []);
+  const handleHistoryRewritten = useCallback(async ({ terminal }: HistoryRewrittenWatchEvent) => {
+    if (terminal) setTerminalRewrite(terminal);
+    await fetchDiffDataRef.current?.();
+  }, []);
   const { shouldReload, reload, watchState } = useFileWatch(
     handleWatchReload,
     handleCommentsChanged,
     symbolPeek.noteIndexChange,
     handleHeadMoved,
     handleSessionStatus,
-    handleWatchReload,
+    handleHistoryRewritten,
   );
 
   const openCommentsPanelWithKeys = useCallback(() => {
@@ -3256,6 +3266,8 @@ function App() {
                 reword={reword}
                 onReorder={saveOrder}
                 onAddCommitComment={handleAddCommitComment}
+                terminalRewrite={terminalRewrite}
+                onDismissTerminalRewrite={dismissTerminalRewrite}
               />
             </aside>
           </>
@@ -3358,6 +3370,8 @@ function App() {
                   height={commitListHeight}
                   onResize={handleCommitListResize}
                   loadMessage={loadCommitMessage}
+                  terminalRewrite={terminalRewrite}
+                  onDismissTerminalRewrite={dismissTerminalRewrite}
                 />
               )}
               {!isMobile && (
