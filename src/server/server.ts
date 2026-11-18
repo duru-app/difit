@@ -1837,6 +1837,8 @@ export async function startServer(options: ServerOptions): Promise<{
     });
   }
 
+  // A held message is tried again when comments, replies or decisions change, so a fixup commit
+  // alone does not release it.
   function tellClaudeSessionReviewDone(selection: DiffSelection) {
     const session = getOrCreateCommentSession(selection);
     if (!session.reviewDoneUntold || !process.env.CLAUDE_CODE_MESSAGING_SOCKET) return;
