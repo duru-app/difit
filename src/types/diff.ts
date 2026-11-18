@@ -135,6 +135,14 @@ export interface DiffResponse {
   review?: ReviewScope;
   rewritten?: RewrittenShas;
   historyMoves?: HistoryMove[];
+  // Oldest first. The selections carry the SHAs after `rewritten`.
+  reviewMoves?: ReviewMove[];
+}
+
+// From a review of the same base whose target is an ancestor of the newer review's target.
+export interface ReviewMove {
+  from: DiffSelection;
+  to: DiffSelection;
 }
 
 export interface ChangeKindsResponse {

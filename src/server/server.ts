@@ -42,6 +42,7 @@ import { getFileExtension } from '../utils/fileUtils.js';
 import { isSessionConnected } from '../utils/sessionStatus.js';
 import { isSymbolName } from '../utils/symbolName.js';
 import {
+  approvalAwaitingFold,
   deriveThreadReviewState,
   isAgentMessage,
   isAgentResponding,
@@ -109,6 +110,7 @@ import {
   isLeftOut,
   readReviewRecord,
   reviewsBehind,
+  type StoredReview,
   saveReview,
   takeOverReviews,
   updateReviewRecord,
@@ -136,6 +138,7 @@ import {
   type RevisionsResponse,
   type ReviewCommit,
   type ReviewScope,
+  type ReviewMove,
   type RewordRejection,
   type RewordRequest,
   type RewordResponse,
@@ -340,6 +343,43 @@ export async function startServer(options: ServerOptions): Promise<{
   });
   app.use(express.text()); // For sendBeacon text/plain requests
 
+  // Requests that read or change comments run together; opening a review waits for them to end
+  // and holds new ones back, so the sessions it moves do not change under it.
+  let commentRequests = 0;
+  let openings = 0;
+  let lastOpening: Promise<void> = Promise.resolve();
+  const whenNoCommentRequests: Array<() => void> = [];
+  function withoutCommentRequests(open: () => Promise<void>): Promise<void> {
+    openings += 1;
+    const opening = lastOpening
+      .then(async () => {
+        while (commentRequests > 0) {
+          await new Promise<void>((resolve) => whenNoCommentRequests.push(resolve));
+        }
+        await open();
+      })
+      .finally(() => {
+        openings -= 1;
+      });
+    lastOpening = opening.then(
+      () => undefined,
+      () => undefined,
+    );
+    return opening;
+  }
+  app.use(
+    /^\/api\/(comments(-json|-left-out|-output)?(\/.*)?|comment-imports|review-done|decisions|fixups|direct-edit|reword|reorder|history-rewritten)$/,
+    async (_req, res, next) => {
+      while (openings > 0) await lastOpening;
+      commentRequests += 1;
+      res.once('close', () => {
+        commentRequests -= 1;
+        if (commentRequests === 0) for (const resume of whenNoCommentRequests.splice(0)) resume();
+      });
+      next();
+    },
+  );
+
   app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -393,8 +433,20 @@ export async function startServer(options: ServerOptions): Promise<{
   const pinnedCommentSessionKeys = new Set<string>();
   // Pinned reviews, newest last.
   const pinnedReviews: ReviewScope[] = [];
+  let reviewMoves: ReviewMove[] = [];
+  const afterReviewMoves = (selection: DiffSelection) =>
+    reviewMoves.reduce(
+      (moved, { from, to }) =>
+        normalizeBaseMode(moved.baseMode) === normalizeBaseMode(from.baseMode) &&
+        isSameCommit(moved.baseCommitish, from.baseCommitish) &&
+        isSameCommit(moved.targetCommitish, from.targetCommitish)
+          ? to
+          : moved,
+      selection,
+    );
   // A part of the review being read stays on it even when a newer review also covers it.
-  const findReviewOf = (view: DiffSelection) => {
+  const findReviewOf = (asked: DiffSelection) => {
+    const view = afterReviewMoves(asked);
     const newestFirst = [...pinnedReviews].reverse();
     const current = newestFirst.find((review) =>
       diffSelectionsEqual(review.selection, currentCommentSelection),
@@ -629,6 +681,11 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   const commentSessions = new Map<string, CommentSessionState>();
+  interface CommentWait {
+    check: () => Promise<void>;
+    finish: (event: string) => Promise<void>;
+  }
+  const commentWaits = new Set<CommentWait>();
   // What a tab or an agent still holding old SHAs says lands on the commits that replaced them.
   let rewrittenShas: RewrittenShas = {};
   let historyMoves: HistoryMove[] = [];
@@ -643,8 +700,12 @@ export async function startServer(options: ServerOptions): Promise<{
   const commentsSaved = () => reviewSaves;
   function saveCommentSession(selection: DiffSelection) {
     if (!reviewRecordPath) return;
-    const { threads, leftOut, decisions } = getOrCreateCommentSession(selection);
-    const review = { selection, threads: [...threads, ...leftOut], decisions };
+    const session = getOrCreateCommentSession(selection);
+    const review = {
+      selection: session.selection,
+      threads: [...session.threads, ...session.leftOut],
+      decisions: session.decisions,
+    };
     reviewSaves = reviewSaves
       .then(() => updateReviewRecord(reviewRecordPath, (reviews) => saveReview(reviews, review)))
       .then(
@@ -683,50 +744,138 @@ export async function startServer(options: ServerOptions): Promise<{
 
   const isAncestorCommit = async (older: string, newer: string) =>
     (await runGit(repositoryPath, ['merge-base', '--is-ancestor', older, newer])).code === 0;
-  const restoredCommentSessions = new Map<string, Promise<void>>();
-  // Only the review the server starts on takes over the reviews behind it.
-  function restoreCommentSession(selection: DiffSelection, takesOver = false): Promise<void> {
-    if (!reviewRecordPath || options.clearComments) return Promise.resolve();
-    const key = createCommentSessionKey(selection);
-    const known = restoredCommentSessions.get(key);
-    if (known) return known;
-    const restored = (async () => {
-      try {
-        let record = await readReviewRecord(reviewRecordPath);
-        if (takesOver) {
-          const behind = await reviewsBehind(record.reviews, selection, isAncestorCommit);
-          if (behind.length > 0) {
-            record = await updateReviewRecord(reviewRecordPath, (reviews) =>
-              takeOverReviews(
-                reviews,
+  const openedCommentSessions = new Map<string, { opened: Promise<void>; takesOver: boolean }>();
+
+  // Moves the reviews behind `selection` into it, the stored ones and the ones this server holds.
+  // Tabs are not told: a tab on a review that was taken over reads and saves the same threads
+  // through the newer one.
+  async function takeOverReviewsBehind(
+    selection: DiffSelection,
+    stored: readonly StoredReview[],
+  ): Promise<boolean> {
+    const known = new Map(
+      [...pinnedReviews, ...commentSessions.values(), ...stored]
+        // A name may point at another commit by the next request.
+        .filter((review) => isCommitHash(review.selection.targetCommitish))
+        .map((review) => [
+          createCommentSessionKey(review.selection),
+          { selection: review.selection },
+        ]),
+    );
+    const behind = (await reviewsBehind([...known.values()], selection, isAncestorCommit)).map(
+      (review) => review.selection,
+    );
+    if (behind.length === 0) return false;
+    const files = await filesOfReview(selection);
+
+    const isBehind = (other: DiffSelection) =>
+      behind.some((older) => diffSelectionsEqual(older, other));
+    const sessions = [...commentSessions.values()];
+    const taken = sessions.filter((session) => isBehind(session.selection));
+    const session = getOrCreateCommentSession(selection);
+    const heldOut = new Set(
+      [...taken, session].flatMap(({ leftOut }) => leftOut.map((thread) => thread.id)),
+    );
+    // What this server holds is at least as new as what it stored.
+    const merged = takeOverReviews(
+      sessions.reduce(
+        (reviews, { selection, threads, leftOut, decisions }) => [
+          ...reviews.filter((review) => !diffSelectionsEqual(review.selection, selection)),
+          { selection, threads: [...threads, ...leftOut], decisions },
+        ],
+        [...stored],
+      ),
+      selection,
+      behind,
+    ).find((review) => diffSelectionsEqual(review.selection, selection));
+    for (const older of behind) {
+      const key = createCommentSessionKey(older);
+      commentSessions.delete(key);
+      pinnedCommentSessionKeys.delete(key);
+      openedCommentSessions.delete(key);
+    }
+    pinnedReviews.splice(
+      0,
+      pinnedReviews.length,
+      ...pinnedReviews.filter((review) => !isBehind(review.selection)),
+    );
+    reviewMoves = [...reviewMoves, ...behind.map((from) => ({ from, to: selection }))];
+    if (isBehind(currentCommentSelection)) currentCommentSelection = selection;
+    const threads = merged?.threads ?? [];
+    session.leftOut = threads.filter((thread) =>
+      files ? isLeftOut(thread, files) : heldOut.has(thread.id),
+    );
+    session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
+    session.decisions = merged?.decisions ?? [];
+    session.version = Math.max(session.version, ...taken.map(({ version }) => version)) + 1;
+
+    if (reviewRecordPath) {
+      const recordPath = reviewRecordPath;
+      reviewSaves = reviewSaves
+        .then(() =>
+          updateReviewRecord(recordPath, (reviews) =>
+            saveReview(
+              reviews.filter((review) => !isBehind(review.selection)),
+              {
                 selection,
-                behind.map((review) => review.selection),
-              ),
-            );
-          }
-        }
-        const stored = record.reviews.find((review) =>
-          diffSelectionsEqual(review.selection, selection),
+                threads: [...session.threads, ...session.leftOut],
+                decisions: session.decisions,
+              },
+            ),
+          ),
+        )
+        .then(
+          () => undefined,
+          (error: unknown) => console.error('Error saving the review record:', error),
         );
-        if (!stored) return;
-        const files = await filesOfReview(selection);
-        const session = getOrCreateCommentSession(selection);
-        const threads =
-          session.threads.length === 0
-            ? stored.threads
-            : mergeCommentThreads(stored.threads, session.threads).threads;
-        session.leftOut = files ? threads.filter((thread) => isLeftOut(thread, files)) : [];
-        session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
-        session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
-        session.version += 1;
+      await commentsSaved();
+    }
+    for (const wait of commentWaits) void wait.check();
+    return true;
+  }
+
+  function restoreCommentSession(selection: DiffSelection, stored: StoredReview | undefined) {
+    if (!stored) return;
+    return filesOfReview(selection).then((files) => {
+      const session = getOrCreateCommentSession(selection);
+      const threads =
+        session.threads.length === 0
+          ? stored.threads
+          : mergeCommentThreads(stored.threads, session.threads).threads;
+      session.leftOut = files ? threads.filter((thread) => isLeftOut(thread, files)) : [];
+      session.threads = threads.filter((thread) => !session.leftOut.includes(thread));
+      session.decisions = mergeReviewDecisions(stored.decisions, session.decisions);
+      session.version += 1;
+    });
+  }
+
+  // Once for each review: brings back what is stored for it, and for the review the server starts
+  // on or pins later, first takes over the reviews behind it.
+  function openCommentSession(selection: DiffSelection, takesOver: boolean): Promise<void> {
+    const key = createCommentSessionKey(selection);
+    const known = openedCommentSessions.get(key);
+    if (known && (known.takesOver || !takesOver)) return known.opened;
+    const opened = withoutCommentRequests(async () => {
+      try {
+        await commentsSaved();
+        const stored =
+          reviewRecordPath && !options.clearComments
+            ? (await readReviewRecord(reviewRecordPath)).reviews
+            : [];
+        if (takesOver && (await takeOverReviewsBehind(selection, stored))) return;
+        await restoreCommentSession(
+          selection,
+          stored.find((review) => diffSelectionsEqual(review.selection, selection)),
+        );
       } catch (error) {
         console.error('Error restoring the review record:', error);
+        openedCommentSessions.delete(key);
       }
-    })();
-    restoredCommentSessions.set(key, restored);
-    return restored;
+    });
+    openedCommentSessions.set(key, { opened, takesOver });
+    return opened;
   }
-  await restoreCommentSession(currentCommentSelection, true);
+  await openCommentSession(currentCommentSelection, true);
 
   const boundCommentImports = await bindImportedThreads(
     currentCommentSelection,
@@ -763,7 +912,8 @@ export async function startServer(options: ServerOptions): Promise<{
     return findReviewOf(selection)?.selection ?? selection;
   }
 
-  function getOrCreateCommentSession(selection: DiffSelection): CommentSessionState {
+  function getOrCreateCommentSession(asked: DiffSelection): CommentSessionState {
+    const selection = afterReviewMoves(asked);
     const key = createCommentSessionKey(selection);
     const existing = commentSessions.get(key);
     if (existing) {
@@ -841,7 +991,7 @@ export async function startServer(options: ServerOptions): Promise<{
       Boolean(options.stdinDiff),
     );
     const review = await reviewOf(requestedSelection, viewSelection);
-    await restoreCommentSession(review?.selection ?? viewSelection);
+    await openCommentSession(review?.selection ?? viewSelection, review !== undefined);
     currentCommentSelection = review?.selection ?? viewSelection;
     indexReviewedCommit(requestedSelection);
 
@@ -874,6 +1024,7 @@ export async function startServer(options: ServerOptions): Promise<{
       commentImportId: shouldIncludeCommentImports ? commentImportId : undefined,
       review,
       ...(Object.keys(rewrittenShas).length > 0 ? { rewritten: rewrittenShas, historyMoves } : {}),
+      ...(reviewMoves.length > 0 ? { reviewMoves } : {}),
     });
   });
 
@@ -1751,11 +1902,6 @@ export async function startServer(options: ServerOptions): Promise<{
     );
   }
 
-  interface CommentWait {
-    check: () => Promise<void>;
-    finish: (event: string) => Promise<void>;
-  }
-  const commentWaits = new Set<CommentWait>();
   let commentWaitsEnded = false;
   let commentWaitSeenAt: number | null = null;
 
@@ -1869,14 +2015,21 @@ export async function startServer(options: ServerOptions): Promise<{
       const selection = getCommentSelectionFromQuery(req.query as Record<string, unknown>);
       const body: unknown =
         typeof req.body === 'string' ? (JSON.parse(req.body) as unknown) : req.body;
-      const nextThreads = parseCommentsPayload(body).map((thread) =>
-        movedThread(thread, rewrittenShas, historyMoves),
-      );
       const nextDecisions = parseDecisionsPayload(body)?.map((decision) =>
         movedDecision(decision, rewrittenShas),
       );
       const baseVersion = parseBaseVersion(body);
       const session = getOrCreateCommentSession(selection);
+      // A tab may still hold a thread from before it was left out.
+      const leftOutIds = new Set(session.leftOut.map((thread) => thread.id));
+      const sentThreads = parseCommentsPayload(body).map((thread) =>
+        movedThread(thread, rewrittenShas, historyMoves),
+      );
+      const nextThreads = sentThreads.filter((thread) => !leftOutIds.has(thread.id));
+      const nextLeftOut = mergeCommentThreads(
+        session.leftOut,
+        sentThreads.filter((thread) => leftOutIds.has(thread.id)),
+      ).threads;
       const before = {
         threads: session.threads,
         decisions: session.decisions,
@@ -1896,7 +2049,7 @@ export async function startServer(options: ServerOptions): Promise<{
             ? mergeReviewDecisions(session.decisions, nextDecisions)
             : nextDecisions;
 
-      if (updateCommentSession(selection, resolvedThreads, resolvedDecisions)) {
+      if (updateCommentSession(selection, resolvedThreads, resolvedDecisions, nextLeftOut)) {
         tellClaudeSession(selection, before);
       }
       await commentsSaved();
@@ -2502,6 +2655,10 @@ export async function startServer(options: ServerOptions): Promise<{
     initialSelection = selectionAfterMoves(initialSelection, moves);
     currentSelection = selectionAfterMoves(currentSelection, moves);
     currentCommentSelection = selectionAfterMoves(currentCommentSelection, moves);
+    reviewMoves = reviewMoves.map(({ from, to }) => ({
+      from: selectionAfterMoves(from, moves),
+      to: selectionAfterMoves(to, moves),
+    }));
     for (const [key, session] of [...commentSessions]) {
       const selection = selectionAfterMoves(session.selection, moves);
       const movedKey = createCommentSessionKey(selection);
@@ -2514,8 +2671,8 @@ export async function startServer(options: ServerOptions): Promise<{
         decisions: session.decisions.map((decision) => movedDecision(decision, rewritten)),
         version: session.version + 1,
       });
-      const restored = restoredCommentSessions.get(key);
-      if (restored) restoredCommentSessions.set(movedKey, restored);
+      const opened = openedCommentSessions.get(key);
+      if (opened) openedCommentSessions.set(movedKey, opened);
     }
     moveSavedReviews(move);
     fileWatcher.broadcast({ type: 'historyRewritten', timestamp: new Date().toISOString() });
@@ -2718,7 +2875,7 @@ export async function startServer(options: ServerOptions): Promise<{
       order,
     });
     if (!result.ok) return refuseFailedRewrite(result);
-    return followOrder(selection, commits, order, result);
+    return rewrittenBody(await followOrder(selection, commits, order, result), result);
   }
 
   // `order` holds the old SHAs of the review's commits in the order they now stand.
@@ -2726,9 +2883,8 @@ export async function startServer(options: ServerOptions): Promise<{
     selection: DiffSelection,
     commits: ReviewCommit[],
     order: readonly string[],
-    result: Rewritten,
-  ): Promise<{ status: number; body: RewordResponse }> {
-    const { rewritten } = result;
+    { rewritten }: Rewritten,
+  ): Promise<DiffSelection> {
     const newTop = order.at(-1) ?? '';
     const target = isSameCommit(selection.targetCommitish, commits.at(-1)?.sha ?? '')
       ? (rewritten[newTop] ?? newTop)
@@ -2740,7 +2896,7 @@ export async function startServer(options: ServerOptions): Promise<{
     const move = { rewritten, reorder: { before: commits.map(place), after: after.map(place) } };
     await followRewrite(move);
     await commentsSaved();
-    return rewrittenBody(selectionAfterMoves(selection, [move]), result);
+    return selectionAfterMoves(selection, [move]);
   }
 
   function parseHistoryRewrittenRequest(body: unknown): RewrittenShas | null {
@@ -2753,17 +2909,25 @@ export async function startServer(options: ServerOptions): Promise<{
       : null;
   }
 
+  // A pair naming a commit outside the review that went into a reviewed one, as git's list of
+  // rewritten commits does for a folded fixup, is no move: the fixup keeps its SHA in the records.
   async function applyAgentRewrite(
     { selection, commits }: ReviewScope,
-    rewritten: RewrittenShas,
+    reported: RewrittenShas,
   ): Promise<{ status: number; body: RewordResponse }> {
-    const newShas = Object.values(rewritten);
     const reachable = await Promise.all(
-      newShas.map((sha) => runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD'])),
+      Object.values(reported).map((sha) =>
+        runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD']),
+      ),
     );
     if (reachable.some(({ code }) => code !== 0)) {
       return refuseRewrite('stale-view', 'A new SHA is not in the history of HEAD.');
     }
+    const listed = new Set(commits.map(({ sha }) => sha));
+    const reviewed = new Set(commits.map(({ sha }) => reported[sha] ?? sha));
+    const rewritten = Object.fromEntries(
+      Object.entries(reported).filter(([old, sha]) => listed.has(old) || !reviewed.has(sha)),
+    );
     const lineRun = await runGit(repositoryPath, [
       'rev-list',
       '--first-parent',
@@ -2789,11 +2953,61 @@ export async function startServer(options: ServerOptions): Promise<{
         'A commit from above the review now stands inside it. Leave it above the last reviewed commit.',
       );
     }
+    const result = { rewritten, branches: { moved: [], left: [] } };
+    if (Object.keys(rewritten).length === 0) return rewrittenBody(selection, result);
     const order = [...commits].sort((a, b) => placeOf(a) - placeOf(b)).map(({ sha }) => sha);
-    return followOrder(selection, commits, order, {
-      rewritten,
-      branches: { moved: [], left: [] },
+    const moved = await followOrder(selection, commits, order, result);
+    await recordFolds(moved, rewritten);
+    return rewrittenBody(moved, result);
+  }
+
+  async function recordFolds(selection: DiffSelection, rewritten: RewrittenShas) {
+    const fixupsByThread = await fixupsByThreadOrNone(selection);
+    if (!fixupsByThread) return;
+    const { threads, decisions } = getOrCreateCommentSession(selection);
+    const approvals = threads.flatMap(({ id }) =>
+      approvalAwaitingFold(id, fixupsByThread.get(id) ?? [], decisions),
+    );
+    const shas = [...new Set(approvals.map(({ fixupSha }) => fixupSha))];
+    const held = await Promise.all(
+      shas.map(
+        async (sha) =>
+          (await runGit(repositoryPath, ['merge-base', '--is-ancestor', sha, 'HEAD'])).code === 0,
+      ),
+    );
+    const gone = shas.filter((_, index) => !held[index]);
+    let folds: Awaited<ReturnType<typeof parser.findFolds>>;
+    try {
+      folds = await parser.findFolds(selection, gone);
+    } catch (error) {
+      console.error('Error finding where the fixups folded:', error);
+      return;
+    }
+    const judged = new Set(
+      decisions.flatMap(({ threadId, kind, fixupSha }) =>
+        kind === 'approved' || kind === 'rejected' ? [`${threadId}:${fixupSha}`] : [],
+      ),
+    );
+    const at = new Date().toISOString();
+    const folded = approvals.flatMap(({ threadId, fixupSha, patchId }): ReviewDecision[] => {
+      const unjudged = folds.fixupsByThread
+        .get(threadId)
+        ?.some((sha) => !judged.has(`${threadId}:${sha}`));
+      const root = folds.roots.get(fixupSha);
+      const targetSha = root === undefined ? undefined : rewritten[root];
+      if (unjudged || targetSha === undefined) return [];
+      return [
+        { threadId, kind: 'folded', fixupSha, ...(patchId ? { patchId } : {}), targetSha, at },
+      ];
     });
+    if (folded.length === 0) return;
+    const session = getOrCreateCommentSession(selection);
+    updateCommentSession(
+      selection,
+      session.threads,
+      mergeReviewDecisions(session.decisions, folded),
+    );
+    await commentsSaved();
   }
 
   function historyRoute(
@@ -3171,7 +3385,8 @@ export async function startServer(options: ServerOptions): Promise<{
     }, 30_000);
     const wait: CommentWait = {
       check: async () => {
-        const moved = selectionAfterMoves(selection, historyMoves);
+        const rewritten = selectionAfterMoves(selection, historyMoves);
+        const moved = findReviewOf(rewritten)?.selection ?? rewritten;
         const { waiting, fixupsByThread } = await threadsAwaitingAgentFor(moved);
         if (!commentWaits.has(wait)) return;
         if (waiting.length > 0) {
