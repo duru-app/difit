@@ -313,6 +313,7 @@ describe('MarkdownDiffViewer', () => {
       expect(mermaid.initialize).toHaveBeenCalledWith({
         startOnLoad: false,
         securityLevel: 'strict',
+        suppressErrorRendering: true,
         theme: 'dark',
       });
       expect(mermaid.render).toHaveBeenCalledWith(
@@ -413,6 +414,7 @@ describe('MarkdownDiffViewer', () => {
       expect(vi.mocked(mermaid.initialize)).toHaveBeenCalledWith({
         startOnLoad: false,
         securityLevel: 'strict',
+        suppressErrorRendering: true,
         theme: 'dark',
       });
     });
@@ -423,6 +425,7 @@ describe('MarkdownDiffViewer', () => {
       expect(vi.mocked(mermaid.initialize)).toHaveBeenLastCalledWith({
         startOnLoad: false,
         securityLevel: 'strict',
+        suppressErrorRendering: true,
         theme: 'default',
       });
       expect(vi.mocked(mermaid.render)).toHaveBeenCalledTimes(2);

@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import mermaid from 'mermaid';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DiffLineLinkProvider } from '../contexts/DiffLineLinkContext';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
@@ -7,7 +8,55 @@ import { createDiffPathResolver } from '../utils/diffLineLinks';
 
 import { CommentBodyRenderer } from './CommentBodyRenderer';
 
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn().mockResolvedValue({
+      svg: '<svg><title>Mermaid</title></svg>',
+      bindFunctions: undefined,
+    }),
+  },
+}));
+
 describe('CommentBodyRenderer', () => {
+  beforeEach(() => {
+    vi.mocked(mermaid.render).mockClear();
+  });
+
+  it('draws a mermaid block as a diagram', async () => {
+    const { container } = render(
+      <CommentBodyRenderer body={'See:\n\n```mermaid\nflowchart TD\n  A --> B\n```'} />,
+    );
+
+    await waitFor(() => expect(container.querySelector('.mermaid-diagram svg')).not.toBeNull());
+    expect(mermaid.render).toHaveBeenCalledWith(expect.any(String), 'flowchart TD\n  A --> B');
+    expect(container.querySelector('.language-mermaid')).toBeNull();
+  });
+
+  it('shows the error and the source when mermaid cannot render', async () => {
+    vi.mocked(mermaid.render).mockRejectedValueOnce(new Error('bad syntax'));
+    render(<CommentBodyRenderer body={'```mermaid\nnot a chart\n```'} />);
+
+    expect(await screen.findByText('Unable to render Mermaid diagram.')).toBeInTheDocument();
+    expect(screen.getByText('not a chart')).toBeInTheDocument();
+  });
+
+  it('does not call mermaid for an empty mermaid block', () => {
+    const { container } = render(<CommentBodyRenderer body={'```mermaid\n```'} />);
+
+    expect(mermaid.render).not.toHaveBeenCalled();
+    expect(container.querySelector('.mermaid-diagram')).toBeNull();
+  });
+
+  it('keeps ts and diff blocks as code', () => {
+    const { container } = render(
+      <CommentBodyRenderer body={'```ts\nconst a = 1;\n```\n\n```diff\n+added\n```'} />,
+    );
+
+    expect(mermaid.render).not.toHaveBeenCalled();
+    expect(container).toHaveTextContent('const a = 1;');
+    expect(container).toHaveTextContent('+added');
+  });
   it('renders plain text', () => {
     render(<CommentBodyRenderer body="Just a plain comment" />);
 
