@@ -181,8 +181,8 @@ export async function reviewsBehind<Review extends { selection: DiffSelection }>
   return sameBase.filter((_, index) => behind[index]);
 }
 
-// Moves the threads and decisions of the reviews behind into the review of `selection`, oldest
-// first, and drops those reviews.
+// Moves the threads and decisions of the superseded reviews into the review of `selection`, in
+// the order given, and drops those reviews.
 export function takeOverReviews(
   reviews: StoredReview[],
   selection: DiffSelection,
@@ -191,7 +191,9 @@ export function takeOverReviews(
   const isSuperseded = (review: StoredReview) =>
     superseded.some((behind) => diffSelectionsEqual(behind, review.selection));
   const sources = [
-    ...reviews.filter(isSuperseded),
+    ...superseded.flatMap((behind) =>
+      reviews.filter((review) => diffSelectionsEqual(behind, review.selection)),
+    ),
     ...reviews.filter((review) => diffSelectionsEqual(review.selection, selection)),
   ];
   const [first, ...rest] = sources;

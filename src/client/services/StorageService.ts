@@ -295,7 +295,7 @@ export class StorageService {
     }
   }
 
-  // A record already under the new key stays: it was written after the move.
+  // A record already under the new key stays, and the moved one is dropped.
   private moveRecord(key: string, movedKey: string, moved: DiffContextStorage): void {
     if (localStorage.getItem(movedKey) === null) {
       localStorage.setItem(movedKey, JSON.stringify(moved));
