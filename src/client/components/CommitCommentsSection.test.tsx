@@ -117,7 +117,7 @@ describe('CommitCommentsSection', () => {
         fireEvent.click(screen.getByRole('button', { name: '저장' }));
       });
 
-      expect(screen.getByText('함께 옮긴 브랜치: stack')).toHaveAttribute('role', 'status');
+      expect(screen.getByRole('status')).toHaveTextContent('함께 옮긴 브랜치: stack');
       fireEvent.click(touchButton('알림 닫기'));
       expect(screen.queryByText(/함께 옮긴 브랜치/)).toBeNull();
     });

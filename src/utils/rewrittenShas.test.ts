@@ -9,6 +9,7 @@ import {
   movedPlace,
   movedSelection,
   movedThread,
+  selectionAfterMoves,
 } from './rewrittenShas.js';
 
 const OLD = 'a'.repeat(40);
@@ -166,6 +167,112 @@ describe('afterRewrite', () => {
       [OLD]: KEPT,
       [NEW]: KEPT,
       [OLD_FIXUP]: NEW_FIXUP,
+    });
+  });
+});
+
+describe('selectionAfterMoves', () => {
+  const sha = (digit: string) => digit.repeat(40);
+  const placed = (commit: string, parent: string) => ({ sha: sha(commit), parentSha: sha(parent) });
+  // 1 2 3 become 7 8 9 in the order 3 1 2: commit 9 is the old 3, 7 the old 1, 8 the old 2.
+  const REORDER = {
+    rewritten: { [sha('1')]: sha('7'), [sha('2')]: sha('8'), [sha('3')]: sha('9') },
+    reorder: {
+      before: [placed('1', '0'), placed('2', '1'), placed('3', '2')],
+      after: [placed('9', '0'), placed('7', '9'), placed('8', '7')],
+    },
+  };
+  const view = (base: string, target: string) => ({
+    baseCommitish: sha(base),
+    targetCommitish: sha(target),
+  });
+
+  it('keeps a one-commit view on that commit, on its new parent', () => {
+    expect(selectionAfterMoves(view('2', '3'), [REORDER])).toEqual(view('0', '9'));
+    expect(selectionAfterMoves(view('0', '1'), [REORDER])).toEqual(view('9', '7'));
+  });
+
+  it('turns the whole review into the whole review', () => {
+    expect(selectionAfterMoves(view('0', '3'), [REORDER])).toEqual(view('0', '8'));
+  });
+
+  it('spans a run that came apart, so it still shows every commit it showed', () => {
+    expect(selectionAfterMoves(view('1', '3'), [REORDER])).toEqual(view('0', '8'));
+  });
+
+  it('keeps the length of an abbreviated hash', () => {
+    expect(
+      selectionAfterMoves(
+        { baseCommitish: sha('2').slice(0, 7), targetCommitish: sha('3').slice(0, 7) },
+        [REORDER],
+      ),
+    ).toEqual({ baseCommitish: sha('0').slice(0, 7), targetCommitish: sha('9').slice(0, 7) });
+  });
+
+  it('moves the base of a one-commit review and leaves names alone', () => {
+    expect(
+      selectionAfterMoves({ baseCommitish: `${sha('2')}^`, targetCommitish: sha('2') }, [REORDER]),
+    ).toEqual({ baseCommitish: `${sha('8')}^`, targetCommitish: sha('8') });
+    const named = { baseCommitish: 'main', targetCommitish: 'HEAD' };
+    expect(selectionAfterMoves(named, [REORDER])).toEqual(named);
+  });
+
+  it('moves a review ending on the old last commit to the new last, whatever its base', () => {
+    expect(
+      selectionAfterMoves(
+        { baseCommitish: 'main', targetCommitish: sha('3'), baseMode: 'merge-base' },
+        [REORDER],
+      ),
+    ).toEqual({ baseCommitish: 'main', targetCommitish: sha('8'), baseMode: 'merge-base' });
+  });
+
+  it('applies the moves in turn and leaves a selection already past them', () => {
+    const reword = { rewritten: { [sha('9')]: sha('a') } };
+    const later = {
+      rewritten: { [sha('7')]: sha('b'), [sha('a')]: sha('c') },
+      reorder: {
+        before: [placed('a', '0'), placed('7', 'a'), placed('8', '7')],
+        after: [placed('b', '0'), placed('c', 'b'), placed('8', 'c')],
+      },
+    };
+    const moves = [REORDER, reword, later];
+    expect(selectionAfterMoves(view('2', '3'), moves)).toEqual(view('b', 'c'));
+    expect(selectionAfterMoves(view('b', 'c'), moves)).toEqual(view('b', 'c'));
+  });
+});
+
+describe('movedThread with history moves', () => {
+  it('moves the view through the moves and the SHAs through the map', () => {
+    const at = '2026-11-07T00:00:00Z';
+    const thread: DiffCommentThread = {
+      id: 't1',
+      filePath: 'a.ts',
+      createdAt: at,
+      updatedAt: at,
+      position: { side: 'new', line: 2 },
+      view: { baseCommitish: OLD, targetCommitish: OLD_FIXUP },
+      fixupTarget: OLD_FIXUP,
+      messages: [{ id: 't1', body: 'x', createdAt: at, updatedAt: at }],
+    };
+    const moves = [
+      {
+        rewritten: REWRITTEN,
+        reorder: {
+          before: [
+            { sha: OLD, parentSha: KEPT },
+            { sha: OLD_FIXUP, parentSha: OLD },
+          ],
+          after: [
+            { sha: NEW_FIXUP, parentSha: KEPT },
+            { sha: NEW, parentSha: NEW_FIXUP },
+          ],
+        },
+      },
+    ];
+
+    expect(movedThread(thread, REWRITTEN, moves)).toMatchObject({
+      view: { baseCommitish: KEPT, targetCommitish: NEW_FIXUP },
+      fixupTarget: NEW_FIXUP,
     });
   });
 });

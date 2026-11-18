@@ -24,6 +24,8 @@ export interface RewordSaved {
   saved: true;
   // Local branches other than HEAD's that the rewrite moved onto the new commits.
   movedBranches: string[];
+  // Local branches a new order left on the old commits: no commit holds their files any more.
+  leftBranches?: string[];
 }
 
 export interface RewordControls {
@@ -56,7 +58,7 @@ function explanationOf(thread: RewriteBlockingThread, onScreen: boolean): string
   return `${lineOf(thread)}\n${opens}${where}`;
 }
 
-function BlockingThreads({
+export function BlockingThreads({
   threads,
   shownReview,
   onShow,

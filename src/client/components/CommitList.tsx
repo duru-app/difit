@@ -12,6 +12,7 @@ import {
   Fragment,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -35,6 +36,13 @@ import {
   useCommitHoverCard,
 } from './CommitMessageBody';
 import { CommitMessageForm, type RewordControls } from './CommitMessageForm';
+import {
+  ReorderDropLine,
+  ReorderHandle,
+  ReorderNotice,
+  type SaveOrder,
+  useCommitReorder,
+} from './CommitReorder';
 import { MovedBranchesNotice } from './MovedBranchesNotice';
 
 interface CommitListProps {
@@ -48,6 +56,7 @@ interface CommitListProps {
   // Keyed by commit sha: the whole message an amend! will leave on that commit.
   amendedMessages?: ReadonlyMap<string, string> | undefined;
   reword?: RewordControls | undefined;
+  onReorder?: SaveOrder | undefined;
   onAddCommitComment?: ((sha: string, body: string) => Promise<void>) | undefined;
   height?: number | null | undefined;
   onResize?: ((height: number) => void) | undefined;
@@ -84,6 +93,8 @@ const ROW_PLUS_HIDDEN_CLASS =
   'opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100';
 const ROW_ACTIONS_OFF_ON_TOUCH_CLASS = '[@media(hover:none)]:hidden';
 const OPEN_ROW_ON_TOUCH_CLASS = '[@media(hover:none)]:bg-github-bg-tertiary';
+const HANDLE_ON_TOUCH_CLASS =
+  '[@media(hover:none)]:static [@media(hover:none)]:w-8 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto';
 const MERGED_CLASS = 'flex items-center gap-2 px-4 text-sm text-github-text-muted';
 const CURRENT_MERGED_CLASS =
   'bg-github-bg-tertiary text-github-text-secondary shadow-[inset_2px_0_0_var(--color-github-accent)]';
@@ -172,6 +183,7 @@ export function CommitList({
   openCounts,
   amendedMessages,
   reword,
+  onReorder,
   onAddCommitComment,
   height,
   onResize,
@@ -194,6 +206,11 @@ export function CommitList({
   const [drag, setDrag] = useState<Drag | null>(null);
   const isDragging = drag !== null;
   const listRef = useRef<HTMLUListElement>(null);
+  const shas = useMemo(() => commits.map(({ sha }) => sha), [commits]);
+  const reorder = useCommitReorder(shas, listRef, onReorder);
+  const canMove =
+    onReorder !== undefined && !isSavingMessage && !reorder.isSaving && rangeStart === undefined;
+  const hasOpenForm = rewording !== null || commenting !== null;
   const sectionRef = useRef<HTMLElement>(null);
   const pressRef = useRef<Press | null>(null);
   const { copiedSha, copyHash } = useCopyCommitHash();
@@ -445,6 +462,21 @@ export function CommitList({
         />
       )}
       <MovedBranchesNotice branches={movedBranches} onDismiss={dismissMovedBranches} />
+      <MovedBranchesNotice
+        branches={reorder.saved?.movedBranches ?? []}
+        left={reorder.saved?.leftBranches ?? []}
+        onDismiss={reorder.dismissSaved}
+      />
+      {isListShown && (
+        <ReorderNotice
+          isSaving={reorder.isSaving}
+          refused={reorder.refused}
+          shownReview={review.requested}
+          onShowThread={reword?.showBlockingThread}
+          onRetry={reorder.retry}
+          onDismiss={reorder.dismiss}
+        />
+      )}
       {isListShown && (
         <ul
           ref={listRef}
@@ -482,7 +514,7 @@ export function CommitList({
                     aria-label="메시지 고치기"
                     title="메시지 고치기"
                     aria-expanded={rewording === commit.sha}
-                    disabled={isSavingMessage}
+                    disabled={isSavingMessage || reorder.isSaving}
                     onClick={() =>
                       setRewording((current) => (current === commit.sha ? null : commit.sha))
                     }
@@ -546,9 +578,12 @@ export function CommitList({
             );
             return (
               <Fragment key={commit.sha}>
+                {reorder.shownAt === index && <ReorderDropLine />}
                 {merged.map((entry) => (
                   <li
                     key={entry.kind === 'commit' ? entry.commit.sha : `${commit.sha}:omitted`}
+                    data-reorder-at={index}
+                    data-reorder-side=""
                     aria-current={isCurrent ? true : undefined}
                     title={entry.kind === 'commit' ? entry.commit.subject : undefined}
                     className={`group ${MERGED_CLASS} ${rowPadding} ${isCurrent ? CURRENT_MERGED_CLASS : ''}`}
@@ -569,15 +604,34 @@ export function CommitList({
                     )}
                   </li>
                 ))}
-                <li className="group">
+                <li
+                  data-reorder-at={index}
+                  className={`group ${reorder.movingSha === commit.sha ? 'opacity-50' : ''}`}
+                >
                   <div
                     data-commit-sha={commit.sha}
                     className={`relative flex items-stretch ${isOpenInDrawer ? OPEN_ROW_ON_TOUCH_CLASS : ''} ${isOpenInDrawer && isPreviewed ? PREVIEW_CLASS : ''}`}
                     onMouseEnter={(event) => {
-                      if (loadCardMessage) hoverCard.enter(commit, event.currentTarget);
+                      if (loadCardMessage && reorder.movingSha === null) {
+                        hoverCard.enter(commit, event.currentTarget);
+                      }
                     }}
                     onMouseLeave={loadCardMessage && hoverCard.leave}
                   >
+                    {onReorder && commits.length > 1 && (
+                      <ReorderHandle
+                        disabled={!canMove || hasOpenForm}
+                        placement={
+                          inDrawer
+                            ? 'w-8'
+                            : `absolute inset-y-0 left-0 w-4 ${reorder.movingSha === commit.sha ? '' : ROW_ACTIONS_HIDDEN_CLASS} ${HANDLE_ON_TOUCH_CLASS}`
+                        }
+                        onStart={() => {
+                          hoverCard.hide();
+                          reorder.startMoving(commit.sha);
+                        }}
+                      />
+                    )}
                     <button
                       type="button"
                       onMouseDown={(event) => {
@@ -679,6 +733,7 @@ export function CommitList({
               </Fragment>
             );
           })}
+          {reorder.shownAt === commits.length && <ReorderDropLine />}
         </ul>
       )}
     </section>
