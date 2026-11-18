@@ -808,14 +808,16 @@ export class GitDiffParser {
     return { foldTargetBySha, amendedMessageBySha };
   }
 
-  // The commit each fixup folds into the way autosquash groups the history from the review base up
-  // to the fixups, which may stand on a line HEAD no longer holds.
-  async findFoldRoots(
+  // How autosquash groups the history from the review base up to the fixups, which may stand on a
+  // line HEAD no longer holds: the commit each of them folds into, and every folding commit that
+  // names a thread, by thread.
+  async findFolds(
     selection: DiffSelection,
     fixupShas: readonly string[],
-  ): Promise<Map<string, string>> {
+  ): Promise<{ roots: Map<string, string>; fixupsByThread: Map<string, string[]> }> {
     const roots = new Map<string, string>();
-    if (fixupShas.length === 0) return roots;
+    const fixupsByThread = new Map<string, string[]>();
+    if (fixupShas.length === 0) return { roots, fixupsByThread };
     const base = await this.resolveBaseCommitish(selection);
     const log = await this.git.raw([
       'log',
@@ -828,12 +830,17 @@ export class GitDiffParser {
       '--',
     ]);
     const wanted = new Set(fixupShas);
-    for (const [root, ...folded] of autosquashGroups(parseFixupLog(log))) {
+    const entries = parseFixupLog(log);
+    const threadIdsOf = new Map(entries.map(({ sha, threadIds }) => [sha, threadIds]));
+    for (const [root, ...folded] of autosquashGroups(entries)) {
       for (const { sha } of folded) {
         if (root && wanted.has(sha)) roots.set(sha, root.sha);
+        for (const threadId of threadIdsOf.get(sha) ?? []) {
+          fixupsByThread.set(threadId, [...(fixupsByThread.get(threadId) ?? []), sha]);
+        }
       }
     }
-    return roots;
+    return { roots, fixupsByThread };
   }
 
   // Replays the messages of each group in autosquash order: an amend! commit replaces the message

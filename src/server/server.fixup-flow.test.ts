@@ -2556,3 +2556,67 @@ it.each([
     expect(reviews[0]?.decisions).toEqual(afterFold.decisions);
   },
 );
+
+it('records no fold for a thread that had a fixup the reviewer never approved', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const first = commit(repo, 'first', { 'a.js': '1\n2\n' });
+  const unjudged = commit(repo, `fixup! ${first}\n\nReview-Thread: t1`, { 'a.js': '1\ntwo\n' });
+  const approved = commit(repo, `fixup! ${first}\n\nReview-Thread: t1`, { 'a.js': '1\nTwo\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, first),
+    repoPath: repo,
+    preferredPort: 9294,
+    followedRef: 'refs/heads/feature',
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  await fetch(api('/api/diff'));
+  const post = (path: string, body: unknown) =>
+    fetch(api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const query = `?base=${base}&target=${first}`;
+  const at = '2026-11-01T00:00:00.000Z';
+  await post(`/api/comments${query}`, {
+    threads: [
+      {
+        id: 't1',
+        filePath: 'a.js',
+        position: { side: 'new', line: 2 },
+        view: { baseCommitish: base, targetCommitish: first },
+        fixupTarget: first,
+        codeSnapshot: { content: '2', commit: first },
+        createdAt: at,
+        updatedAt: at,
+        messages: [
+          { id: 't1-m', body: '2 대신 two', author: 'User', createdAt: at, updatedAt: at },
+        ],
+      },
+    ],
+  });
+  await post(`/api/decisions${query}`, [
+    { threadId: 't1', kind: 'approved', fixupSha: approved, at },
+  ]);
+
+  git(repo, ['rebase', '-q', '-i', '--autosquash', base], { GIT_SEQUENCE_EDITOR: ':' });
+  const newFirst = git(repo, ['rev-parse', 'HEAD']);
+  const followed = await post(`/api/history-rewritten${query}`, {
+    rewritten: { [first]: newFirst },
+  });
+  expect(followed.status).toBe(200);
+
+  const { decisions } = (await (
+    await fetch(api(`/api/comments-json?base=${base}&target=${newFirst}`))
+  ).json()) as { decisions: Array<{ kind: string; fixupSha: string }> };
+  expect(decisions.map(({ kind, fixupSha }) => ({ kind, fixupSha }))).toEqual([
+    { kind: 'approved', fixupSha: approved },
+  ]);
+  expect(unjudged).not.toBe(approved);
+});

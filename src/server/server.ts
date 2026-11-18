@@ -2976,18 +2976,26 @@ export async function startServer(options: ServerOptions): Promise<{
       ),
     );
     const gone = shas.filter((_, index) => !held[index]);
-    let roots: Map<string, string>;
+    let folds: Awaited<ReturnType<typeof parser.findFolds>>;
     try {
-      roots = await parser.findFoldRoots(selection, gone);
+      folds = await parser.findFolds(selection, gone);
     } catch (error) {
       console.error('Error finding where the fixups folded:', error);
       return;
     }
+    const judged = new Set(
+      decisions.flatMap(({ threadId, kind, fixupSha }) =>
+        kind === 'approved' || kind === 'rejected' ? [`${threadId}:${fixupSha}`] : [],
+      ),
+    );
     const at = new Date().toISOString();
     const folded = approvals.flatMap(({ threadId, fixupSha, patchId }): ReviewDecision[] => {
-      const root = roots.get(fixupSha);
+      const unjudged = folds.fixupsByThread
+        .get(threadId)
+        ?.some((sha) => !judged.has(`${threadId}:${sha}`));
+      const root = folds.roots.get(fixupSha);
       const targetSha = root === undefined ? undefined : rewritten[root];
-      if (targetSha === undefined) return [];
+      if (unjudged || targetSha === undefined) return [];
       return [
         { threadId, kind: 'folded', fixupSha, ...(patchId ? { patchId } : {}), targetSha, at },
       ];
