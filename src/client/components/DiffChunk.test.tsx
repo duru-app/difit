@@ -9,6 +9,7 @@ import {
   FixupOverlayProvider,
   type FixupOverlayState,
 } from '../contexts/FixupOverlayContext';
+import { WalkthroughStepProvider } from '../contexts/WalkthroughStepContext';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import { boxesByAnchor, type FixupBox } from '../utils/fixupSpread';
 import { symbolRequestFromTarget } from '../utils/symbolPeek';
@@ -2295,5 +2296,50 @@ describe.each<ChunkMode>(['unified', 'split'])('names clicked in fixup code (%s)
       line: 12,
       column: 6,
     });
+  });
+});
+
+describe('walkthrough step highlight', () => {
+  const step = { file: 'src/example.ts', lines: new Set([11, 12]) };
+  const marked = (container: HTMLElement) =>
+    [...container.querySelectorAll('tr[data-walkthrough-step]')].map(
+      (row) => row.textContent ?? '',
+    );
+  const renderChunk = (mode: 'unified' | 'split', filename = 'src/example.ts') => {
+    const props = {
+      chunk: testChunk,
+      chunkIndex: 0,
+      threads: [],
+      onAddComment: asyncNoop,
+      onResolveThread: noop,
+      onReplyToThread: asyncNoop,
+      onRemoveMessage: noop,
+      onUpdateMessage: noop,
+      filename,
+    };
+    return renderWithProviders(
+      <WalkthroughStepProvider value={step}>
+        {mode === 'unified' ? (
+          <DiffChunk {...props} mode="unified" />
+        ) : (
+          <SideBySideDiffChunk {...props} />
+        )}
+      </WalkthroughStepProvider>,
+    );
+  };
+
+  it.each(['unified', 'split'] as const)(
+    'marks only the rows of the current step in the %s view',
+    (mode) => {
+      const rows = marked(renderChunk(mode).container);
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toContain('const second = 2;');
+      expect(rows[1]).toContain('const third = 3;');
+    },
+  );
+
+  it('marks nothing in another file', () => {
+    expect(marked(renderChunk('unified', 'src/other.ts').container)).toEqual([]);
   });
 });

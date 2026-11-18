@@ -101,9 +101,14 @@ describe('global.css agent message colors', () => {
     });
   });
 
-  it('defines the agent colors for both themes', () => {
+  it('defines the agent and walkthrough step colors for both themes', () => {
     const lightProperties = propertiesOf((selector) => selector === '[data-theme="light"]');
-    for (const property of ['--color-agent', '--color-agent-bg']) {
+    for (const property of [
+      '--color-agent',
+      '--color-agent-bg',
+      '--color-walkthrough-step-bg',
+      '--color-walkthrough-step-border',
+    ]) {
       expect(themeProperties).toContain(property);
       expect(lightProperties).toContain(property);
     }

@@ -37,6 +37,9 @@
   --color-agent: #3fb950;
   --color-agent-bg: #1c2128;
 
+  --color-walkthrough-step-bg: rgb(56 139 253 / 0.32);
+  --color-walkthrough-step-border: #58a6ff;
+
   --animate-responding-dot: responding-dot 0.9s ease-in-out infinite;
 
   @keyframes responding-dot {
@@ -200,8 +203,25 @@ td.keyboard-cursor::before {
   z-index: 1;
 }
 
-/* WebKit ignores position:relative on <tr>, so the selection overlays below are
-   anchored to each td instead of the row, like the keyboard-cursor styles above */
+/* WebKit ignores position:relative on <tr>, so the step and selection overlays below are
+   anchored to each td instead of the row, like the keyboard-cursor styles above.
+   The step rules come first so a selection or flash shows over a step line. */
+tr[data-walkthrough-step] td {
+  position: relative;
+}
+
+tr[data-walkthrough-step] td::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--color-walkthrough-step-bg);
+  pointer-events: none;
+}
+
+tr[data-walkthrough-step] td:first-child::after {
+  border-left: 4px solid var(--color-walkthrough-step-border);
+}
+
 tr.comment-selected td {
   position: relative;
 }
@@ -294,6 +314,8 @@ tr.drag-selected-last td::after {
   --composer-shadow: 0 4px 24px rgb(0 0 0 / 0.08), 0 0 0 1px rgb(0 0 0 / 0.06);
   --color-agent: #1a7f37;
   --color-agent-bg: #f6f8fa;
+  --color-walkthrough-step-bg: rgb(9 105 218 / 0.2);
+  --color-walkthrough-step-border: #0969da;
 }
 
 /* Dark theme word highlight */

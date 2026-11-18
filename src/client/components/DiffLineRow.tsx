@@ -15,6 +15,7 @@ interface DiffLineRowProps {
   isCurrentLine?: boolean;
   hoveredLineIndex: number | null;
   selectedLineStyle: string;
+  isWalkthroughStep?: boolean;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   onMouseMove: () => void;
@@ -56,6 +57,7 @@ export const DiffLineRow: React.FC<DiffLineRowProps> = React.memo(
     isCurrentLine = false,
     hoveredLineIndex,
     selectedLineStyle,
+    isWalkthroughStep = false,
     onMouseEnter,
     onMouseLeave,
     onMouseMove,
@@ -84,6 +86,7 @@ export const DiffLineRow: React.FC<DiffLineRowProps> = React.memo(
       <tr
         id={lineId}
         data-diff-line-row="true"
+        {...(isWalkthroughStep && { 'data-walkthrough-step': '' })}
         className={`group ${getLineClass(line)} relative ${selectedLineStyle} ${highlightClass} cursor-pointer`}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
