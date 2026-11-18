@@ -39,6 +39,7 @@ import {
   type ReviewViewAction,
   type RewordRequest,
   type RewordResponse,
+  type RewriteBlockingThread,
   type ShownThread,
 } from '../types/diff';
 import type { SessionStatus } from '../types/watch';
@@ -1957,6 +1958,7 @@ function App() {
           ),
           ...(payload.output ? { output: payload.output } : {}),
           ...(payload.warnings ? { warnings: payload.warnings } : {}),
+          ...(payload.blockingThreads ? { blockingThreads: payload.blockingThreads } : {}),
         };
       }
       await fetchDiffDataRef.current?.();
@@ -1964,12 +1966,23 @@ function App() {
     },
     [getCommentApiUrl],
   );
+  const showBlockingThreadRef = useRef<(thread: RewriteBlockingThread) => void>(() => {});
+  const showBlockingThread = useCallback(
+    (thread: RewriteBlockingThread) => showBlockingThreadRef.current(thread),
+    [],
+  );
   const reword = useMemo<RewordControls | undefined>(
     () =>
       diffData?.directEditAvailable && targetCommit
-        ? { load: loadCommitMessage, save: submitReword }
+        ? { load: loadCommitMessage, save: submitReword, showBlockingThread }
         : undefined,
-    [diffData?.directEditAvailable, targetCommit, loadCommitMessage, submitReword],
+    [
+      diffData?.directEditAvailable,
+      targetCommit,
+      loadCommitMessage,
+      submitReword,
+      showBlockingThread,
+    ],
   );
   const directEdit = useMemo<DirectEditControls | null>(() => {
     if (!diffData?.directEditAvailable || !targetCommit) return null;
@@ -2391,6 +2404,12 @@ function App() {
     const thread = shownThreads.find(({ id }) => id === threadId);
     if (thread) pickComment(thread);
   };
+  showBlockingThreadRef.current = ({ threadId, review: reviewOfThread }) => {
+    setIsCommitDrawerOpen(false);
+    const shown = shownThreads.find(({ id }) => id === threadId);
+    if (shown) pickComment(shown);
+    else showDiff(reviewOfThread, { kind: 'thread', threadId });
+  };
   showThreadCardRef.current = (threadId) => {
     const thread = shownThreads.find(({ id }) => id === threadId);
     if (!thread) return;
@@ -2548,7 +2567,10 @@ function App() {
     // A new view folds its viewed files once they load; jumping before that would be folded again.
     if (!collapsedInitializedRef.current && !hasLoadedInitialViewedFiles) return;
     const { place } = pending;
-    if (place.kind === 'thread' && (!hasLoadedComments || hiddenThreadIds.has(place.threadId))) {
+    if (
+      place.kind === 'thread' &&
+      (!hasBootstrappedComments || hiddenThreadIds.has(place.threadId))
+    ) {
       return;
     }
     if (
@@ -2562,7 +2584,7 @@ function App() {
   }, [
     loading,
     diffData,
-    hasLoadedComments,
+    hasBootstrappedComments,
     hasLoadedInitialViewedFiles,
     normalizedThreads,
     hiddenThreadIds,
@@ -3363,6 +3385,7 @@ function App() {
                     threads={drawnCommitThreads}
                     onAddComment={takesComments ? handleAddCommitComment : undefined}
                     reword={reword}
+                    shownReview={review.requested}
                     fixupOverlay={fixupOverlay}
                     showAuthorBadges={showAuthorBadges}
                     syntaxTheme={settings.syntaxTheme}

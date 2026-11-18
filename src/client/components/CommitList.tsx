@@ -671,6 +671,7 @@ export function CommitList({
                     <CommitMessageForm
                       sha={commit.sha}
                       controls={guardedReword}
+                      shownReview={review.requested}
                       onClose={() => setRewording(null)}
                     />
                   )}

@@ -32,7 +32,7 @@ interface DiffQuickMenuProps {
   compact?: boolean;
 }
 
-const SPECIAL_LABEL_OVERRIDES: Record<string, string> = {
+export const SPECIAL_LABEL_OVERRIDES: Record<string, string> = {
   '.': 'Uncommitted Changes',
   staged: 'Staging Area',
   working: 'Working Directory',

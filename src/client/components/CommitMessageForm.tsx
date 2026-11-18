@@ -1,13 +1,23 @@
 import React, { useEffect, useState } from 'react';
 
-import type { RewordRequest, RewriteWarning } from '../../types/diff';
+import type {
+  DiffSelection,
+  RewordRequest,
+  RewriteBlockingThread,
+  RewriteWarning,
+} from '../../types/diff';
 import { withoutThreadTrailers } from '../../utils/commitMessage';
+import { diffSelectionsEqual } from '../../utils/diffSelection';
 import type { DirectEditFailure } from '../contexts/FixupOverlayContext';
 import { rewordFailureMessage } from '../utils/directEdit';
+import { shortRef } from '../utils/symbolPeek';
+
+import { SPECIAL_LABEL_OVERRIDES } from './DiffQuickMenu';
 
 export interface RewordFailure extends DirectEditFailure {
   // Saving again with these acknowledged goes ahead.
   warnings?: RewriteWarning[];
+  blockingThreads?: RewriteBlockingThread[];
 }
 
 export interface RewordSaved {
@@ -20,15 +30,93 @@ export interface RewordControls {
   // The message the review shows for the commit; null when it could not be read.
   load: (sha: string) => Promise<string | null>;
   save: (request: RewordRequest) => Promise<RewordFailure | RewordSaved>;
+  showBlockingThread: (thread: RewriteBlockingThread) => void;
+}
+
+function lineOf({ commit, file, line }: RewriteBlockingThread, shownFile = file): string {
+  const lines = Array.isArray(line) ? line.join('-') : line;
+  const place = lines === undefined ? shownFile : `${shownFile}:${lines}`;
+  const fixed = commit
+    ? [commit.shortSha, commit.subject].filter(Boolean).join(' ')
+    : '커밋하지 않은 변경';
+  return place === undefined ? fixed : `${fixed} ← ${place}`;
+}
+
+const refLabel = (ref: string) => SPECIAL_LABEL_OVERRIDES[ref] ?? shortRef(ref);
+
+function explanationOf(thread: RewriteBlockingThread, onScreen: boolean): string {
+  const opens = thread.deleted
+    ? onScreen
+      ? '지운 코멘트라 열 카드가 없습니다.'
+      : '지운 코멘트. 누르면 그 코멘트가 있던 리뷰를 엽니다.'
+    : `에이전트가 ${thread.commit ? `${thread.commit.shortSha} 커밋` : '커밋하지 않은 변경'}을 고치려는 코멘트. 누르면 그 코멘트를 엽니다.`;
+  const where = onScreen
+    ? ''
+    : ` 다른 리뷰(${refLabel(thread.review.baseCommitish)}..${refLabel(thread.review.targetCommitish)})에 있습니다.`;
+  return `${lineOf(thread)}\n${opens}${where}`;
+}
+
+function BlockingThreads({
+  threads,
+  shownReview,
+  onShow,
+}: {
+  threads: RewriteBlockingThread[];
+  shownReview: DiffSelection;
+  onShow: (thread: RewriteBlockingThread) => void;
+}) {
+  const inShownReview = (thread: RewriteBlockingThread) =>
+    diffSelectionsEqual(thread.review, shownReview);
+  const ordered = [...threads.filter(inShownReview), ...threads.filter((t) => !inShownReview(t))];
+  return (
+    <div className="mt-1">
+      <p className="text-github-text-secondary">막고 있는 지적</p>
+      <ul className="m-0 max-h-32 list-none overflow-auto p-0">
+        {ordered.map((thread) => {
+          const onScreen = inShownReview(thread);
+          const explanation = explanationOf(thread, onScreen);
+          const label = (
+            <>
+              <span className="min-w-0 truncate">
+                {lineOf(thread, thread.file?.split('/').at(-1))}
+              </span>
+              {thread.deleted && <span className="shrink-0"> · 지운 지적</span>}
+            </>
+          );
+          const rowClass = 'flex w-full items-baseline gap-1 text-left';
+          return (
+            <li key={`${thread.review.targetCommitish}:${thread.threadId}`}>
+              {thread.deleted && onScreen ? (
+                <span className={rowClass} title={explanation}>
+                  {label}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onShow(thread)}
+                  className={`${rowClass} text-sky-400 hover:text-sky-300 hover:underline`}
+                  title={explanation}
+                  aria-label={explanation}
+                >
+                  {label}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 interface CommitMessageFormProps {
   sha: string;
   controls: RewordControls;
+  shownReview: DiffSelection;
   onClose: () => void;
 }
 
-export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormProps) {
+export function CommitMessageForm({ sha, controls, shownReview, onClose }: CommitMessageFormProps) {
   const [original, setOriginal] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [text, setText] = useState('');
@@ -128,6 +216,13 @@ export function CommitMessageForm({ sha, controls, onClose }: CommitMessageFormP
           className="mb-2 rounded border border-github-danger bg-github-danger/10 px-2 py-1.5 text-xs text-github-text-primary"
         >
           <p>{failure.message}</p>
+          {failure.blockingThreads && (
+            <BlockingThreads
+              threads={failure.blockingThreads}
+              shownReview={shownReview}
+              onShow={controls.showBlockingThread}
+            />
+          )}
           {failure.output && (
             <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-github-text-secondary">
               {failure.output}
