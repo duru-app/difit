@@ -1310,3 +1310,109 @@ it('binds comments given at startup the same way and hands the screen the bound 
   expect(await read(pinned.port)).toEqual([pin, pin]);
   expect(await read(following.port)).toEqual([undefined, undefined]);
 });
+
+it('carries the comments and decisions of a review into the review reopened on a newer commit', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', { 'a.js': '1\n' });
+  const typo = commit(repo, 'add typpo', { 'b.js': '1\n' });
+  const oldTip = commit(repo, 'add c', { 'c.js': '1\n2\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, oldTip),
+    preferredPort: 4996,
+    repoPath: repo,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  const post = (path: string, body: unknown) =>
+    fetch(api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const threadIds = async (query: string) =>
+    (
+      (await (await fetch(api(`/api/comments-json?${query}`))).json()) as {
+        threads: Array<{ id: string }>;
+      }
+    ).threads.map(({ id }) => id);
+  const { review: earlierReview } = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  await post('/api/comment-imports', [
+    {
+      type: 'thread',
+      id: 'line',
+      author: 'User',
+      filePath: 'c.js',
+      position: { side: 'new', line: 2 },
+      body: 'on a line',
+    },
+    {
+      type: 'thread',
+      id: 'subject',
+      author: 'User',
+      position: { scope: 'commit' },
+      fixupTarget: typo,
+      body: 'typo in the subject',
+    },
+    {
+      type: 'thread',
+      id: 'settled',
+      author: 'User',
+      filePath: 'c.js',
+      position: { side: 'new', line: 1 },
+      body: 'settled already',
+    },
+  ]);
+  await post('/api/decisions', [
+    { threadId: 'settled', kind: 'resolved', fixupSha: '', at: new Date().toISOString() },
+  ]);
+
+  const newTip = commit(repo, 'add d', { 'c.js': '0\n1\n2\n' });
+  const reopened = (await (
+    await fetch(api(`/api/diff?base=${base}&target=${newTip}`))
+  ).json()) as DiffResponse;
+
+  const newReview = `base=${base}&target=${newTip}`;
+  const reopenedSelection = createDiffSelection(base.slice(0, 7), newTip.slice(0, 7));
+  expect(reopened.review?.selection).toEqual(reopenedSelection);
+  expect(reopened.reviewMoves).toEqual([{ from: earlierReview?.selection, to: reopenedSelection }]);
+  expect(await threadIds(newReview)).toEqual(['line', 'subject', 'settled']);
+  const { decisions } = (await (await fetch(api(`/api/comments-json?${newReview}`))).json()) as {
+    decisions: Array<{ threadId: string; kind: string }>;
+  };
+  expect(decisions.map(({ threadId, kind }) => ({ threadId, kind }))).toEqual([
+    { threadId: 'settled', kind: 'resolved' },
+  ]);
+  const output = await (await fetch(api(`/api/comments-output?${newReview}`))).text();
+  expect(output).toContain('c.js:L2');
+  expect(output).toContain('typo in the subject');
+  expect(output).not.toContain('settled already');
+
+  const older = (await (
+    await fetch(api(`/api/diff?base=${base}&target=${oldTip}`))
+  ).json()) as DiffResponse;
+  expect(older.review?.selection).toEqual(reopenedSelection);
+  expect(await threadIds(`base=${base}&target=${oldTip}`)).toEqual(['line', 'subject', 'settled']);
+
+  const reworded = await post(`/api/reword?${newReview}`, {
+    commit: typo,
+    original: 'add typpo',
+    message: 'add typo',
+  });
+  expect(reworded.status).toBe(200);
+  const after = (await (await fetch(api('/api/diff'))).json()) as DiffResponse;
+  const movedTo = after.review!.selection;
+  expect(movedTo.targetCommitish).not.toBe(reopenedSelection.targetCommitish);
+  expect(after.reviewMoves).toEqual([
+    {
+      from: createDiffSelection(base.slice(0, 7), after.rewritten![oldTip]!.slice(0, 7)),
+      to: movedTo,
+    },
+  ]);
+  expect(
+    await threadIds(`base=${movedTo.baseCommitish}&target=${movedTo.targetCommitish}`),
+  ).toEqual(['line', 'subject', 'settled']);
+});
