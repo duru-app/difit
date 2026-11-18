@@ -415,7 +415,9 @@ function deletionTurnOn(
 }
 
 // The reviewer replied to the fixup under judgment: the last word is theirs and came after every
-// fixup still standing was written.
+// fixup still standing was written. The reply is timed by the reviewer's browser and the fixup by
+// the machine that committed it, so where their clocks disagree a reply written before the fixup
+// can count as one written after it.
 function reviewerRepliedToFixup(
   thread: ThreadTurn,
   fixups: ThreadFixup[],
