@@ -2049,6 +2049,187 @@ describe(
         await waitFor(() => expect(fileShown()).toBe('b.ts'));
       });
 
+      describe('on a file the review left unchanged', () => {
+        const REFERENCE_TOP = 9000;
+        const withSteps = (...steps: { file: string; line: number; endLine?: number }[]) => {
+          const thread = answered();
+          thread.messages[1]!.walkthrough!.cases = [
+            { steps: steps.map((step) => ({ ...step, description: `${step.file} 를 본다.` })) },
+          ];
+          return thread;
+        };
+        const referenceSection = () => screen.queryByRole('region', { name: '따라가기 참고 파일' });
+        const referenceRows = (path: string) =>
+          [
+            ...document.querySelectorAll<HTMLElement>(
+              `[data-walkthrough-reference="${path}"] tr[data-reference-line]`,
+            ),
+          ].map((row) => Number(row.dataset.referenceLine));
+        const referenceStepRows = () =>
+          [...document.querySelectorAll<HTMLElement>('tr[data-walkthrough-step]')].map((row) => [
+            row.closest<HTMLElement>('[data-walkthrough-reference]')?.dataset.walkthroughReference,
+            Number(row.dataset.referenceLine),
+          ]);
+
+        let serveSlowFile = () => {};
+
+        beforeEach(() => {
+          const serveDiff = vi.mocked(global.fetch).getMockImplementation()!;
+          vi.mocked(global.fetch).mockImplementation((input, init) => {
+            const url = String(input);
+            if (url.startsWith(`/api/blob/${encodeURIComponent('lib/util.ts')}?`)) {
+              return Promise.resolve({
+                ok: true,
+                text: async () =>
+                  Array.from({ length: 60 }, (_, index) => `util ${index + 1}`).join('\n'),
+              } as Response);
+            }
+            if (url.startsWith(`/api/blob/${encodeURIComponent('lib/missing.ts')}?`)) {
+              return Promise.resolve({ ok: false, text: async () => '' } as Response);
+            }
+            if (url.startsWith(`/api/blob/${encodeURIComponent('lib/slow.ts')}?`)) {
+              return new Promise<Response>((resolve) => {
+                serveSlowFile = () =>
+                  resolve({ ok: true, text: async () => 'slow 1\nslow 2\nslow 3' } as Response);
+              });
+            }
+            return serveDiff(input, init);
+          });
+          const placeInDiff = vi
+            .mocked(HTMLElement.prototype.getBoundingClientRect)
+            .getMockImplementation()!;
+          vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(
+            function (this: HTMLElement) {
+              const row = this.closest<HTMLElement>('tr[data-reference-line]');
+              if (!row) return placeInDiff.call(this);
+              const top = REFERENCE_TOP + Number(row.dataset.referenceLine) * LINE_HEIGHT;
+              return box(top - scrolled, LINE_HEIGHT);
+            },
+          );
+        });
+
+        it('attaches the part of it under the diff, goes there and highlights the step line', async () => {
+          mockComments = [withSteps({ file: 'a.ts', line: 3 }, { file: 'lib/util.ts', line: 7 })];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+
+          await waitFor(() => expect(referenceStepRows()).toEqual([['lib/util.ts', 7]]));
+          expect(referenceRows('lib/util.ts')).toEqual([4, 5, 6, 7, 8, 9, 10]);
+          await waitForScroll(REFERENCE_TOP + 7 * LINE_HEIGHT);
+          expect(within(bar()!).queryByText('diff 에 안 보이는 줄')).not.toBeInTheDocument();
+          expect(
+            within(referenceSection()!).getByRole('region', { name: '참고 파일 lib/util.ts' }),
+          ).toBeInTheDocument();
+          expect(screen.getByText('0 / 3 files viewed')).toBeInTheDocument();
+          expect(
+            within(document.getElementById('file-tree-panel')!).queryByTitle('lib/util.ts'),
+          ).not.toBeInTheDocument();
+        });
+
+        it('attaches the file once and keeps every part its steps need', async () => {
+          mockComments = [
+            withSteps(
+              { file: 'lib/util.ts', line: 7 },
+              { file: 'a.ts', line: 3 },
+              { file: 'lib/util.ts', line: 40, endLine: 41 },
+            ),
+          ];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          await waitFor(() => expect(referenceStepRows()).toEqual([['lib/util.ts', 7]]));
+          expect(
+            within(referenceSection()!).getAllByRole('region', { name: /^참고 파일 / }),
+          ).toHaveLength(1);
+          expect(referenceRows('lib/util.ts')).toEqual([
+            4, 5, 6, 7, 8, 9, 10, 37, 38, 39, 40, 41, 42, 43, 44,
+          ]);
+
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+
+          await waitFor(() =>
+            expect(referenceStepRows()).toEqual([
+              ['lib/util.ts', 40],
+              ['lib/util.ts', 41],
+            ]),
+          );
+          await waitForScroll(REFERENCE_TOP + 40 * LINE_HEIGHT);
+        });
+
+        it('says the line is not shown when the file is not in the commit, and attaches no box for it', async () => {
+          mockComments = [
+            withSteps(
+              { file: 'a.ts', line: 3 },
+              { file: 'lib/missing.ts', line: 1 },
+              { file: 'lib/util.ts', line: 7 },
+            ),
+          ];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+
+          expect(await within(bar()!).findByText('diff 에 안 보이는 줄')).toBeInTheDocument();
+          await waitFor(() => expect(referenceRows('lib/util.ts')).not.toEqual([]));
+          expect(
+            screen.queryByRole('region', { name: '참고 파일 lib/missing.ts' }),
+          ).not.toBeInTheDocument();
+          expect(screen.queryByText('파일을 읽지 못했습니다.')).not.toBeInTheDocument();
+        });
+
+        it('says the line is not shown when it is past the end of the file, and attaches no empty box', async () => {
+          mockComments = [withSteps({ file: 'lib/util.ts', line: 99 })];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          expect(await within(bar()!).findByText('diff 에 안 보이는 줄')).toBeInTheDocument();
+          expect(referenceSection()).not.toBeInTheDocument();
+        });
+
+        it('keeps the parts of a file whose other steps are past its end', async () => {
+          mockComments = [
+            withSteps({ file: 'lib/util.ts', line: 7 }, { file: 'lib/util.ts', line: 99 }),
+          ];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          await waitFor(() => expect(referenceRows('lib/util.ts')).toEqual([4, 5, 6, 7, 8, 9, 10]));
+        });
+
+        it('does not say the line is not shown while the file is still loading', async () => {
+          mockComments = [withSteps({ file: 'lib/slow.ts', line: 2 })];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          expect(within(bar()!).queryByText('diff 에 안 보이는 줄')).not.toBeInTheDocument();
+          serveSlowFile();
+          await waitFor(() => expect(referenceStepRows()).toEqual([['lib/slow.ts', 2]]));
+          expect(within(bar()!).queryByText('diff 에 안 보이는 줄')).not.toBeInTheDocument();
+        });
+
+        it('takes the reference file away when the walkthrough closes', async () => {
+          mockComments = [withSteps({ file: 'lib/util.ts', line: 7 })];
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+          await waitFor(() => expect(referenceRows('lib/util.ts')).not.toEqual([]));
+
+          await user.click(screen.getByRole('button', { name: '따라가기 닫기' }));
+
+          await waitFor(() => expect(referenceSection()).not.toBeInTheDocument());
+          expect(referenceRows('lib/util.ts')).toEqual([]);
+        });
+      });
+
       it('takes a comment on a step line as usual', async () => {
         const user = userEvent.setup();
         renderApp();

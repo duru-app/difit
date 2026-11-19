@@ -40,6 +40,7 @@ import {
   type RewordRequest,
   type RewordResponse,
   type ShownThread,
+  type Walkthrough,
 } from '../types/diff';
 import type { SessionStatus } from '../types/watch';
 import { amendedMessagesByCommit } from '../utils/amendedMessages';
@@ -112,6 +113,7 @@ import { SparkleAnimation } from './components/SparkleAnimation';
 import { SymbolPeekChip } from './components/SymbolPeekChip';
 import { SymbolPeekModal } from './components/SymbolPeekModal';
 import { WalkthroughBar } from './components/WalkthroughBar';
+import { WalkthroughReferenceFiles } from './components/WalkthroughReferenceFiles';
 import {
   agentRespondsTo,
   type DirectEditControls,
@@ -146,6 +148,7 @@ import {
   reviewEntryRestoredByHistory,
   useReviewTargetHistory,
 } from './hooks/useReviewTargetHistory';
+import { useReferenceFileLines } from './hooks/useReferenceFileLines';
 import { useScrollVisibleFile } from './hooks/useScrollVisibleFile';
 import { useSymbolPeek } from './hooks/useSymbolPeek';
 import { useViewedFiles } from './hooks/useViewedFiles';
@@ -168,7 +171,13 @@ import {
   type WalkthroughPlayback,
   type WalkthroughPlaybackAction,
 } from './utils/walkthroughPlayback';
-import { placeOfStep, type StepPlace } from './utils/walkthroughStep';
+import {
+  placeOfStep,
+  referenceFilePathsOf,
+  referenceFilesOf,
+  referenceStepFits,
+  type StepPlace,
+} from './utils/walkthroughStep';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { fixupLinesPlace } from './utils/fixupLines';
 import {
@@ -2739,6 +2748,11 @@ function App() {
   const walkthroughOf = (threadId: string, messageId: string) =>
     shownThreads.find(({ id }) => id === threadId)?.messages.find(({ id }) => id === messageId)
       ?.walkthrough;
+  const stepViewOf = (walkthrough: Walkthrough) => ({
+    commit: walkthrough.commit,
+    diffTarget: diffData?.targetCommitish,
+    files: diffData?.files ?? [],
+  });
   const walkthroughStepAt = (
     threadId: string,
     messageId: string,
@@ -2747,11 +2761,7 @@ function App() {
     const walkthrough = walkthroughOf(threadId, messageId);
     const step = walkthrough?.cases[caseIndex]?.steps[stepIndex];
     if (!walkthrough || !step) return null;
-    return placeOfStep(step, {
-      commit: walkthrough.commit,
-      diffTarget: diffData?.targetCommitish,
-      files: diffData?.files ?? [],
-    });
+    return placeOfStep(step, stepViewOf(walkthrough));
   };
   const showWalkthroughStep = (place: StepPlace | null) => {
     if (place?.kind !== 'shown') return;
@@ -2812,9 +2822,32 @@ function App() {
     (threadId, messageId) => openWalkthroughRef.current(threadId, messageId),
     [],
   );
-  const shownWalkthroughCases = openedWalkthrough
-    ? walkthroughOf(openedWalkthrough.threadId, openedWalkthrough.messageId)?.cases
+  const openedWalkthroughData = openedWalkthrough
+    ? walkthroughOf(openedWalkthrough.threadId, openedWalkthrough.messageId)
     : undefined;
+  const shownWalkthroughCases = openedWalkthroughData?.cases;
+  const openedCaseSteps =
+    (openedWalkthrough && shownWalkthroughCases?.[openedWalkthrough.caseIndex]?.steps) || [];
+  const referenceFileLines = useReferenceFileLines(
+    openedWalkthroughData
+      ? referenceFilePathsOf(openedCaseSteps, stepViewOf(openedWalkthroughData))
+      : [],
+    openedWalkthroughData?.commit,
+  );
+  const referenceLineCounts = new Map(
+    [...referenceFileLines].map(([file, lines]) => [file, lines?.length ?? null]),
+  );
+  const walkthroughReferenceFiles = openedWalkthroughData
+    ? referenceFilesOf(
+        openedCaseSteps,
+        stepViewOf(openedWalkthroughData),
+        referenceLineCounts,
+      ).flatMap((reference) => {
+        const lines = referenceFileLines.get(reference.file);
+        return lines ? [{ ...reference, lines }] : [];
+      })
+    : [];
+
   const openedStepGone =
     openedWalkthrough !== null &&
     !shownWalkthroughCases?.[openedWalkthrough.caseIndex]?.steps[openedWalkthrough.stepIndex];
@@ -3496,7 +3529,11 @@ function App() {
                         cases={shownWalkthroughCases}
                         caseIndex={openedWalkthrough.caseIndex}
                         index={openedWalkthrough.stepIndex}
-                        shown={shownWalkthroughPlace?.kind === 'shown'}
+                        shown={
+                          shownWalkthroughPlace?.kind === 'shown' ||
+                          (shownWalkthroughPlace?.kind === 'reference' &&
+                            referenceStepFits(shownWalkthroughPlace, referenceLineCounts) !== false)
+                        }
                         onPlay={playOpenedWalkthrough}
                         onClose={closeWalkthrough}
                       />
@@ -3627,6 +3664,18 @@ function App() {
                         onUpdateMessage={updateMessage}
                         onOpenInEditor={canOpenInEditor ? handleOpenInEditor : undefined}
                       />
+                      {openedWalkthroughData && (
+                        <WalkthroughReferenceFiles
+                          files={walkthroughReferenceFiles}
+                          step={
+                            shownWalkthroughPlace?.kind === 'reference'
+                              ? shownWalkthroughPlace
+                              : null
+                          }
+                          syntaxTheme={settings.syntaxTheme}
+                          onShowLine={scrollFileIntoDiffContainer}
+                        />
+                      )}
                     </main>
                   </div>
                 </WalkthroughStepProvider>
