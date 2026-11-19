@@ -873,26 +873,36 @@ export class GitDiffParser {
       await this.git.revparse(['--verify', `${targetCommitish}^{commit}`])
     ).trim();
     const headHash = (await this.git.revparse(['HEAD'])).trim();
-    if (targetHash === headHash) {
-      return { targetHash, fixups: [] };
-    }
+    const readLog = async (...range: string[]) =>
+      parseFixupLog(
+        await this.git.raw([
+          'log',
+          '--reverse',
+          '--no-show-signature',
+          // Trailer keys are matched without regard to case, so the grep must match the same way.
+          '--regexp-ignore-case',
+          `--grep=^${REVIEW_THREAD_TRAILER}: `,
+          '-p',
+          '-M',
+          '--no-ext-diff',
+          '--color=never',
+          FIXUP_LOG_FORMAT,
+          ...range,
+        ]),
+      ).filter((entry) => entry.threadIds.length > 0);
 
-    const entries = parseFixupLog(
-      await this.git.raw([
-        'log',
-        '--reverse',
-        '--no-show-signature',
-        // Trailer keys are matched without regard to case, so the grep must match the same way.
-        '--regexp-ignore-case',
-        `--grep=^${REVIEW_THREAD_TRAILER}: `,
-        '-p',
-        '-M',
-        '--no-ext-diff',
-        '--color=never',
-        FIXUP_LOG_FORMAT,
-        `${targetHash}..HEAD`,
-      ]),
-    ).filter((entry) => entry.threadIds.length > 0);
+    // A fixup a newer commit was stacked on before the review was reopened there sits inside the
+    // range and still waits for its decision.
+    const [inRange, stacked] = await Promise.all([
+      this.resolveBaseCommitish(selection)
+        .then((base) => readLog('--first-parent', `${base}..${targetHash}`))
+        .catch((error: unknown) => {
+          console.error('Error reading the fixups inside the review range:', error);
+          return [];
+        }),
+      targetHash === headHash ? [] : readLog(`${targetHash}..HEAD`),
+    ]);
+    const entries = [...inRange, ...stacked];
 
     // `log -p` prints no diff for a merge, and `-m` on its own skips a parent whose diff is empty, so
     // merges are read again against their first parent only. The config keeps `-m` to that parent on
