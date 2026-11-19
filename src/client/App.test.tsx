@@ -1754,6 +1754,19 @@ describe(
     const waitForScroll = (top: number) =>
       waitFor(() => expect(scrolled).toBe(top), { timeout: 3000 });
 
+    const serveFileContent = (path: string, count: number) => {
+      const serveDiff = vi.mocked(global.fetch).getMockImplementation()!;
+      vi.mocked(global.fetch).mockImplementation((input, init) =>
+        String(input).startsWith(`/api/blob/${path}?`)
+          ? Promise.resolve({
+              ok: true,
+              text: async () =>
+                Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n'),
+            } as Response)
+          : serveDiff(input, init),
+      );
+    };
+
     beforeEach(() => {
       vi.clearAllMocks();
       mockComments = [];
@@ -2049,6 +2062,81 @@ describe(
         await waitFor(() => expect(fileShown()).toBe('b.ts'));
       });
 
+      describe('a step on lines folded away', () => {
+        const foldedStep = () => {
+          const thread = answered();
+          thread.messages[1]!.walkthrough!.cases[0]!.steps[1] = {
+            file: 'b.ts',
+            line: 50,
+            endLine: 51,
+            description: '숨은 줄에서 값을 검사한다.',
+          };
+          return thread;
+        };
+        const rowsOf = (path: string) =>
+          [
+            ...document
+              .getElementById(getFileElementId(path))!
+              .querySelectorAll('[data-diff-line-row="true"]'),
+          ].map((row) => row.lastElementChild?.textContent?.match(/line \d+/)?.[0]);
+
+        beforeEach(() => {
+          filesByPath = { 'b.ts': linedFile('b.ts', 3) };
+          serveFileContent('b.ts', 100);
+          mockComments = [foldedStep()];
+        });
+
+        it('opens the hidden lines, goes there and highlights them', async () => {
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+          expect(rowsOf('b.ts')).not.toContain('line 50');
+
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+
+          await waitFor(() =>
+            expect(stepRows()).toEqual([
+              ['b.ts', 'line 50'],
+              ['b.ts', 'line 51'],
+            ]),
+          );
+          await waitFor(() => expect(fileShown()).toBe('b.ts'));
+          expect(cursorRow()).toHaveTextContent('line 50');
+          expect(within(bar()!).queryByText('diff 에 안 보이는 줄')).toBeNull();
+        });
+
+        it('unfolds a file marked viewed to show the step', async () => {
+          mockViewedFiles = new Set(['b.ts']);
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+
+          await waitFor(() =>
+            expect(stepRows()).toEqual([
+              ['b.ts', 'line 50'],
+              ['b.ts', 'line 51'],
+            ]),
+          );
+          await waitFor(() => expect(fileShown()).toBe('b.ts'));
+        });
+
+        it('leaves the lines it opened open after the walkthrough closes, as if the reviewer had', async () => {
+          const user = userEvent.setup();
+          renderApp();
+          await openFromReply(user);
+          await user.click(screen.getByRole('button', { name: '다음 단계' }));
+          await waitFor(() => expect(stepRows()).toHaveLength(2));
+
+          await user.click(screen.getByRole('button', { name: '따라가기 닫기' }));
+
+          await waitFor(() => expect(bar()).not.toBeInTheDocument());
+          expect(stepRows()).toEqual([]);
+          expect(rowsOf('b.ts')).toEqual(expect.arrayContaining(['line 50', 'line 51']));
+        });
+      });
+
       it('takes a comment on a step line as usual', async () => {
         const user = userEvent.setup();
         renderApp();
@@ -2172,18 +2260,6 @@ describe(
     describe('path:line written in a comment', () => {
       const lineLink = (name: string) =>
         within(document.querySelector('main')!).getByRole('button', { name });
-      const serveFileContent = (path: string, count: number) => {
-        const serveDiff = vi.mocked(global.fetch).getMockImplementation()!;
-        vi.mocked(global.fetch).mockImplementation((input, init) =>
-          String(input).startsWith(`/api/blob/${path}?`)
-            ? Promise.resolve({
-                ok: true,
-                text: async () =>
-                  Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n'),
-              } as Response)
-            : serveDiff(input, init),
-        );
-      };
 
       it('goes to that line, flashes it, and Back returns to where the reader was', async () => {
         mockComments = [

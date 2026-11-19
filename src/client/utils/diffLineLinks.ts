@@ -116,6 +116,9 @@ export function diffLineTargetOf(
   return { file, line, endLine };
 }
 
+// Lines of one link the diff opens and flashes at most.
+export const LINE_LINK_MAX_LINES = 200;
+
 export function linesOf({ line, endLine }: DiffLineTarget, limit: number): number[] {
   const count = Math.min(endLine - line + 1, limit);
   return Array.from({ length: count }, (_, index) => line + index);

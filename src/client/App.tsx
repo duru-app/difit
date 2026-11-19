@@ -162,7 +162,12 @@ import {
   type SymbolPeekRequest,
 } from './utils/symbolPeek';
 import { copyTextToClipboard } from './utils/clipboard';
-import { createDiffPathResolver, type DiffLineTarget, linesOf } from './utils/diffLineLinks';
+import {
+  createDiffPathResolver,
+  type DiffLineTarget,
+  LINE_LINK_MAX_LINES,
+  linesOf,
+} from './utils/diffLineLinks';
 import {
   playWalkthrough,
   type WalkthroughPlayback,
@@ -229,7 +234,6 @@ const DIFF_MIN_WIDTH = 640;
 // flex lets a lone item with a factor below 1 absorb only that fraction of the overflow.
 const YIELDING_PANEL_SHRINK = 1000;
 const LINE_LINK_CONTEXT = 3;
-const LINE_LINK_MAX_LINES = 200;
 const LINE_LINK_WAIT_MS = 1000;
 const PICK_SCOPE = '[data-line-pick-scope], [data-file-path]';
 const LINE_LINK_FLASH_MS = 1400;
@@ -2750,11 +2754,11 @@ function App() {
     return placeOfStep(step, {
       commit: walkthrough.commit,
       diffTarget: diffData?.targetCommitish,
-      files: diffData?.files ?? [],
+      files: navigableFiles,
     });
   };
   const showWalkthroughStep = (place: StepPlace | null) => {
-    if (place?.kind !== 'shown') return;
+    if (!place || place.kind === 'not-shown') return;
     const file = diffData?.files.find(({ path }) => path === place.file);
     const first = place.lines[0];
     if (!file || first === undefined) return;
@@ -2770,7 +2774,7 @@ function App() {
     const place = walkthroughStepAt(threadId, messageId, start);
     if (!place) return;
     const before = JSON.stringify(window.history.state);
-    if (place.kind === 'shown') {
+    if (place.kind !== 'not-shown') {
       jumpWithinReview(
         { kind: 'line', file: place.file, line: place.lines[0] ?? 1, side: 'new', cursor: true },
         { kind: 'thread', threadId },
@@ -2825,7 +2829,7 @@ function App() {
     ? walkthroughStepAt(openedWalkthrough.threadId, openedWalkthrough.messageId, openedWalkthrough)
     : null;
   const walkthroughStepKey =
-    shownWalkthroughPlace?.kind === 'shown'
+    shownWalkthroughPlace && shownWalkthroughPlace.kind !== 'not-shown'
       ? `${shownWalkthroughPlace.file}\n${shownWalkthroughPlace.lines.join(',')}`
       : null;
   const walkthroughStepLines = useMemo<WalkthroughStepLines | null>(() => {
@@ -3496,7 +3500,9 @@ function App() {
                         cases={shownWalkthroughCases}
                         caseIndex={openedWalkthrough.caseIndex}
                         index={openedWalkthrough.stepIndex}
-                        shown={shownWalkthroughPlace?.kind === 'shown'}
+                        shown={
+                          !!shownWalkthroughPlace && shownWalkthroughPlace.kind !== 'not-shown'
+                        }
                         onPlay={playOpenedWalkthrough}
                         onClose={closeWalkthrough}
                       />
