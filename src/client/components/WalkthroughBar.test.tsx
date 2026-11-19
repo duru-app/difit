@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WalkthroughCase } from '../../types/diff';
+import { DiffLineLinkProvider, type DiffLineLinks } from '../contexts/DiffLineLinkContext';
 
 import { WalkthroughBar } from './WalkthroughBar';
 
@@ -19,7 +20,23 @@ const errorFlow: WalkthroughCase = {
   steps: [{ file: 'src/c.ts', line: 1, description: '쓰기에 실패한다.' }],
 };
 
+const failingSave: WalkthroughCase = {
+  steps: [
+    {
+      file: 'src/store.ts',
+      line: 20,
+      description: '디스크가 차서 쓰기가 실패한다.',
+      callPath: ['src/main.ts:12', 'store.ts:40-42', 'src/gone.ts:3'],
+      variables: { path: '"/tmp/x"', size: '0' },
+      stateChanges: { 'cache.dirty': 'false → true' },
+      error: true,
+    },
+  ],
+};
+
 afterEach(cleanup);
+
+const DIFF_PATHS = new Set(['src/main.ts', 'src/store.ts']);
 
 function renderBar(
   index: number,
@@ -29,17 +46,25 @@ function renderBar(
 ) {
   const onPlay = vi.fn();
   const onClose = vi.fn();
+  const openLine = vi.fn<DiffLineLinks['open']>();
+  const links: DiffLineLinks = {
+    resolve: (written) =>
+      DIFF_PATHS.has(written) ? written : written === 'store.ts' ? 'src/store.ts' : null,
+    open: openLine,
+  };
   render(
-    <WalkthroughBar
-      cases={cases}
-      caseIndex={caseIndex}
-      index={index}
-      shown={shown}
-      onPlay={onPlay}
-      onClose={onClose}
-    />,
+    <DiffLineLinkProvider value={links}>
+      <WalkthroughBar
+        cases={cases}
+        caseIndex={caseIndex}
+        index={index}
+        shown={shown}
+        onPlay={onPlay}
+        onClose={onClose}
+      />
+    </DiffLineLinkProvider>,
   );
-  return { onPlay, onClose };
+  return { onPlay, onClose, openLine };
 }
 
 describe('WalkthroughBar', () => {
@@ -132,5 +157,64 @@ describe('WalkthroughBar', () => {
     renderBar(0, true, [{ steps: normalFlow.steps }]);
 
     expect(screen.queryByText('처음 상태')).not.toBeInTheDocument();
+  });
+
+  it('shows the call path, the variable values and the changing state of the step', () => {
+    renderBar(0, true, [failingSave]);
+
+    const callPath = screen.getByRole('list', { name: '호출 경로' });
+    expect(
+      within(callPath)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual(['src/main.ts:12', 'store.ts:40-42', 'src/gone.ts:3']);
+    const variables = screen.getByRole('list', { name: '변수' });
+    expect(
+      within(variables)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual(['path = "/tmp/x"', 'size = 0']);
+    const changes = screen.getByRole('list', { name: '바뀌는 상태' });
+    expect(within(changes).getByRole('listitem')).toHaveTextContent('cache.dirty = false → true');
+  });
+
+  it('shows no call path, variables or changing state for a step without them', () => {
+    renderBar(0);
+
+    expect(screen.queryByText('호출 경로')).not.toBeInTheDocument();
+    expect(screen.queryByText('변수')).not.toBeInTheDocument();
+    expect(screen.queryByText('바뀌는 상태')).not.toBeInTheDocument();
+  });
+
+  it('opens a call path entry like a line link in a reply, and leaves one off the diff as text', () => {
+    const { openLine } = renderBar(0, true, [failingSave]);
+
+    const entry = screen.getByRole('button', { name: 'store.ts:40-42' });
+    fireEvent.click(entry);
+
+    expect(openLine).toHaveBeenCalledExactlyOnceWith(
+      { file: 'src/store.ts', line: 40, endLine: 42 },
+      entry,
+    );
+    expect(screen.queryByRole('button', { name: 'src/gone.ts:3' })).not.toBeInTheDocument();
+    expect(screen.getByText('src/gone.ts:3')).toBeInTheDocument();
+  });
+
+  it('marks a step that ends in an error in words and in the error color', () => {
+    renderBar(0, true, [failingSave]);
+
+    expect(screen.getByText('오류로 끝나는 단계')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '따라가기' }).className).toContain(
+      'border-l-[var(--color-walkthrough-error-border)]',
+    );
+  });
+
+  it('keeps the step color on a step that does not end in an error', () => {
+    renderBar(0);
+
+    expect(screen.queryByText('오류로 끝나는 단계')).not.toBeInTheDocument();
+    const { className } = screen.getByRole('region', { name: '따라가기' });
+    expect(className).toContain('border-l-[var(--color-walkthrough-step-border)]');
+    expect(className).not.toContain('--color-walkthrough-error-border');
   });
 });

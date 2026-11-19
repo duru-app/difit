@@ -108,6 +108,8 @@ describe('global.css agent message colors', () => {
       '--color-agent-bg',
       '--color-walkthrough-step-bg',
       '--color-walkthrough-step-border',
+      '--color-walkthrough-error-bg',
+      '--color-walkthrough-error-border',
     ]) {
       expect(themeProperties).toContain(property);
       expect(lightProperties).toContain(property);

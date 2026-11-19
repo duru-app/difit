@@ -39,6 +39,8 @@
 
   --color-walkthrough-step-bg: rgb(56 139 253 / 0.32);
   --color-walkthrough-step-border: #58a6ff;
+  --color-walkthrough-error-bg: rgb(248 81 73 / 0.3);
+  --color-walkthrough-error-border: #ff7b72;
 
   --animate-responding-dot: responding-dot 0.9s ease-in-out infinite;
 
@@ -316,6 +318,8 @@ tr.drag-selected-last td::after {
   --color-agent-bg: #f6f8fa;
   --color-walkthrough-step-bg: rgb(9 105 218 / 0.2);
   --color-walkthrough-step-border: #0969da;
+  --color-walkthrough-error-bg: rgb(207 34 46 / 0.18);
+  --color-walkthrough-error-border: #cf222e;
 }
 
 /* Dark theme word highlight */

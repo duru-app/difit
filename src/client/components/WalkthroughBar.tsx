@@ -1,6 +1,8 @@
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 
 import type { WalkthroughCase } from '../../types/diff';
+import { callPathTarget } from '../../utils/walkthrough';
+import { useDiffLineLinks } from '../contexts/DiffLineLinkContext';
 import type { WalkthroughPlaybackAction } from '../utils/walkthroughPlayback';
 
 interface WalkthroughBarProps {
@@ -15,6 +17,43 @@ interface WalkthroughBarProps {
 const BUTTON_CLASS =
   'inline-flex items-center gap-0.5 rounded-md border border-github-border px-2 py-0.5 text-xs text-github-text-primary hover:bg-github-bg-tertiary disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent';
 
+const LABEL_CLASS = 'font-semibold text-github-text-secondary';
+
+function CallPathEntry({ entry }: { entry: string }) {
+  const links = useDiffLineLinks();
+  const target = callPathTarget(entry);
+  const file = target && links?.resolve(target.file);
+  if (!links || !target || !file) return <span className="font-mono">{entry}</span>;
+  return (
+    <button
+      type="button"
+      title={`Go to ${entry}`}
+      onClick={(event) => links.open({ ...target, file }, event.currentTarget)}
+      className="cursor-pointer font-mono text-sky-400 hover:text-sky-300 underline underline-offset-4"
+    >
+      {entry}
+    </button>
+  );
+}
+
+function StepValues({ label, values }: { label: string; values?: Record<string, string> }) {
+  if (!values) return null;
+  return (
+    <>
+      <dt className={LABEL_CLASS}>{label}</dt>
+      <dd className="min-w-0">
+        <ul aria-label={label} className="flex flex-wrap gap-x-3 gap-y-0.5">
+          {Object.entries(values).map(([name, value]) => (
+            <li key={name} className="font-mono break-all text-github-text-primary">
+              {name} = {value}
+            </li>
+          ))}
+        </ul>
+      </dd>
+    </>
+  );
+}
+
 export function WalkthroughBar({
   cases,
   caseIndex,
@@ -27,6 +66,7 @@ export function WalkthroughBar({
   const step = walkthroughCase?.steps[index];
   if (!walkthroughCase || !step) return null;
   const { steps, setup } = walkthroughCase;
+  const { callPath, variables, stateChanges, error } = step;
   const location = `${step.file}:${step.line}${step.endLine === undefined ? '' : `-${step.endLine}`}`;
 
   return (
@@ -34,7 +74,7 @@ export function WalkthroughBar({
       role="region"
       aria-label="따라가기"
       data-walkthrough-bar
-      className="shrink-0 flex items-start gap-3 px-4 py-2 text-sm bg-github-bg-secondary border-b border-github-border border-l-4 border-l-[var(--color-walkthrough-step-border)]"
+      className={`shrink-0 flex items-start gap-3 px-4 py-2 text-sm bg-github-bg-secondary border-b border-github-border border-l-4 ${error ? 'border-l-[var(--color-walkthrough-error-border)]' : 'border-l-[var(--color-walkthrough-step-border)]'}`}
     >
       <div className="shrink-0 flex flex-col items-start gap-0.5 pt-0.5">
         <span className="text-xs font-semibold text-github-text-primary">따라가기</span>
@@ -67,9 +107,37 @@ export function WalkthroughBar({
         )}
         <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-github-text-muted">
           <span className="font-mono">{location}</span>
+          {error && (
+            <span className="font-semibold text-[var(--color-walkthrough-error-border)]">
+              오류로 끝나는 단계
+            </span>
+          )}
           {!shown && <span className="text-github-warning">diff 에 안 보이는 줄</span>}
         </p>
         <p className="text-github-text-primary break-words">{step.description}</p>
+        {(callPath || variables || stateChanges) && (
+          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-xs">
+            {callPath && (
+              <>
+                <dt className={LABEL_CLASS}>호출 경로</dt>
+                <dd className="min-w-0">
+                  <ol aria-label="호출 경로" className="flex flex-wrap gap-x-1.5 gap-y-0.5">
+                    {callPath.map((entry, entryIndex) => (
+                      <li
+                        key={entryIndex}
+                        className="break-all after:ml-1.5 after:text-github-text-muted after:content-['→'] last:after:content-none"
+                      >
+                        <CallPathEntry entry={entry} />
+                      </li>
+                    ))}
+                  </ol>
+                </dd>
+              </>
+            )}
+            <StepValues label="변수" values={variables} />
+            <StepValues label="바뀌는 상태" values={stateChanges} />
+          </dl>
+        )}
       </div>
       <div className="shrink-0 flex items-center gap-1">
         <button
