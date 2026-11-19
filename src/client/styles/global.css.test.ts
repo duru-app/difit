@@ -148,4 +148,10 @@ describe('global.css walkthrough line highlight', () => {
       expect(value).not.toMatch(/rgba?\(|#[0-9a-f]{3,8}\b/i);
     }
   });
+
+  it('paints the error step over the page color, so an added or commented line under it does not grey the red', () => {
+    const [layers] = valuesOf('tr[data-walkthrough-step="error"] td');
+    expect(layers?.split('linear-gradient(')).toHaveLength(3);
+    expect(layers).toMatch(/--walkthrough-line-bg.*--color-github-bg-primary/s);
+  });
 });

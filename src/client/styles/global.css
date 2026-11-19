@@ -229,6 +229,13 @@ tr[data-walkthrough-call] td {
   background-image: linear-gradient(var(--walkthrough-line-bg), var(--walkthrough-line-bg));
 }
 
+/* Over the green of an added line the red reads as grey, so the error step covers the line color. */
+tr[data-walkthrough-step="error"] td {
+  background-image:
+    linear-gradient(var(--walkthrough-line-bg), var(--walkthrough-line-bg)),
+    linear-gradient(var(--color-github-bg-primary), var(--color-github-bg-primary));
+}
+
 tr[data-walkthrough-step] td:first-child,
 tr[data-walkthrough-call] td:first-child {
   box-shadow: var(--walkthrough-line-border);
