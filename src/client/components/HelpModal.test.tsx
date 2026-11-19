@@ -41,4 +41,20 @@ describe('HelpModal', () => {
         .map((key) => key.textContent),
     ).toEqual(['Shift', 'B']);
   });
+
+  it('lists Ctrl+← and Ctrl+→ for the walkthrough steps', () => {
+    render(
+      <HotkeysProvider initiallyActiveScopes={['navigation']}>
+        <HelpModal isOpen onClose={vi.fn()} />
+      </HotkeysProvider>,
+    );
+
+    const section = screen.getByRole('heading', { name: 'Walkthrough' }).closest('section')!;
+    const keysOf = (description: string) =>
+      within(within(section).getByText(description).parentElement!)
+        .getAllByText(/./, { selector: 'kbd' })
+        .map((key) => key.textContent);
+    expect(keysOf('Previous step')).toEqual(['Ctrl/⌘', '←']);
+    expect(keysOf('Next step')).toEqual(['Ctrl/⌘', '→']);
+  });
 });

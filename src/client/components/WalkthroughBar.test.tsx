@@ -1,8 +1,11 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { HotkeysProvider } from 'react-hotkeys-hook';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WalkthroughCase } from '../../types/diff';
 import { DiffLineLinkProvider, type DiffLineLinks } from '../contexts/DiffLineLinkContext';
+import { WALKTHROUGH_AUTOPLAY_INTERVAL_MS } from '../utils/walkthroughPlayback';
 
 import { WalkthroughBar } from './WalkthroughBar';
 
@@ -34,7 +37,10 @@ const failingSave: WalkthroughCase = {
   ],
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const DIFF_PATHS = new Set(['src/main.ts', 'src/store.ts']);
 
@@ -43,6 +49,7 @@ function renderBar(
   shown = true,
   cases: WalkthroughCase[] = [normalFlow],
   caseIndex = 0,
+  playing = false,
 ) {
   const onPlay = vi.fn();
   const onClose = vi.fn();
@@ -52,19 +59,25 @@ function renderBar(
       DIFF_PATHS.has(written) ? written : written === 'store.ts' ? 'src/store.ts' : null,
     open: openLine,
   };
-  render(
-    <DiffLineLinkProvider value={links}>
-      <WalkthroughBar
-        cases={cases}
-        caseIndex={caseIndex}
-        index={index}
-        shown={shown}
-        onPlay={onPlay}
-        onClose={onClose}
-      />
-    </DiffLineLinkProvider>,
+  const bar = (props: { index: number; playing: boolean }) => (
+    <HotkeysProvider initiallyActiveScopes={['navigation']}>
+      <DiffLineLinkProvider value={links}>
+        <input aria-label="다른 입력 칸" />
+        <WalkthroughBar
+          cases={cases}
+          caseIndex={caseIndex}
+          index={props.index}
+          playing={props.playing}
+          shown={shown}
+          onPlay={onPlay}
+          onClose={onClose}
+        />
+      </DiffLineLinkProvider>
+    </HotkeysProvider>
   );
-  return { onPlay, onClose, openLine };
+  const { rerender } = render(bar({ index, playing }));
+  const update = (props: { index: number; playing: boolean }) => rerender(bar(props));
+  return { onPlay, onClose, openLine, update };
 }
 
 describe('WalkthroughBar', () => {
@@ -216,5 +229,77 @@ describe('WalkthroughBar', () => {
     const { className } = screen.getByRole('region', { name: '따라가기' });
     expect(className).toContain('border-l-[var(--color-walkthrough-step-border)]');
     expect(className).not.toContain('--color-walkthrough-error-border');
+  });
+
+  it('moves to the step before and after with Ctrl+← and Ctrl+→', async () => {
+    const user = userEvent.setup();
+    const { onPlay } = renderBar(1);
+
+    await user.keyboard('{Control>}{ArrowLeft}{/Control}');
+    await user.keyboard('{Control>}{ArrowRight}{/Control}');
+
+    expect(onPlay.mock.calls).toEqual([[{ type: 'previous' }], [{ type: 'next' }]]);
+  });
+
+  it('leaves the step keys to the text while the reviewer types in an input', async () => {
+    const user = userEvent.setup();
+    const { onPlay } = renderBar(1);
+
+    await user.click(screen.getByRole('textbox', { name: '다른 입력 칸' }));
+    await user.keyboard('{Control>}{ArrowLeft}{/Control}{Control>}{ArrowRight}{/Control}');
+
+    expect(onPlay).not.toHaveBeenCalled();
+  });
+
+  it('does not take the arrow keys without Ctrl', async () => {
+    const user = userEvent.setup();
+    const { onPlay } = renderBar(1);
+
+    await user.keyboard('{ArrowLeft}{ArrowRight}');
+
+    expect(onPlay).not.toHaveBeenCalled();
+  });
+
+  it('starts autoplay from the play button and offers to stop it while it plays', () => {
+    const { onPlay, update } = renderBar(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '자동 재생' }));
+    expect(onPlay.mock.calls).toEqual([[{ type: 'play' }]]);
+
+    update({ index: 0, playing: true });
+    fireEvent.click(screen.getByRole('button', { name: '자동 재생 멈춤' }));
+    expect(onPlay.mock.calls).toEqual([[{ type: 'play' }], [{ type: 'play' }]]);
+  });
+
+  it('offers no autoplay on the last step', () => {
+    renderBar(2);
+
+    expect(screen.getByRole('button', { name: '자동 재생' })).toBeDisabled();
+  });
+
+  it('moves on once per interval while it plays, counting each step afresh', () => {
+    vi.useFakeTimers();
+    const { onPlay, update } = renderBar(0, true, [normalFlow], 0, true);
+
+    act(() => vi.advanceTimersByTime(WALKTHROUGH_AUTOPLAY_INTERVAL_MS - 1));
+    expect(onPlay).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onPlay.mock.calls).toEqual([[{ type: 'tick' }]]);
+
+    update({ index: 1, playing: true });
+    act(() => vi.advanceTimersByTime(WALKTHROUGH_AUTOPLAY_INTERVAL_MS - 1));
+    expect(onPlay).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(1));
+    expect(onPlay.mock.calls).toEqual([[{ type: 'tick' }], [{ type: 'tick' }]]);
+  });
+
+  it('stops moving on once playback stops', () => {
+    vi.useFakeTimers();
+    const { onPlay, update } = renderBar(0, true, [normalFlow], 0, true);
+
+    update({ index: 0, playing: false });
+    act(() => vi.advanceTimersByTime(WALKTHROUGH_AUTOPLAY_INTERVAL_MS * 3));
+
+    expect(onPlay).not.toHaveBeenCalled();
   });
 });

@@ -23,6 +23,7 @@ import { storageService } from './services/StorageService';
 import { resetClientSettingsForTests } from './services/userSettings';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { spreadFixups } from './utils/fixupSpread';
+import { WALKTHROUGH_AUTOPLAY_INTERVAL_MS } from './utils/walkthroughPlayback';
 import { placeThread } from '../utils/threadPlacement';
 
 vi.mock('../utils/threadPlacement', async (importOriginal) => {
@@ -1972,6 +1973,36 @@ describe(
             difitPlace: { kind: 'thread', threadId: 't1' },
           }),
         );
+      });
+
+      it('steps with Ctrl+→ and Ctrl+←, and plays on to the last step where it stops', async () => {
+        const user = userEvent.setup();
+        renderApp();
+        await openFromReply(user);
+
+        await user.keyboard('{Control>}{ArrowRight}{/Control}');
+        await waitFor(() => expect(within(bar()!).getByText('2 / 2')).toBeInTheDocument());
+        await user.keyboard('{Control>}{ArrowLeft}{/Control}');
+        await waitFor(() => expect(within(bar()!).getByText('1 / 2')).toBeInTheDocument());
+
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+          fireEvent.click(within(bar()!).getByRole('button', { name: '자동 재생' }));
+          expect(
+            within(bar()!).getByRole('button', { name: '자동 재생 멈춤' }),
+          ).toBeInTheDocument();
+
+          act(() => vi.advanceTimersByTime(WALKTHROUGH_AUTOPLAY_INTERVAL_MS));
+
+          expect(within(bar()!).getByText('2 / 2')).toBeInTheDocument();
+          expect(within(bar()!).getByRole('button', { name: '자동 재생' })).toBeDisabled();
+          expect(stepRows()).toEqual([
+            ['b.ts', 'line 10'],
+            ['b.ts', 'line 11'],
+          ]);
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it('marks the call path lines apart from the step, in the error color for an error step, and leaves other steps undrawn', async () => {

@@ -1,14 +1,20 @@
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { useHotkeys } from 'react-hotkeys-hook';
 
 import type { WalkthroughCase } from '../../types/diff';
 import { callPathTarget } from '../../utils/walkthrough';
 import { useDiffLineLinks } from '../contexts/DiffLineLinkContext';
-import type { WalkthroughPlaybackAction } from '../utils/walkthroughPlayback';
+import {
+  WALKTHROUGH_AUTOPLAY_INTERVAL_MS,
+  type WalkthroughPlaybackAction,
+} from '../utils/walkthroughPlayback';
 
 interface WalkthroughBarProps {
   cases: readonly WalkthroughCase[];
   caseIndex: number;
   index: number;
+  playing: boolean;
   shown: boolean;
   onPlay: (action: WalkthroughPlaybackAction) => void;
   onClose: () => void;
@@ -16,6 +22,8 @@ interface WalkthroughBarProps {
 
 const BUTTON_CLASS =
   'inline-flex items-center gap-0.5 rounded-md border border-github-border px-2 py-0.5 text-xs text-github-text-primary hover:bg-github-bg-tertiary disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent';
+
+const STEP_KEY_OPTIONS = { scopes: 'navigation', enableOnFormTags: false, preventDefault: true };
 
 const LABEL_CLASS = 'font-semibold text-github-text-secondary';
 
@@ -58,10 +66,24 @@ export function WalkthroughBar({
   cases,
   caseIndex,
   index,
+  playing,
   shown,
   onPlay,
   onClose,
 }: WalkthroughBarProps) {
+  useHotkeys('mod+left', () => onPlay({ type: 'previous' }), STEP_KEY_OPTIONS, [onPlay]);
+  useHotkeys('mod+right', () => onPlay({ type: 'next' }), STEP_KEY_OPTIONS, [onPlay]);
+  const onPlayRef = useRef(onPlay);
+  onPlayRef.current = onPlay;
+  useEffect(() => {
+    if (!playing) return;
+    const timer = setTimeout(
+      () => onPlayRef.current({ type: 'tick' }),
+      WALKTHROUGH_AUTOPLAY_INTERVAL_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [playing, caseIndex, index]);
+
   const walkthroughCase = cases[caseIndex];
   const step = walkthroughCase?.steps[index];
   if (!walkthroughCase || !step) return null;
@@ -149,6 +171,16 @@ export function WalkthroughBar({
         >
           <ChevronLeft size={14} />
           이전
+        </button>
+        <button
+          type="button"
+          aria-label={playing ? '자동 재생 멈춤' : '자동 재생'}
+          className={BUTTON_CLASS}
+          disabled={!playing && index === steps.length - 1}
+          onClick={() => onPlay({ type: 'play' })}
+        >
+          {playing ? <Pause size={14} /> : <Play size={14} />}
+          {playing ? '멈춤' : '재생'}
         </button>
         <button
           type="button"
