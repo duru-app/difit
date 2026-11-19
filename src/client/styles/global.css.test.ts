@@ -108,9 +108,50 @@ describe('global.css agent message colors', () => {
       '--color-agent-bg',
       '--color-walkthrough-step-bg',
       '--color-walkthrough-step-border',
+      '--color-walkthrough-error-bg',
+      '--color-walkthrough-error-border',
+      '--color-walkthrough-call-bg',
+      '--color-walkthrough-call-border',
     ]) {
       expect(themeProperties).toContain(property);
       expect(lightProperties).toContain(property);
     }
+  });
+});
+
+describe('global.css walkthrough line highlight', () => {
+  const walkthroughRules = rulesMatching((selector) => selector.includes('data-walkthrough'));
+  const valuesOf = (selector: string) =>
+    declarationsOf(rulesMatching((candidate) => candidate === selector)).map(({ value }) => value);
+
+  it('paints on the cells, leaving the pseudo-elements to the cursor, selection and line link flash', () => {
+    expect(walkthroughRules.length).toBeGreaterThan(0);
+    for (const { selector } of walkthroughRules) {
+      expect(selector).not.toMatch(/::?(after|before)/);
+    }
+    expect(
+      rulesMatching((selector) => selector.includes('tr[data-line-link-flash] td::after')),
+    ).not.toEqual([]);
+  });
+
+  it('colors the step, the error step and the call path lines from their own tokens', () => {
+    expect(valuesOf('tr[data-walkthrough-step]').join(' ')).toContain(
+      '--color-walkthrough-step-bg',
+    );
+    expect(valuesOf('tr[data-walkthrough-step="error"]').join(' ')).toContain(
+      '--color-walkthrough-error-bg',
+    );
+    expect(valuesOf('tr[data-walkthrough-call]').join(' ')).toContain(
+      '--color-walkthrough-call-bg',
+    );
+    for (const { value } of declarationsOf(walkthroughRules)) {
+      expect(value).not.toMatch(/rgba?\(|#[0-9a-f]{3,8}\b/i);
+    }
+  });
+
+  it('paints the error step over the page color, so an added or commented line under it does not grey the red', () => {
+    const [layers] = valuesOf('tr[data-walkthrough-step="error"] td');
+    expect(layers?.split('linear-gradient(')).toHaveLength(3);
+    expect(layers).toMatch(/--walkthrough-line-bg.*--color-github-bg-primary/s);
   });
 });

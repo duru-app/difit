@@ -6,6 +6,7 @@ An agent answers a reviewer's "show me how this flows" with a step-by-step walkt
 
 - `difit walkthrough add <threadId>`, from an argument or stdin: attaches to the thread's latest agent reply and moves off any older reply; adding again replaces it
 - `warnings` for an unknown step field (not stored), a file the review target lacks, or a line past the file's end; the step is still stored
+- Optional step fields `callPath` (`"path:line"` strings), `variables` and `stateChanges` (string-to-string objects) and `error: true`; a bad shape of any of them is a 400, and a call path entry on a missing file or line warns as `step 1 call path 2: ...`
 - Several cases, each with an optional `title` and `setup`; with more than one case the warnings and refusals name the step as `case 2 step 1`
 - `get` and `remove`; both exit 1 once nothing is attached
 - Refusals: 409 before any agent reply, 404 for a missing or deleted thread, 400 for a bad shape (no case, a case without steps, a step without `file`, `line` or `description`)
@@ -26,7 +27,7 @@ The reviewer asks in a comment how the code flows. The agent replies with `difit
   echo '{"cases":[{"steps":[
     {"file":"math.js","line":1,"description":"add 는 두 값을 더한다."},
     {"file":"math.js","line":2,"description":"sub 도 a + b 를 돌려준다."},
-    {"file":"nope.js","line":1,"description":"없는 파일","callPath":"x"}]}]}' |
+    {"file":"nope.js","line":1,"description":"없는 파일","note":"x"}]}]}' |
     difit walkthrough add t1 --port "$PORT"
   difit walkthrough get t1 --port "$PORT"
   difit walkthrough remove t1 --port "$PORT"
@@ -36,8 +37,8 @@ The reviewer asks in a comment how the code flows. The agent replies with `difit
 
 Proof:
 
-- `add` prints `success` with two warnings: `step 3: ignored unknown field "callPath"` and `step 3: nope.js is not in <short sha>`.
-- `get` prints the steps, without `callPath`, and `commit` as the full SHA of the review target.
+- `add` prints `success` with two warnings: `step 3: ignored unknown field "note"` and `step 3: nope.js is not in <short sha>`.
+- `get` prints the steps, without `note`, and `commit` as the full SHA of the review target.
 - After `remove`, `get` prints `Error: No walkthrough on thread t1` and exits 1.
 
 The bar is a screen: run `add` again and drive it in a browser (Playwright from `node_modules`, with `PLAYWRIGHT_BROWSERS_PATH` pointing at `~/.cache/ms-playwright`). Before the click there is no `region` named `따라가기`; after clicking the reply it reads `1 / 3`, `history.length` grew by one, and `tr[data-walkthrough-step]` is the `math.js` line 1 row. Step 3 shows `diff 에 안 보이는 줄` and no row. Closing leaves no bar and `history.state.difitPlace` is `{"kind":"thread","threadId":"t1"}`.

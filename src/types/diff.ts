@@ -313,6 +313,11 @@ export interface WalkthroughStep {
   line: number;
   endLine?: number;
   description: string;
+  // "path:line" or "path:line-endLine" entries, from the outermost caller to the step's caller.
+  callPath?: string[];
+  variables?: Record<string, string>;
+  stateChanges?: Record<string, string>;
+  error?: true;
 }
 
 export interface WalkthroughCase {

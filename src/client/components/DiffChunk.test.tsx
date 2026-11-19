@@ -9,7 +9,7 @@ import {
   FixupOverlayProvider,
   type FixupOverlayState,
 } from '../contexts/FixupOverlayContext';
-import { WalkthroughStepProvider } from '../contexts/WalkthroughContext';
+import { type WalkthroughLines, WalkthroughStepProvider } from '../contexts/WalkthroughContext';
 import { WordHighlightProvider } from '../contexts/WordHighlightContext';
 import { boxesByAnchor, type FixupBox } from '../utils/fixupSpread';
 import { symbolRequestFromTarget } from '../utils/symbolPeek';
@@ -2300,12 +2300,18 @@ describe.each<ChunkMode>(['unified', 'split'])('names clicked in fixup code (%s)
 });
 
 describe('walkthrough step highlight', () => {
-  const step = { file: 'src/example.ts', lines: new Set([11, 12]) };
-  const marked = (container: HTMLElement) =>
-    [...container.querySelectorAll('tr[data-walkthrough-step]')].map(
-      (row) => row.textContent ?? '',
-    );
-  const renderChunk = (mode: 'unified' | 'split', filename = 'src/example.ts') => {
+  const stepOnly: WalkthroughLines = {
+    step: { file: 'src/example.ts', lines: new Set([11, 12]), error: false },
+    callPath: new Map(),
+  };
+  const rowsMatching = (container: HTMLElement, selector: string) =>
+    [...container.querySelectorAll(selector)].map((row) => row.textContent ?? '');
+  const marked = (container: HTMLElement) => rowsMatching(container, 'tr[data-walkthrough-step]');
+  const renderChunk = (
+    mode: 'unified' | 'split',
+    filename = 'src/example.ts',
+    lines: WalkthroughLines = stepOnly,
+  ) => {
     const props = {
       chunk: testChunk,
       chunkIndex: 0,
@@ -2318,7 +2324,7 @@ describe('walkthrough step highlight', () => {
       filename,
     };
     return renderWithProviders(
-      <WalkthroughStepProvider value={step}>
+      <WalkthroughStepProvider value={lines}>
         {mode === 'unified' ? (
           <DiffChunk {...props} mode="unified" />
         ) : (
@@ -2342,4 +2348,38 @@ describe('walkthrough step highlight', () => {
   it('marks nothing in another file', () => {
     expect(marked(renderChunk('unified', 'src/other.ts').container)).toEqual([]);
   });
+
+  it.each(['unified', 'split'] as const)(
+    'marks the call path rows apart from the current step in the %s view',
+    (mode) => {
+      const { container } = renderChunk(mode, 'src/example.ts', {
+        step: { file: 'src/example.ts', lines: new Set([12]), error: false },
+        callPath: new Map([
+          ['src/example.ts', new Set([10, 12])],
+          ['src/other.ts', new Set([11])],
+        ]),
+      });
+
+      const calls = rowsMatching(container, 'tr[data-walkthrough-call]');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain('const first = 1;');
+      const steps = marked(container);
+      expect(steps).toHaveLength(1);
+      expect(steps[0]).toContain('const third = 3;');
+    },
+  );
+
+  it.each(['unified', 'split'] as const)(
+    'marks the rows of a step that ends in an error as an error in the %s view',
+    (mode) => {
+      const { container } = renderChunk(mode, 'src/example.ts', {
+        step: { file: 'src/example.ts', lines: new Set([11]), error: true },
+        callPath: new Map(),
+      });
+
+      const errors = rowsMatching(container, 'tr[data-walkthrough-step="error"]');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('const second = 2;');
+    },
+  );
 });

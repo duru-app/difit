@@ -15,7 +15,7 @@ import { type CursorPosition } from '../hooks/keyboardNavigation';
 import { useCanHover } from '../hooks/useCanHover';
 import { useCodeSelection } from '../hooks/useCodeSelection';
 import { cursorLineOf, useLinePick } from '../contexts/LinePickContext';
-import { useIsWalkthroughStepLine } from '../contexts/WalkthroughContext';
+import { useWalkthroughRowAttributes } from '../contexts/WalkthroughContext';
 import { useDirectEditing } from '../hooks/useDirectEditing';
 import { codeCellAttributes, quoteSelection } from '../utils/codeSelection';
 import { endOfLine, locationLabel } from '../../utils/commentPosition';
@@ -191,7 +191,7 @@ export function SideBySideDiffChunk({
   const [startLine, setStartLine] = useState<LineSelection | null>(null);
   const [endLine, setEndLine] = useState<LineSelection | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const isWalkthroughStepLine = useIsWalkthroughStepLine(filename);
+  const walkthroughRowAttributes = useWalkthroughRowAttributes(filename);
   const linePick = useLinePick(
     chunk.lines,
     cursor ? cursorLineOf(chunk.lines[cursor.lineIndex], cursor.side) : null,
@@ -709,9 +709,7 @@ export function SideBySideDiffChunk({
                 {fold && foldStartsHere && <FoldedLinesRow fold={fold} colSpan={4} />}
                 <tr
                   data-diff-line-row="true"
-                  {...(isWalkthroughStepLine(sideLine.newLineNumber) && {
-                    'data-walkthrough-step': '',
-                  })}
+                  {...walkthroughRowAttributes(sideLine.newLineNumber)}
                   className="group cursor-pointer"
                   onClick={(e) => {
                     const target = e.target;

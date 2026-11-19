@@ -1,5 +1,5 @@
 import type { WalkthroughCase } from '../types/diff.js';
-import { caseLabel } from '../utils/walkthrough.js';
+import { callPathTarget, caseLabel } from '../utils/walkthrough.js';
 
 // `countLines` gives null for a file the tree does not have.
 export async function warningsForMissingLines(
@@ -16,10 +16,14 @@ export async function warningsForMissingLines(
     return counted;
   };
   const steps = cases.flatMap((item, caseIndex) =>
-    item.steps.map((step, index) => ({
-      ...step,
-      where: `${cases.length > 1 ? `${caseLabel(caseIndex)} ` : ''}step ${index + 1}`,
-    })),
+    item.steps.flatMap((step, index) => {
+      const where = `${cases.length > 1 ? `${caseLabel(caseIndex)} ` : ''}step ${index + 1}`;
+      const calls = (step.callPath ?? []).flatMap((entry, callIndex) => {
+        const target = callPathTarget(entry);
+        return target ? [{ ...target, where: `${where} call path ${callIndex + 1}` }] : [];
+      });
+      return [{ ...step, where }, ...calls];
+    }),
   );
   const warnings = await Promise.all(
     steps.map(async ({ file, line, endLine = line, where }) => {

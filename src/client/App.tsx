@@ -123,8 +123,8 @@ import { PickedThreadProvider } from './contexts/PickedThreadContext';
 import {
   type OpenWalkthrough,
   OpenWalkthroughProvider,
+  type WalkthroughLines,
   WalkthroughStepProvider,
-  type WalkthroughStepLines,
 } from './contexts/WalkthroughContext';
 import { WordHighlightProvider } from './contexts/WordHighlightContext';
 import { useAppearanceSettings } from './hooks/useAppearanceSettings';
@@ -168,7 +168,7 @@ import {
   type WalkthroughPlayback,
   type WalkthroughPlaybackAction,
 } from './utils/walkthroughPlayback';
-import { placeOfStep, type StepPlace } from './utils/walkthroughStep';
+import { placeOfStep, placesOfCallPath, type StepPlace } from './utils/walkthroughStep';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { fixupLinesPlace } from './utils/fixupLines';
 import {
@@ -2739,6 +2739,11 @@ function App() {
   const walkthroughOf = (threadId: string, messageId: string) =>
     shownThreads.find(({ id }) => id === threadId)?.messages.find(({ id }) => id === messageId)
       ?.walkthrough;
+  const walkthroughStepView = (commit: string) => ({
+    commit,
+    diffTarget: diffData?.targetCommitish,
+    files: diffData?.files ?? [],
+  });
   const walkthroughStepAt = (
     threadId: string,
     messageId: string,
@@ -2747,11 +2752,7 @@ function App() {
     const walkthrough = walkthroughOf(threadId, messageId);
     const step = walkthrough?.cases[caseIndex]?.steps[stepIndex];
     if (!walkthrough || !step) return null;
-    return placeOfStep(step, {
-      commit: walkthrough.commit,
-      diffTarget: diffData?.targetCommitish,
-      files: diffData?.files ?? [],
-    });
+    return placeOfStep(step, walkthroughStepView(walkthrough.commit));
   };
   const showWalkthroughStep = (place: StepPlace | null) => {
     if (place?.kind !== 'shown') return;
@@ -2824,15 +2825,47 @@ function App() {
   const shownWalkthroughPlace = openedWalkthrough
     ? walkthroughStepAt(openedWalkthrough.threadId, openedWalkthrough.messageId, openedWalkthrough)
     : null;
-  const walkthroughStepKey =
-    shownWalkthroughPlace?.kind === 'shown'
-      ? `${shownWalkthroughPlace.file}\n${shownWalkthroughPlace.lines.join(',')}`
-      : null;
-  const walkthroughStepLines = useMemo<WalkthroughStepLines | null>(() => {
-    if (walkthroughStepKey === null) return null;
-    const [file = '', lines = ''] = walkthroughStepKey.split('\n');
-    return { file, lines: new Set(lines.split(',').map(Number)) };
-  }, [walkthroughStepKey]);
+  const shownWalkthroughStep =
+    openedWalkthrough &&
+    shownWalkthroughCases?.[openedWalkthrough.caseIndex]?.steps[openedWalkthrough.stepIndex];
+  const shownWalkthroughCommit = openedWalkthrough
+    ? walkthroughOf(openedWalkthrough.threadId, openedWalkthrough.messageId)?.commit
+    : undefined;
+  const walkthroughLinesKey = shownWalkthroughStep
+    ? JSON.stringify({
+        step:
+          shownWalkthroughPlace?.kind === 'shown'
+            ? { file: shownWalkthroughPlace.file, lines: shownWalkthroughPlace.lines }
+            : null,
+        error: shownWalkthroughStep.error === true,
+        callPath:
+          shownWalkthroughCommit === undefined
+            ? []
+            : placesOfCallPath(
+                shownWalkthroughStep.callPath ?? [],
+                walkthroughStepView(shownWalkthroughCommit),
+                resolveDiffPath,
+              ),
+      })
+    : null;
+  const walkthroughLines = useMemo<WalkthroughLines | null>(() => {
+    if (walkthroughLinesKey === null) return null;
+    const { step, error, callPath } = JSON.parse(walkthroughLinesKey) as {
+      step: { file: string; lines: number[] } | null;
+      error: boolean;
+      callPath: Array<{ file: string; lines: number[] }>;
+    };
+    const callLines = new Map<string, Set<number>>();
+    for (const { file, lines } of callPath) {
+      const known = callLines.get(file) ?? new Set<number>();
+      lines.forEach((line) => known.add(line));
+      callLines.set(file, known);
+    }
+    return {
+      step: step && { file: step.file, lines: new Set(step.lines), error },
+      callPath: callLines,
+    };
+  }, [walkthroughLinesKey]);
 
   const handleOpenInEditor = useCallback(
     async (filePath: string, lineNumber: number) => {
@@ -3478,7 +3511,7 @@ function App() {
           <PickedThreadProvider value={pickedThread?.id ?? null}>
             <DiffLineLinkProvider value={diffLineLinks}>
               <OpenWalkthroughProvider value={openWalkthroughFromReply}>
-                <WalkthroughStepProvider value={walkthroughStepLines}>
+                <WalkthroughStepProvider value={walkthroughLines}>
                   <div
                     ref={diffColumnRef}
                     data-diff-column

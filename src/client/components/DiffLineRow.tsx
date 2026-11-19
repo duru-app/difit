@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { type DiffLine, type ExpandedLine } from '../../types/diff';
+import type { WalkthroughRowAttributes } from '../contexts/WalkthroughContext';
 import { codeCellAttributes } from '../utils/codeSelection';
 import { type DiffSegment } from '../utils/wordLevelDiff';
 
@@ -15,7 +16,7 @@ interface DiffLineRowProps {
   isCurrentLine?: boolean;
   hoveredLineIndex: number | null;
   selectedLineStyle: string;
-  isWalkthroughStep?: boolean;
+  walkthroughAttributes?: WalkthroughRowAttributes;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   onMouseMove: () => void;
@@ -57,7 +58,7 @@ export const DiffLineRow: React.FC<DiffLineRowProps> = React.memo(
     isCurrentLine = false,
     hoveredLineIndex,
     selectedLineStyle,
-    isWalkthroughStep = false,
+    walkthroughAttributes,
     onMouseEnter,
     onMouseLeave,
     onMouseMove,
@@ -86,7 +87,7 @@ export const DiffLineRow: React.FC<DiffLineRowProps> = React.memo(
       <tr
         id={lineId}
         data-diff-line-row="true"
-        {...(isWalkthroughStep && { 'data-walkthrough-step': '' })}
+        {...walkthroughAttributes}
         className={`group ${getLineClass(line)} relative ${selectedLineStyle} ${highlightClass} cursor-pointer`}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
