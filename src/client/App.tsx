@@ -3530,6 +3530,7 @@ function App() {
                         caseIndex={openedWalkthrough.caseIndex}
                         index={openedWalkthrough.stepIndex}
                         shown={shownWalkthroughPlace?.kind === 'shown'}
+                        isMobile={isMobile}
                         onPlay={playOpenedWalkthrough}
                         onClose={closeWalkthrough}
                       />

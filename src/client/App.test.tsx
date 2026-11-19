@@ -2012,6 +2012,36 @@ describe(
         expect(cursorRow()).toHaveAttribute('data-walkthrough-call');
       });
 
+      it('on a phone, keeps the bar above the diff, folds it and steps the line clear of it', async () => {
+        vi.mocked(useViewport).mockReturnValue({ isMobile: true, isDesktop: false });
+        onTestFinished(() => {
+          vi.mocked(useViewport).mockReturnValue({ isMobile: false, isDesktop: true });
+        });
+        const user = userEvent.setup();
+        renderApp();
+        await openFromReply(user);
+        const main = document.querySelector('main')!;
+
+        expect(main.contains(bar())).toBe(false);
+        expect(bar()!.compareDocumentPosition(main)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+        const fold = within(bar()!).getByRole('button', { name: '따라가기 설명' });
+        await user.click(fold);
+        expect(fold).toHaveAttribute('aria-expanded', 'false');
+
+        await user.click(within(bar()!).getByRole('button', { name: '다음 단계' }));
+
+        await waitFor(() => expect(fileShown()).toBe('b.ts'));
+        expect(fold).toHaveAttribute('aria-expanded', 'false');
+        const [row] = document.querySelectorAll<HTMLElement>('tr[data-walkthrough-step]');
+        const lineCell = [row!, ...row!.querySelectorAll<HTMLElement>('[id]')].find(({ id }) =>
+          /^file-\d+-chunk-/.test(id),
+        );
+        const rowBox = lineCell!.getBoundingClientRect();
+        const mainBox = main.getBoundingClientRect();
+        expect(rowBox.top).toBeGreaterThanOrEqual(mainBox.top + HEADER_HEIGHT);
+        expect(rowBox.bottom).toBeLessThanOrEqual(mainBox.bottom);
+      });
+
       it('forgets the walkthrough the agent took away, so putting it back does not reopen it', async () => {
         const user = userEvent.setup();
         const { rerender } = renderApp();

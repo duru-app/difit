@@ -43,6 +43,7 @@ function renderBar(
   shown = true,
   cases: WalkthroughCase[] = [normalFlow],
   caseIndex = 0,
+  isMobile = false,
 ) {
   const onPlay = vi.fn();
   const onClose = vi.fn();
@@ -59,6 +60,7 @@ function renderBar(
         caseIndex={caseIndex}
         index={index}
         shown={shown}
+        isMobile={isMobile}
         onPlay={onPlay}
         onClose={onClose}
       />
@@ -216,5 +218,89 @@ describe('WalkthroughBar', () => {
     const { className } = screen.getByRole('region', { name: '따라가기' });
     expect(className).toContain('border-l-[var(--color-walkthrough-step-border)]');
     expect(className).not.toContain('--color-walkthrough-error-border');
+  });
+
+  describe('on a phone', () => {
+    const TOUCH_TARGET = ['min-h-[44px]', 'min-w-[44px]'];
+    const foldToggle = () => screen.getByRole('button', { name: '따라가기 설명' });
+
+    it('gives every control in the bar a touch target of at least 44px', () => {
+      renderBar(0, true, [failingSave, normalFlow], 0, true);
+
+      const controls = [
+        screen.getByRole('button', { name: '이전 단계' }),
+        screen.getByRole('button', { name: '다음 단계' }),
+        screen.getByRole('button', { name: '따라가기 닫기' }),
+        foldToggle(),
+        screen.getByRole('combobox', { name: '경우' }),
+        screen.getByRole('button', { name: 'store.ts:40-42' }),
+      ];
+      for (const control of controls) {
+        expect(control.className.split(' ')).toEqual(expect.arrayContaining(TOUCH_TARGET));
+      }
+    });
+
+    it('keeps the desktop controls at their size', () => {
+      renderBar(0, true, [failingSave, normalFlow]);
+
+      for (const name of ['이전 단계', '다음 단계', '따라가기 닫기']) {
+        expect(screen.getByRole('button', { name }).className).not.toContain('min-h-[44px]');
+      }
+    });
+
+    it('folds the description area away and unfolds it, leaving the step count and step buttons', () => {
+      renderBar(1, true, [normalFlow], 0, true);
+
+      expect(foldToggle()).toHaveAttribute('aria-expanded', 'true');
+      fireEvent.click(foldToggle());
+
+      expect(foldToggle()).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByText('값을 검사한다.')).not.toBeVisible();
+      expect(screen.getByText('로그인한 사용자가 저장을 누른다.')).not.toBeVisible();
+      expect(screen.getByText('2 / 3')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '이전 단계' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: '다음 단계' })).toBeEnabled();
+
+      fireEvent.click(foldToggle());
+
+      expect(foldToggle()).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByText('값을 검사한다.')).toBeVisible();
+    });
+
+    it('stays folded while the reviewer steps on', () => {
+      const props = {
+        cases: [normalFlow],
+        caseIndex: 0,
+        shown: true,
+        isMobile: true,
+        onPlay: vi.fn(),
+        onClose: vi.fn(),
+      };
+      const { rerender } = render(<WalkthroughBar {...props} index={0} />);
+      fireEvent.click(foldToggle());
+
+      rerender(<WalkthroughBar {...props} index={1} />);
+
+      expect(foldToggle()).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByText('2 / 3')).toBeInTheDocument();
+      expect(screen.getByText('값을 검사한다.')).not.toBeVisible();
+    });
+
+    it('keeps the description area to part of the screen and scrolls inside it', () => {
+      renderBar(0, true, [failingSave], 0, true);
+
+      const area = document.getElementById(foldToggle().getAttribute('aria-controls')!)!;
+      expect(area).toHaveTextContent('디스크가 차서 쓰기가 실패한다.');
+      expect(area.className.split(' ')).toEqual(
+        expect.arrayContaining(['max-h-[35dvh]', 'overflow-y-auto']),
+      );
+    });
+
+    it('offers no fold on a desktop, where the description sits beside the buttons', () => {
+      renderBar(0);
+
+      expect(screen.queryByRole('button', { name: '따라가기 설명' })).not.toBeInTheDocument();
+      expect(screen.getByText('요청을 받는다.')).toBeInTheDocument();
+    });
   });
 });
