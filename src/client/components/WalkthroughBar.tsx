@@ -1,4 +1,5 @@
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { useId, useState } from 'react';
 
 import type { WalkthroughCase } from '../../types/diff';
 import { callPathTarget } from '../../utils/walkthrough';
@@ -10,6 +11,7 @@ interface WalkthroughBarProps {
   caseIndex: number;
   index: number;
   shown: boolean;
+  isMobile?: boolean;
   onPlay: (action: WalkthroughPlaybackAction) => void;
   onClose: () => void;
 }
@@ -17,9 +19,12 @@ interface WalkthroughBarProps {
 const BUTTON_CLASS =
   'inline-flex items-center gap-0.5 rounded-md border border-github-border px-2 py-0.5 text-xs text-github-text-primary hover:bg-github-bg-tertiary disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent';
 
+// The root font size follows the font size setting, so rem-based sizes would shrink below 44px.
+const TOUCH_TARGET_CLASS = 'min-h-[44px] min-w-[44px]';
+
 const LABEL_CLASS = 'font-semibold text-github-text-secondary';
 
-function CallPathEntry({ entry }: { entry: string }) {
+function CallPathEntry({ entry, isMobile }: { entry: string; isMobile: boolean }) {
   const links = useDiffLineLinks();
   const target = callPathTarget(entry);
   const file = target && links?.resolve(target.file);
@@ -29,7 +34,7 @@ function CallPathEntry({ entry }: { entry: string }) {
       type="button"
       title={`Go to ${entry}`}
       onClick={(event) => links.open({ ...target, file }, event.currentTarget)}
-      className="cursor-pointer font-mono text-sky-400 hover:text-sky-300 underline underline-offset-4"
+      className={`cursor-pointer font-mono text-sky-400 hover:text-sky-300 underline underline-offset-4 ${isMobile ? `${TOUCH_TARGET_CLASS} inline-flex items-center` : ''}`}
     >
       {entry}
     </button>
@@ -59,14 +64,20 @@ export function WalkthroughBar({
   caseIndex,
   index,
   shown,
+  isMobile = false,
   onPlay,
   onClose,
 }: WalkthroughBarProps) {
+  const [folded, setFolded] = useState(false);
+  const detailsId = useId();
   const walkthroughCase = cases[caseIndex];
   const step = walkthroughCase?.steps[index];
   if (!walkthroughCase || !step) return null;
   const { steps, setup } = walkthroughCase;
   const { callPath, variables, stateChanges, error } = step;
+  const buttonClass = isMobile
+    ? `${BUTTON_CLASS} ${TOUCH_TARGET_CLASS} justify-center`
+    : BUTTON_CLASS;
   const location = `${step.file}:${step.line}${step.endLine === undefined ? '' : `-${step.endLine}`}`;
 
   return (
@@ -74,10 +85,31 @@ export function WalkthroughBar({
       role="region"
       aria-label="따라가기"
       data-walkthrough-bar
-      className={`shrink-0 flex items-start gap-3 px-4 py-2 text-sm bg-github-bg-secondary border-b border-github-border border-l-4 ${error ? 'border-l-[var(--color-walkthrough-error-border)]' : 'border-l-[var(--color-walkthrough-step-border)]'}`}
+      className={`shrink-0 flex ${isMobile ? 'flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1' : 'items-start gap-3 px-4 py-2'} text-sm bg-github-bg-secondary border-b border-github-border border-l-4 ${error ? 'border-l-[var(--color-walkthrough-error-border)]' : 'border-l-[var(--color-walkthrough-step-border)]'}`}
     >
-      <div className="shrink-0 flex flex-col items-start gap-0.5 pt-0.5">
-        <span className="text-xs font-semibold text-github-text-primary">따라가기</span>
+      <div
+        className={
+          isMobile
+            ? 'min-w-0 flex-1 flex items-center gap-2'
+            : 'shrink-0 flex flex-col items-start gap-0.5 pt-0.5'
+        }
+      >
+        {isMobile ? (
+          <button
+            type="button"
+            aria-label="따라가기 설명"
+            aria-expanded={!folded}
+            aria-controls={detailsId}
+            title={folded ? '설명 펴기' : '설명 접기'}
+            className={`${TOUCH_TARGET_CLASS} -ml-1 inline-flex items-center gap-1 px-1 text-xs font-semibold text-github-text-primary`}
+            onClick={() => setFolded(!folded)}
+          >
+            따라가기
+            <ChevronDown size={16} className={folded ? '' : 'rotate-180'} />
+          </button>
+        ) : (
+          <span className="text-xs font-semibold text-github-text-primary">따라가기</span>
+        )}
         {cases.length > 1 && (
           <select
             aria-label="경우"
@@ -85,7 +117,7 @@ export function WalkthroughBar({
             onChange={(event) =>
               onPlay({ type: 'selectCase', caseIndex: Number(event.target.value) })
             }
-            className="max-w-48 truncate rounded-md border border-github-border bg-github-bg-primary px-1 py-0.5 text-xs text-github-text-primary"
+            className={`max-w-48 truncate rounded-md border border-github-border bg-github-bg-primary px-1 py-0.5 text-xs text-github-text-primary ${isMobile ? `${TOUCH_TARGET_CLASS} shrink` : ''}`}
           >
             {cases.map((item, itemIndex) => (
               <option key={itemIndex} value={itemIndex}>
@@ -98,7 +130,15 @@ export function WalkthroughBar({
           {index + 1} / {steps.length}
         </span>
       </div>
-      <div className="min-w-0 flex-1">
+      <div
+        id={detailsId}
+        hidden={isMobile && folded}
+        className={
+          isMobile
+            ? 'order-last basis-full min-w-0 max-h-[35dvh] overflow-y-auto pb-1'
+            : 'min-w-0 flex-1'
+        }
+      >
         {setup !== undefined && (
           <p className="mb-0.5 text-xs text-github-text-secondary break-words">
             <span className="mr-1.5 font-semibold">처음 상태</span>
@@ -127,7 +167,7 @@ export function WalkthroughBar({
                         key={entryIndex}
                         className="break-all after:ml-1.5 after:text-github-text-muted after:content-['→'] last:after:content-none"
                       >
-                        <CallPathEntry entry={entry} />
+                        <CallPathEntry entry={entry} isMobile={isMobile} />
                       </li>
                     ))}
                   </ol>
@@ -143,7 +183,7 @@ export function WalkthroughBar({
         <button
           type="button"
           aria-label="이전 단계"
-          className={BUTTON_CLASS}
+          className={buttonClass}
           disabled={index === 0}
           onClick={() => onPlay({ type: 'previous' })}
         >
@@ -153,7 +193,7 @@ export function WalkthroughBar({
         <button
           type="button"
           aria-label="다음 단계"
-          className={BUTTON_CLASS}
+          className={buttonClass}
           disabled={index === steps.length - 1}
           onClick={() => onPlay({ type: 'next' })}
         >
@@ -164,7 +204,7 @@ export function WalkthroughBar({
           type="button"
           aria-label="따라가기 닫기"
           title="따라가기 닫기"
-          className="ml-1 p-1 text-github-text-muted hover:text-github-text-primary"
+          className={`ml-1 p-1 text-github-text-muted hover:text-github-text-primary ${isMobile ? `${TOUCH_TARGET_CLASS} inline-flex items-center justify-center` : ''}`}
           onClick={onClose}
         >
           <X size={14} />
