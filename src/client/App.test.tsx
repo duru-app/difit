@@ -1974,6 +1974,44 @@ describe(
         );
       });
 
+      it('marks the call path lines apart from the step, in the error color for an error step, and leaves other steps undrawn', async () => {
+        const thread = answered();
+        const [first] = thread.messages[1]!.walkthrough!.cases[0]!.steps;
+        Object.assign(first!, { callPath: ['b.ts:11'], error: true });
+        mockComments = [thread];
+        const user = userEvent.setup();
+        renderApp();
+
+        await openFromReply(user);
+
+        expect(stepRows()).toEqual([['a.ts', 'line 3']]);
+        expect(document.querySelector('tr[data-walkthrough-step]')).toHaveAttribute(
+          'data-walkthrough-step',
+          'error',
+        );
+        const callRows = [...document.querySelectorAll('tr[data-walkthrough-call]')].map((row) => [
+          row.closest<HTMLElement>('[data-file-path]')?.dataset.filePath,
+          row.lastElementChild?.textContent?.match(/line \d+/)?.[0],
+        ]);
+        expect(callRows).toEqual([['b.ts', 'line 11']]);
+      });
+
+      it('goes to a call path entry the way a line link in a reply goes to its line', async () => {
+        const thread = answered();
+        thread.messages[1]!.walkthrough!.cases[0]!.steps[0]!.callPath = ['b.ts:11'];
+        mockComments = [thread];
+        const user = userEvent.setup();
+        renderApp();
+        await openFromReply(user);
+
+        await user.click(within(bar()!).getByRole('button', { name: 'b.ts:11' }));
+
+        await waitFor(() => expect(cursorRow()).toHaveTextContent('line 11'));
+        expect(cursorFile()).toBe('b.ts');
+        await waitFor(() => expect(cursorRow()).toHaveAttribute('data-line-link-flash'));
+        expect(cursorRow()).toHaveAttribute('data-walkthrough-call');
+      });
+
       it('forgets the walkthrough the agent took away, so putting it back does not reopen it', async () => {
         const user = userEvent.setup();
         const { rerender } = renderApp();

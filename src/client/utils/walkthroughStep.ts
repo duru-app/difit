@@ -1,5 +1,7 @@
 import type { DiffFile, WalkthroughStep } from '../../types/diff';
 import { isSameCommit } from '../../utils/diffSelection';
+import { callPathTarget } from '../../utils/walkthrough';
+import type { DiffPathResolver } from './diffLineLinks';
 
 export type StepPlace = { kind: 'shown'; file: string; lines: number[] } | { kind: 'not-shown' };
 
@@ -25,4 +27,19 @@ export function placeOfStep(step: WalkthroughStep, view: StepView): StepPlace {
     .filter((line) => line >= step.line && line <= end)
     .sort((left, right) => left - right);
   return lines.length === 0 ? { kind: 'not-shown' } : { kind: 'shown', file: file.path, lines };
+}
+
+// `resolve` matches a written path to a diff file the way line links in replies do.
+export function placesOfCallPath(
+  callPath: readonly string[],
+  view: StepView,
+  resolve: DiffPathResolver,
+): Array<{ file: string; lines: number[] }> {
+  return callPath.flatMap((entry) => {
+    const target = callPathTarget(entry);
+    const file = target && resolve(target.file);
+    if (!target || !file) return [];
+    const place = placeOfStep({ ...target, file, description: '' }, view);
+    return place.kind === 'shown' ? [{ file: place.file, lines: place.lines }] : [];
+  });
 }

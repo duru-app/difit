@@ -41,6 +41,8 @@
   --color-walkthrough-step-border: #58a6ff;
   --color-walkthrough-error-bg: rgb(248 81 73 / 0.3);
   --color-walkthrough-error-border: #ff7b72;
+  --color-walkthrough-call-bg: rgb(56 139 253 / 0.1);
+  --color-walkthrough-call-border: rgb(88 166 255 / 0.55);
 
   --animate-responding-dot: responding-dot 0.9s ease-in-out infinite;
 
@@ -205,25 +207,35 @@ td.keyboard-cursor::before {
   z-index: 1;
 }
 
-/* WebKit ignores position:relative on <tr>, so the step and selection overlays below are
-   anchored to each td instead of the row, like the keyboard-cursor styles above.
-   The step rules come first so a selection or flash shows over a step line. */
-tr[data-walkthrough-step] td {
-  position: relative;
+/* Walkthrough lines paint on the cells themselves, like the focused file header above, so the
+   cursor, selection and line link flash overlays still show over them. */
+tr[data-walkthrough-step] {
+  --walkthrough-line-bg: var(--color-walkthrough-step-bg);
+  --walkthrough-line-border: inset 4px 0 0 0 var(--color-walkthrough-step-border);
 }
 
-tr[data-walkthrough-step] td::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-color: var(--color-walkthrough-step-bg);
-  pointer-events: none;
+tr[data-walkthrough-step="error"] {
+  --walkthrough-line-bg: var(--color-walkthrough-error-bg);
+  --walkthrough-line-border: inset 4px 0 0 0 var(--color-walkthrough-error-border);
 }
 
-tr[data-walkthrough-step] td:first-child::after {
-  border-left: 4px solid var(--color-walkthrough-step-border);
+tr[data-walkthrough-call] {
+  --walkthrough-line-bg: var(--color-walkthrough-call-bg);
+  --walkthrough-line-border: inset 2px 0 0 0 var(--color-walkthrough-call-border);
 }
 
+tr[data-walkthrough-step] td,
+tr[data-walkthrough-call] td {
+  background-image: linear-gradient(var(--walkthrough-line-bg), var(--walkthrough-line-bg));
+}
+
+tr[data-walkthrough-step] td:first-child,
+tr[data-walkthrough-call] td:first-child {
+  box-shadow: var(--walkthrough-line-border);
+}
+
+/* WebKit ignores position:relative on <tr>, so the selection overlays below are
+   anchored to each td instead of the row, like the keyboard-cursor styles above */
 tr.comment-selected td {
   position: relative;
 }
@@ -320,6 +332,8 @@ tr.drag-selected-last td::after {
   --color-walkthrough-step-border: #0969da;
   --color-walkthrough-error-bg: rgb(207 34 46 / 0.18);
   --color-walkthrough-error-border: #cf222e;
+  --color-walkthrough-call-bg: rgb(9 105 218 / 0.07);
+  --color-walkthrough-call-border: rgb(9 105 218 / 0.45);
 }
 
 /* Dark theme word highlight */

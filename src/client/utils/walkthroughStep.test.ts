@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DiffFile, DiffLine, WalkthroughStep } from '../../types/diff';
 
-import { placeOfStep } from './walkthroughStep';
+import { placeOfStep, placesOfCallPath } from './walkthroughStep';
 
 const COMMIT = '3f1c9e0a1b2c3d4e5f60718293a4b5c6d7e8f901';
 
@@ -77,5 +77,30 @@ describe('placeOfStep', () => {
     expect(
       placeOfStep(step('src/a.ts', 10), { commit: 'working', diffTarget: 'working', files }),
     ).toEqual({ kind: 'shown', file: 'src/a.ts', lines: [10] });
+  });
+});
+
+describe('placesOfCallPath', () => {
+  const view = { commit: COMMIT, diffTarget: '3f1c9e0', files };
+  const resolve = (written: string) =>
+    written === 'a.ts' ? 'src/a.ts' : files.some(({ path }) => path === written) ? written : null;
+
+  it('places the entries the diff shows, through the same path matching as line links', () => {
+    expect(
+      placesOfCallPath(
+        ['a.ts:10', 'src/a.ts:12-13', 'src/a.ts:3', 'src/other.ts:1', 'x'],
+        view,
+        resolve,
+      ),
+    ).toEqual([
+      { file: 'src/a.ts', lines: [10] },
+      { file: 'src/a.ts', lines: [12, 13] },
+    ]);
+  });
+
+  it('places nothing on a view of another commit', () => {
+    expect(placesOfCallPath(['src/a.ts:10'], { ...view, diffTarget: 'b0b0b0b' }, resolve)).toEqual(
+      [],
+    );
   });
 });
