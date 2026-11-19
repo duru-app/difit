@@ -212,6 +212,53 @@ describe('walkthrough API', () => {
     ]);
   });
 
+  it('warns about each call path entry whose file or line the review target does not have', async () => {
+    const { repo, base, head } = createRepo();
+    const review = await open(repo, base);
+    await askAndAnswer(review);
+
+    const added = await review.call(
+      'PUT',
+      '/api/threads/t1/walkthrough',
+      walkthrough({
+        file: 'a.txt',
+        line: 2,
+        description: '불려 온다.',
+        callPath: ['a.txt:1', 'missing.ts:3', 'a.txt:4-7'],
+      }),
+    );
+
+    expect(added.body.warnings).toEqual([
+      `step 1 call path 2: missing.ts is not in ${head.slice(0, 7)}`,
+      'step 1 call path 3: a.txt has 4 lines, so line 7 is not there',
+    ]);
+  });
+
+  it('keeps the call path, values and error mark through a save from a stale tab', async () => {
+    const { repo, base } = createRepo();
+    const review = await open(repo, base);
+    await askAndAnswer(review);
+    const { body: before } = await review.call('GET', '/api/comments-json');
+    const step = {
+      file: 'a.txt',
+      line: 2,
+      description: '값을 바꾸다 실패한다.',
+      callPath: ['a.txt:1'],
+      variables: { value: '"TWO"' },
+      stateChanges: { saved: 'false' },
+      error: true,
+    };
+    await review.call('PUT', '/api/threads/t1/walkthrough', walkthrough(step));
+
+    await review.call('POST', '/api/comments', {
+      threads: before.threads,
+      baseVersion: before.version,
+    });
+
+    const { body } = await review.call('GET', '/api/threads/t1/walkthrough');
+    expect(body.walkthrough.cases[0].steps).toEqual([step]);
+  });
+
   it('stores every case with its setup and names the case of each step it warns about', async () => {
     const { repo, base, head } = createRepo();
     const review = await open(repo, base);

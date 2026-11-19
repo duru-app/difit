@@ -174,7 +174,15 @@ difit walkthrough add <threadId> --port <port> '{
       "title": "오류 흐름",
       "setup": "sub(\"3\", 1) 처럼 문자열이 들어온다.",
       "steps": [
-        { "file": "src/calc.ts", "line": 20, "description": "숫자가 아니라서 여기서 던진다." }
+        {
+          "file": "src/calc.ts",
+          "line": 20,
+          "description": "숫자가 아니라서 여기서 던진다.",
+          "callPath": ["src/main.ts:8", "src/calc.ts:31"],
+          "variables": { "a": "\"3\"", "b": "1" },
+          "stateChanges": { "result": "없음" },
+          "error": true
+        }
       ]
     }
   ]
@@ -182,6 +190,7 @@ difit walkthrough add <threadId> --port <port> '{
 ```
 
 - 정상 흐름과 오류 흐름처럼 갈래가 나뉘면 `cases`에 경우를 여럿 넣는다. 경우마다 `title`(경우 이름)과 `setup`(무엇에서 출발하는지, 입력과 전제를 한 단락으로)을 적는다. 둘 다 빼도 받지만, 경우가 여럿이면 리뷰어가 `title`로 경우를 고른다. 단계마다 `file`(저장소 뿌리에서 본 경로), `line`, `description`을 반드시 넣고, 여러 줄이면 `endLine`을 더한다. 모르는 필드는 저장하지 않고 `warnings`에 알린다.
+- 단계에는 필요한 만큼 더 붙인다. `callPath`는 그 단계까지 거쳐 온 호출 자리를 `"경로:줄"`(범위면 `"경로:줄-끝줄"`) 문자열로, 가장 바깥 호출부터 그 단계를 부른 자리까지 차례로 적는다. `variables`(그 자리의 변수 값)와 `stateChanges`(그 단계에서 바뀌는 상태)는 이름과 값이 모두 문자열인 객체다. 숫자나 객체 값도 `"1"`, `"{ id: 3 }"`처럼 보일 모양 그대로 문자열로 적는다. 그 단계에서 오류로 끝나면 `"error": true`를 붙인다. 모양이 틀리면 400으로 거절하고, `callPath`가 리뷰 대상에 없는 파일이나 줄을 가리키면 `warnings`에 알린다.
 - 서버는 지금 리뷰 대상 커밋을 따라가기에 함께 적는다. 그 커밋에 없는 파일이나 줄을 가리키는 단계도 저장하되 `warnings`에 알린다.
 - 리뷰어는 그 답글이나 답글 아래 `따라가기 n단계` 단추를 눌러 연다. 저절로 열리지는 않는다. diff 위의 바에서 `이전`·`다음`으로 단계를 넘기고, 단계의 줄이 diff에 보이면 그 줄로 옮겨 칠한다. 보이지 않으면 바에 `diff 에 안 보이는 줄`이 뜬다.
 - 같은 지적에 다시 `add`하면 앞 따라가기를 바꾼다. `difit walkthrough get <threadId> --port <port>`로 읽고 `remove`로 지운다.
