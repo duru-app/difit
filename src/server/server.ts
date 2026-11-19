@@ -1876,7 +1876,8 @@ export async function startServer(options: ServerOptions): Promise<{
       // client's last read, so merge rather than overwrite. A matching/absent version replaces.
       const isStale = typeof baseVersion === 'number' && baseVersion !== session.version;
       const resolvedThreads = isStale
-        ? mergeCommentThreads(session.threads, nextThreads).threads
+        ? mergeCommentThreads(session.threads, nextThreads, { existingOwnsWalkthroughs: true })
+            .threads
         : nextThreads;
       const resolvedDecisions =
         nextDecisions === undefined
@@ -2011,27 +2012,19 @@ export async function startServer(options: ServerOptions): Promise<{
     walkthrough: Walkthrough | undefined,
   ) {
     const { threads } = getOrCreateCommentSession(selection);
-    const now = Date.now();
-    const later = (updatedAt: string) =>
-      new Date(Math.max(now, (Date.parse(updatedAt) || 0) + 1)).toISOString();
     const withWalkthrough = (message: DiffCommentMessage): DiffCommentMessage => {
       const { walkthrough: old, ...rest } = message;
       const next = message.id === messageId ? walkthrough : undefined;
       if (old === undefined && next === undefined) return message;
-      const updatedAt = later(message.updatedAt);
-      return next ? { ...rest, walkthrough: next, updatedAt } : { ...rest, updatedAt };
+      return next ? { ...rest, walkthrough: next } : rest;
     };
     updateCommentSession(
       selection,
-      threads.map((thread) => {
-        if (thread.id !== threadId) return thread;
-        const messages = thread.messages.map(withWalkthrough);
-        const updatedAt = messages.reduce(
-          (latest, message) => (message.updatedAt > latest ? message.updatedAt : latest),
-          thread.updatedAt,
-        );
-        return { ...thread, messages, updatedAt };
-      }),
+      threads.map((thread) =>
+        thread.id === threadId
+          ? { ...thread, messages: thread.messages.map(withWalkthrough) }
+          : thread,
+      ),
     );
   }
 

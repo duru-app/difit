@@ -190,6 +190,60 @@ describe('walkthrough API', () => {
     expect(thread?.messages[1]?.walkthrough?.cases[0]?.steps).toHaveLength(1);
   });
 
+  it('prints no edit time in comment get under a reply whose walkthrough was only attached or removed', async () => {
+    const { repo, base } = createRepo();
+    const review = await open(repo, base);
+    await askAndAnswer(review);
+    const path = '/api/threads/t1/walkthrough';
+    const output = async () =>
+      (await fetch(`http://localhost:${review.port}/api/comments-output`)).text();
+
+    await review.call('PUT', path, walkthrough({ file: 'a.txt', line: 2, description: '값' }));
+    const attached = await output();
+    await review.call('DELETE', path);
+    const removed = await output();
+
+    expect(attached).toContain('따라가기를 붙였습니다.');
+    expect(attached).not.toContain('고친 시각');
+    expect(removed).toContain('따라가기를 붙였습니다.');
+    expect(removed).not.toContain('고친 시각');
+  });
+
+  it('prints the edit time in comment get and keeps the walkthrough when a tab that loaded before it edits the reply', async () => {
+    const { repo, base } = createRepo();
+    const review = await open(repo, base);
+    await askAndAnswer(review);
+    const { body: loaded } = await review.call('GET', '/api/comments-json');
+    await review.call(
+      'PUT',
+      '/api/threads/t1/walkthrough',
+      walkthrough({ file: 'a.txt', line: 2, description: '값' }),
+    );
+    const [thread] = loaded.threads as DiffCommentThread[];
+    const editedAt = new Date(Date.now() + 60_000).toISOString();
+    const edited = {
+      ...thread!,
+      messages: thread!.messages.map((message, index) =>
+        index === 1
+          ? { ...message, body: '따라가기를 고쳐 붙였습니다.', updatedAt: editedAt }
+          : message,
+      ),
+    };
+
+    await review.call('POST', '/api/comments', {
+      threads: [edited],
+      baseVersion: loaded.version,
+    });
+
+    const [saved] = await review.threads();
+    expect(saved?.messages[1]?.body).toBe('따라가기를 고쳐 붙였습니다.');
+    expect(saved?.messages[1]?.walkthrough?.cases[0]?.steps).toHaveLength(1);
+    const output = await (
+      await fetch(`http://localhost:${review.port}/api/comments-output`)
+    ).text();
+    expect(output).toContain(`고친 시각: ${editedAt}\n따라가기를 고쳐 붙였습니다.`);
+  });
+
   it('warns about each step whose file or line the review target does not have', async () => {
     const { repo, base, head } = createRepo();
     const review = await open(repo, base);

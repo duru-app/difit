@@ -2169,7 +2169,8 @@ function App() {
         const { threads: serverThreads, decisions: serverDecisions } = await fetchServerComments();
         const nextThreads = shouldReplaceFromServer
           ? serverThreads
-          : mergeCommentThreads(serverThreads, storedThreads).threads;
+          : mergeCommentThreads(serverThreads, storedThreads, { existingOwnsWalkthroughs: true })
+              .threads;
         const nextDecisions = mergeReviewDecisions(serverDecisions, decisionsRef.current);
         if (cancelled) {
           return;
