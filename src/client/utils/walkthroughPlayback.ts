@@ -1,5 +1,7 @@
 import type { WalkthroughCase } from '../../types/diff';
 
+export const WALKTHROUGH_AUTOPLAY_INTERVAL_MS = 3000;
+
 export interface WalkthroughPlayback {
   caseIndex: number;
   stepIndex: number;

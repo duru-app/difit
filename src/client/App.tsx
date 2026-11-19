@@ -3529,6 +3529,7 @@ function App() {
                         cases={shownWalkthroughCases}
                         caseIndex={openedWalkthrough.caseIndex}
                         index={openedWalkthrough.stepIndex}
+                        playing={openedWalkthrough.playing}
                         shown={shownWalkthroughPlace?.kind === 'shown'}
                         onPlay={playOpenedWalkthrough}
                         onClose={closeWalkthrough}
