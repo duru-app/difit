@@ -2767,7 +2767,7 @@ function App() {
     );
   };
   const openWalkthrough = (threadId: string, messageId: string) => {
-    const start = { caseIndex: 0, stepIndex: 0 };
+    const start = { caseIndex: 0, stepIndex: 0, playing: false };
     const place = walkthroughStepAt(threadId, messageId, start);
     if (!place) return;
     const before = JSON.stringify(window.history.state);
