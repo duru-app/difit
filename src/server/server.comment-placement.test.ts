@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { createServer as createNetServer } from 'net';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -205,4 +206,68 @@ it('finds the lines in the diff the screen opens with, which ignores whitespace 
     placements: unknown;
   };
   expect(json.placements).toEqual({ appended: { kind: 'moved', line: 14 } });
+});
+
+it('sends the lines comment get finds now into the Claude Code session too', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-comment-placement-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  const socketDir = mkdtempSync(join(tmpdir(), 'difit-session-'));
+  cleanups.push(() => rmSync(socketDir, { recursive: true, force: true }));
+  const received: string[] = [];
+  const inbox = createNetServer({ allowHalfOpen: true }, (connection) => {
+    let data = '';
+    connection.on('data', (chunk) => (data += chunk));
+    connection.on('end', () => {
+      received.push(data);
+      connection.end();
+    });
+  });
+  const socketPath = join(socketDir, 'inbox.sock');
+  await new Promise<void>((resolve) => inbox.listen(socketPath, resolve));
+  cleanups.push(() => new Promise<void>((resolve) => inbox.close(() => resolve())));
+  process.env.CLAUDE_CODE_MESSAGING_SOCKET = socketPath;
+  cleanups.push(() => {
+    delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  });
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'main']);
+  const base = commit(repo, 'base', { 'README.md': 'list\n' });
+  const before = commit(repo, 'add list', { 'list.js': 'alpha\nbeta\n' });
+  const after = commit(repo, 'grow list', { 'list.js': 'intro\nmore\nalpha\nbeta\nlast\n' });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, after),
+    repoPath: repo,
+    preferredPort: 9321,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  const review = ((await (await fetch(api('/api/diff'))).json()) as DiffResponse).review!;
+  const reviewQuery = `?base=${review.selection.baseCommitish}&target=${review.selection.targetCommitish}`;
+  await fetch(api(`/api/comments${reviewQuery}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      threads: [thread('moved', 2, 'beta', before), thread('kept', 5, 'last', after)],
+    }),
+  });
+
+  await expect.poll(() => received.length).toBe(1);
+  const message = received[0]!
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { message?: { content: string } })
+    .find((line) => line.message)!;
+  const [, ...lines] = message.message!.content.split('\n');
+  const told = new Map(
+    lines.map((line) => {
+      const parsed = JSON.parse(line) as { threadId: string };
+      return [parsed.threadId, parsed];
+    }),
+  );
+  expect(told.get('moved')).toMatchObject({
+    position: { side: 'new', line: 2 },
+    placement: { kind: 'moved', line: 4 },
+  });
+  expect(told.get('kept')).not.toHaveProperty('placement');
 });

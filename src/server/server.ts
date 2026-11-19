@@ -114,6 +114,7 @@ import {
   type ChangeKindsResponse,
   type CommitMessageResponse,
   type CommentImport,
+  type ChangedPlacement,
   type Comment,
   type CommentThread,
   type DiffCommentThread,
@@ -1718,14 +1719,37 @@ export async function startServer(options: ServerOptions): Promise<{
     try {
       const fixupsByThread = await fixupsByThreadFor(selection);
       const session = getOrCreateCommentSession(selection);
+      const waiting = selectThreadsAwaitingAgent(
+        session.threads,
+        fixupsByThread,
+        session.decisions,
+      );
       return {
-        waiting: selectThreadsAwaitingAgent(session.threads, fixupsByThread, session.decisions),
+        waiting: await withPlacements(selection, session.threads, waiting),
         ...(fixupsByThread ? { fixupsByThread } : {}),
       };
     } catch (error) {
       console.error('Error listing fixups:', error);
       return { waiting: [] };
     }
+  }
+
+  async function withPlacements(
+    selection: DiffSelection,
+    threads: readonly DiffCommentThread[],
+    waiting: ThreadAwaitingAgent[],
+  ): Promise<ThreadAwaitingAgent[]> {
+    const ids = new Set(waiting.map(({ threadId }) => threadId));
+    const placements = await placementsOrNone(
+      selection,
+      threads.filter(({ id }) => ids.has(id)),
+    );
+    if (!placements) return waiting;
+    const changed = placementsByThread(placements);
+    return waiting.map((thread) => {
+      const placement = changed[thread.threadId];
+      return placement ? { ...thread, placement } : thread;
+    });
   }
 
   // A thread passed again within the same turn keeps its first handover. `at` is when the threads
@@ -1844,7 +1868,8 @@ export async function startServer(options: ServerOptions): Promise<{
       );
       if (fresh.length === 0) return;
       const sentAt = new Date().toISOString();
-      if (await sendToClaudeSession(sessionMessageFor(port, fresh))) {
+      const told = await withPlacements(selection, current.threads, fresh);
+      if (await sendToClaudeSession(sessionMessageFor(port, told))) {
         for (const waiting of fresh) versionWhenTold.set(toldKey(waiting), version);
         recordHandover(selection, fresh, fixupsByThread, sentAt);
       }
@@ -2610,9 +2635,10 @@ export async function startServer(options: ServerOptions): Promise<{
 
   // Only the threads whose lines differ from the stored ones; the stored ones stay in `threads`.
   function placementsByThread(placements: ReadonlyMap<string, Placement>) {
-    const changed: Record<string, Placement> = {};
+    const changed: Record<string, ChangedPlacement> = {};
     for (const [id, placement] of placements) {
-      if (placement.kind === 'moved' || placement.kind === 'stale') changed[id] = placement;
+      if (placement.kind === 'stale') changed[id] = placement;
+      else if (placement.kind === 'moved') changed[id] = { ...placement, kind: 'moved' };
     }
     return changed;
   }
