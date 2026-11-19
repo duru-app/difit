@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { DiffFile, DiffLine, WalkthroughStep } from '../../types/diff';
 
-import { placeOfStep, referenceFilesOf } from './walkthroughStep';
+import {
+  placeOfStep,
+  referenceFilePathsOf,
+  referenceFilesOf,
+  referenceStepFits,
+} from './walkthroughStep';
 
 const COMMIT = '3f1c9e0a1b2c3d4e5f60718293a4b5c6d7e8f901';
 
@@ -112,8 +117,42 @@ describe('placeOfStep', () => {
   });
 });
 
+describe('referenceFilePathsOf', () => {
+  it('names each file the diff does not have once, in the order the steps reach it', () => {
+    expect(
+      referenceFilePathsOf(
+        [
+          step('src/b.ts', 40),
+          step('src/a.ts', 11),
+          step('src/c.ts', 2),
+          step('src/b.ts', 10, 12),
+          step('src/gone.ts', 1),
+        ],
+        { commit: COMMIT, diffTarget: '3f1c9e0', files },
+      ),
+    ).toEqual(['src/b.ts', 'src/c.ts']);
+  });
+});
+
+describe('referenceStepFits', () => {
+  const place = { file: 'src/b.ts', line: 10 };
+
+  it.each([
+    ['still loading', new Map(), undefined],
+    ['unreadable', new Map([['src/b.ts', null]]), false],
+    ['shorter than the line', new Map([['src/b.ts', 9]]), false],
+    ['long enough', new Map([['src/b.ts', 10]]), true],
+  ])('tells whether the step fits a file %s', (_, lineCounts, expected) => {
+    expect(referenceStepFits(place, lineCounts)).toBe(expected);
+  });
+});
+
 describe('referenceFilesOf', () => {
   const view = { commit: COMMIT, diffTarget: '3f1c9e0', files };
+  const lineCounts = new Map<string, number | null>([
+    ['src/b.ts', 100],
+    ['src/c.ts', 100],
+  ]);
 
   it('attaches each file the diff does not have once, in the order the steps reach it', () => {
     expect(
@@ -126,13 +165,15 @@ describe('referenceFilesOf', () => {
           step('src/gone.ts', 1),
         ],
         view,
+        lineCounts,
       ).map(({ file }) => file),
     ).toEqual(['src/b.ts', 'src/c.ts']);
   });
 
   it('keeps every part the steps of a file need, with three lines around each', () => {
     expect(
-      referenceFilesOf([step('src/b.ts', 40), step('src/b.ts', 10, 12)], view)[0]?.parts,
+      referenceFilesOf([step('src/b.ts', 40), step('src/b.ts', 10, 12)], view, lineCounts)[0]
+        ?.parts,
     ).toEqual([
       { start: 7, end: 15 },
       { start: 37, end: 43 },
@@ -141,17 +182,41 @@ describe('referenceFilesOf', () => {
 
   it('joins parts that touch or overlap and never starts before line 1', () => {
     expect(
-      referenceFilesOf([step('src/b.ts', 2), step('src/b.ts', 9), step('src/b.ts', 12)], view)[0]
-        ?.parts,
+      referenceFilesOf(
+        [step('src/b.ts', 2), step('src/b.ts', 9), step('src/b.ts', 12)],
+        view,
+        lineCounts,
+      )[0]?.parts,
     ).toEqual([{ start: 1, end: 15 }]);
   });
 
   it('attaches nothing on a view of another commit', () => {
     expect(
-      referenceFilesOf([step('src/b.ts', 40)], {
-        ...view,
-        diffTarget: 'b0b0b0b',
-      }),
+      referenceFilesOf(
+        [step('src/b.ts', 40)],
+        {
+          ...view,
+          diffTarget: 'b0b0b0b',
+        },
+        lineCounts,
+      ),
     ).toEqual([]);
+  });
+
+  it('leaves out a file still loading or unreadable, and the steps past the end of a file', () => {
+    expect(
+      referenceFilesOf(
+        [step('src/b.ts', 5), step('src/b.ts', 50), step('src/c.ts', 1), step('src/d.ts', 1)],
+        view,
+        new Map([
+          ['src/b.ts', 20],
+          ['src/c.ts', null],
+        ]),
+      ),
+    ).toEqual([{ file: 'src/b.ts', parts: [{ start: 2, end: 8 }] }]);
+  });
+
+  it('attaches no file none of whose steps fit it', () => {
+    expect(referenceFilesOf([step('src/b.ts', 50)], view, new Map([['src/b.ts', 20]]))).toEqual([]);
   });
 });

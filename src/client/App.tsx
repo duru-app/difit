@@ -148,6 +148,7 @@ import {
   reviewEntryRestoredByHistory,
   useReviewTargetHistory,
 } from './hooks/useReviewTargetHistory';
+import { useReferenceFileLines } from './hooks/useReferenceFileLines';
 import { useScrollVisibleFile } from './hooks/useScrollVisibleFile';
 import { useSymbolPeek } from './hooks/useSymbolPeek';
 import { useViewedFiles } from './hooks/useViewedFiles';
@@ -170,7 +171,13 @@ import {
   type WalkthroughPlayback,
   type WalkthroughPlaybackAction,
 } from './utils/walkthroughPlayback';
-import { placeOfStep, referenceFilesOf, type StepPlace } from './utils/walkthroughStep';
+import {
+  placeOfStep,
+  referenceFilePathsOf,
+  referenceFilesOf,
+  referenceStepFits,
+  type StepPlace,
+} from './utils/walkthroughStep';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { fixupLinesPlace } from './utils/fixupLines';
 import {
@@ -2819,13 +2826,27 @@ function App() {
     ? walkthroughOf(openedWalkthrough.threadId, openedWalkthrough.messageId)
     : undefined;
   const shownWalkthroughCases = openedWalkthroughData?.cases;
-  const walkthroughReferenceFiles =
-    openedWalkthroughData && openedWalkthrough
-      ? referenceFilesOf(
-          openedWalkthroughData.cases[openedWalkthrough.caseIndex]?.steps ?? [],
-          stepViewOf(openedWalkthroughData),
-        )
-      : [];
+  const openedCaseSteps =
+    (openedWalkthrough && shownWalkthroughCases?.[openedWalkthrough.caseIndex]?.steps) || [];
+  const referenceFileLines = useReferenceFileLines(
+    openedWalkthroughData
+      ? referenceFilePathsOf(openedCaseSteps, stepViewOf(openedWalkthroughData))
+      : [],
+    openedWalkthroughData?.commit,
+  );
+  const referenceLineCounts = new Map(
+    [...referenceFileLines].map(([file, lines]) => [file, lines?.length ?? null]),
+  );
+  const walkthroughReferenceFiles = openedWalkthroughData
+    ? referenceFilesOf(
+        openedCaseSteps,
+        stepViewOf(openedWalkthroughData),
+        referenceLineCounts,
+      ).flatMap((reference) => {
+        const lines = referenceFileLines.get(reference.file);
+        return lines ? [{ ...reference, lines }] : [];
+      })
+    : [];
 
   const openedStepGone =
     openedWalkthrough !== null &&
@@ -3510,7 +3531,8 @@ function App() {
                         index={openedWalkthrough.stepIndex}
                         shown={
                           shownWalkthroughPlace?.kind === 'shown' ||
-                          shownWalkthroughPlace?.kind === 'reference'
+                          (shownWalkthroughPlace?.kind === 'reference' &&
+                            referenceStepFits(shownWalkthroughPlace, referenceLineCounts) !== false)
                         }
                         onPlay={playOpenedWalkthrough}
                         onClose={closeWalkthrough}
@@ -3645,7 +3667,6 @@ function App() {
                       {openedWalkthroughData && (
                         <WalkthroughReferenceFiles
                           files={walkthroughReferenceFiles}
-                          gitRef={openedWalkthroughData.commit}
                           step={
                             shownWalkthroughPlace?.kind === 'reference'
                               ? shownWalkthroughPlace

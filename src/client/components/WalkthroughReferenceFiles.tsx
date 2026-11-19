@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 
 import { useHighlightedCode } from '../hooks/useHighlightedCode';
-import { fetchBlobText, tokenizeContent } from '../utils/fileTokens';
+import { tokenizeContent } from '../utils/fileTokens';
 import { getPrismLanguageFromFilename } from '../utils/languageDetection';
 import type { ReferenceFile } from '../utils/walkthroughStep';
 
@@ -15,10 +15,11 @@ interface ReferenceStep {
   endLine: number;
 }
 
+type ReferenceFileWithLines = ReferenceFile & { lines: readonly string[] };
+
 interface WalkthroughReferenceFilesProps {
-  files: readonly ReferenceFile[];
-  // The walkthrough's commit, whose lines its steps name.
-  gitRef: string;
+  // Read at the walkthrough's commit, whose lines its steps name.
+  files: readonly ReferenceFileWithLines[];
   step: ReferenceStep | null;
   syntaxTheme?: AppearanceSettings['syntaxTheme'];
   onShowLine: (file: string, elementId: string) => void;
@@ -35,33 +36,17 @@ const CODE_CLASS =
 function ReferenceFileView({
   file,
   parts,
-  gitRef,
+  lines,
   step,
   syntaxTheme,
   onShowLine,
-}: ReferenceFile & Omit<WalkthroughReferenceFilesProps, 'files'>) {
-  const [text, setText] = useState<string | null | undefined>(undefined);
+}: ReferenceFileWithLines & Omit<WalkthroughReferenceFilesProps, 'files'>) {
   const language = useMemo(() => getPrismLanguageFromFilename(file), [file]);
   const { ready: grammarReady } = useHighlightedCode(language);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setText(undefined);
-    void fetchBlobText(file, gitRef, controller.signal).then((fetched) => {
-      if (!controller.signal.aborted) setText(fetched?.replace(/\r\n/g, '\n') ?? null);
-    });
-    return () => controller.abort();
-  }, [file, gitRef]);
-
-  const lines = useMemo(() => {
-    if (!text) return [];
-    const split = text.split('\n');
-    if (split.at(-1) === '') split.pop();
-    return split;
-  }, [text]);
   const tokens = useMemo(
-    () => (grammarReady && text ? tokenizeContent(lines.join('\n'), language) : null),
-    [grammarReady, text, lines, language],
+    () => (grammarReady ? tokenizeContent(lines.join('\n'), language) : null),
+    [grammarReady, lines, language],
   );
   const shownParts = parts
     .map(({ start, end }) => ({ start, end: Math.min(end, lines.length) }))
@@ -88,68 +73,60 @@ function ReferenceFileView({
         </span>
         <FilePathText path={file} className="font-mono text-github-text-primary" />
       </div>
-      {text === undefined && (
-        <p className="px-4 py-3 text-sm text-github-text-secondary">파일을 읽는 중…</p>
-      )}
-      {text === null && (
-        <p className="px-4 py-3 text-sm text-github-text-secondary">파일을 읽지 못했습니다.</p>
-      )}
-      {text !== undefined && text !== null && (
-        <table className="w-full border-collapse font-mono text-xs">
-          <tbody>
-            {shownParts.map(({ start, end }, partIndex) => {
-              const previousEnd = shownParts[partIndex - 1]?.end;
-              return (
-                <Fragment key={start}>
-                  {previousEnd !== undefined && (
-                    <tr>
-                      <td
-                        colSpan={2}
-                        className="bg-github-bg-secondary px-4 py-0.5 text-github-text-muted"
-                      >
-                        {`⋯ ${start - previousEnd - 1}줄 생략`}
+      <table className="w-full border-collapse font-mono text-xs">
+        <tbody>
+          {shownParts.map(({ start, end }, partIndex) => {
+            const previousEnd = shownParts[partIndex - 1]?.end;
+            return (
+              <Fragment key={start}>
+                {previousEnd !== undefined && (
+                  <tr>
+                    <td
+                      colSpan={2}
+                      className="bg-github-bg-secondary px-4 py-0.5 text-github-text-muted"
+                    >
+                      {`⋯ ${start - previousEnd - 1}줄 생략`}
+                    </td>
+                  </tr>
+                )}
+                {lines.slice(start - 1, end).map((content, index) => {
+                  const lineNumber = start + index;
+                  const lineTokens = tokens?.[lineNumber - 1];
+                  const isStep =
+                    stepHere !== null &&
+                    lineNumber >= stepHere.line &&
+                    lineNumber <= stepHere.endLine;
+                  return (
+                    <tr
+                      key={lineNumber}
+                      id={referenceLineId(file, lineNumber)}
+                      data-reference-line={lineNumber}
+                      {...(isStep && { 'data-walkthrough-step': '' })}
+                    >
+                      <td className="w-12 select-none border-r border-github-border px-2 text-right align-top text-github-text-muted">
+                        {lineNumber}
+                      </td>
+                      <td className="px-3 align-top">
+                        {content.length > MAX_HIGHLIGHTED_LINE_LENGTH ? (
+                          <span className={CODE_CLASS}>{content}</span>
+                        ) : (
+                          <EnhancedPrismSyntaxHighlighter
+                            code={content}
+                            className={CODE_CLASS}
+                            syntaxTheme={syntaxTheme}
+                            filename={file}
+                            precomputedTokens={lineTokens ? [lineTokens] : null}
+                          />
+                        )}
                       </td>
                     </tr>
-                  )}
-                  {lines.slice(start - 1, end).map((content, index) => {
-                    const lineNumber = start + index;
-                    const lineTokens = tokens?.[lineNumber - 1];
-                    const isStep =
-                      stepHere !== null &&
-                      lineNumber >= stepHere.line &&
-                      lineNumber <= stepHere.endLine;
-                    return (
-                      <tr
-                        key={lineNumber}
-                        id={referenceLineId(file, lineNumber)}
-                        data-reference-line={lineNumber}
-                        {...(isStep && { 'data-walkthrough-step': '' })}
-                      >
-                        <td className="w-12 select-none border-r border-github-border px-2 text-right align-top text-github-text-muted">
-                          {lineNumber}
-                        </td>
-                        <td className="px-3 align-top">
-                          {content.length > MAX_HIGHLIGHTED_LINE_LENGTH ? (
-                            <span className={CODE_CLASS}>{content}</span>
-                          ) : (
-                            <EnhancedPrismSyntaxHighlighter
-                              code={content}
-                              className={CODE_CLASS}
-                              syntaxTheme={syntaxTheme}
-                              filename={file}
-                              precomputedTokens={lineTokens ? [lineTokens] : null}
-                            />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+                  );
+                })}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
     </section>
   );
 }

@@ -48,14 +48,38 @@ export interface ReferenceFile {
   parts: { start: number; end: number }[];
 }
 
+type ReferencePlace = Extract<StepPlace, { kind: 'reference' }>;
+
+const referencePlacesOf = (steps: readonly WalkthroughStep[], view: StepView) =>
+  steps
+    .map((step) => placeOfStep(step, view))
+    .filter((place): place is ReferencePlace => place.kind === 'reference');
+
+export const referenceFilePathsOf = (steps: readonly WalkthroughStep[], view: StepView) => [
+  ...new Set(referencePlacesOf(steps, view).map(({ file }) => file)),
+];
+
+// A file absent from the map is still loading; `null` means it could not be read.
+export type ReferenceLineCounts = ReadonlyMap<string, number | null>;
+
+// `undefined` while the file is still loading.
+export function referenceStepFits(
+  place: { file: string; line: number },
+  lineCounts: ReferenceLineCounts,
+): boolean | undefined {
+  if (!lineCounts.has(place.file)) return undefined;
+  const count = lineCounts.get(place.file) ?? null;
+  return count !== null && place.line <= count;
+}
+
 export function referenceFilesOf(
   steps: readonly WalkthroughStep[],
   view: StepView,
+  lineCounts: ReferenceLineCounts,
 ): ReferenceFile[] {
   const ranges = new Map<string, { start: number; end: number }[]>();
-  for (const step of steps) {
-    const place = placeOfStep(step, view);
-    if (place.kind !== 'reference') continue;
+  for (const place of referencePlacesOf(steps, view)) {
+    if (referenceStepFits(place, lineCounts) !== true) continue;
     const fileRanges = ranges.get(place.file) ?? [];
     fileRanges.push({
       start: Math.max(1, place.line - REFERENCE_CONTEXT_LINES),
