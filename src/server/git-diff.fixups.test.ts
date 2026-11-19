@@ -290,7 +290,7 @@ describe('listThreadFixups against a real repository', () => {
     expect(few.fixups).toHaveLength(2);
     expect(many.fixups).toHaveLength(15);
     expect(many.calls).toEqual(few.calls);
-    expect(many.calls.length).toBeLessThanOrEqual(4);
+    expect(many.calls.length).toBeLessThanOrEqual(5);
   });
 
   it('reads one fixup the same as the list does', async () => {
@@ -311,7 +311,7 @@ describe('listThreadFixups against a real repository', () => {
     expect(await parser.readThreadFixup(second)).toEqual(listed.find((f) => f.sha === second));
   });
 
-  it('reads fixups that are not merges with a single git log', async () => {
+  it('reads fixups that are not merges with one git log inside the review range and one after it', async () => {
     const repo = createRepo();
     commit(repo, 'base', { 'f.txt': 'a\n' });
     const target = git(repo, 'rev-parse', 'HEAD');
@@ -327,7 +327,7 @@ describe('listThreadFixups against a real repository', () => {
     });
 
     expect(fixups).toHaveLength(5);
-    expect(calls).toEqual(['revparse', 'revparse', 'raw']);
+    expect(calls).toEqual(['revparse', 'revparse', 'raw', 'raw']);
   });
 
   it('follows a rename even when the repository turns diff.renames off', async () => {

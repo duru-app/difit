@@ -1603,19 +1603,28 @@ index abc123..def456 100644
     const fixupLogEntry = (sha: string, subject: string, trailerValues: string, diff = '') =>
       `\0${sha}\0cafe\x002026-01-01T00:00:00+09:00\0${subject}\0${trailerValues}\0\n${diff ? `\n${diff}\n` : ''}`;
 
-    it('returns nothing for working-tree targets or when the target is already HEAD', async () => {
-      const gitRevparse = (parser as any).git.revparse;
+    it('returns nothing for working-tree targets', async () => {
       const gitRaw = (parser as any).git.raw;
 
       expect(
         await parser.listThreadFixups({ targetCommitish: '.', baseCommitish: 'HEAD' }),
       ).toEqual([]);
+      expect(gitRaw).not.toHaveBeenCalled();
+    });
 
+    it('reads only the review range when the target is already HEAD', async () => {
+      const gitRevparse = (parser as any).git.revparse;
+      const gitRaw = (parser as any).git.raw;
       gitRevparse.mockResolvedValue('aaaa\n');
+      gitRaw.mockResolvedValue('');
+
       expect(
         await parser.listThreadFixups({ targetCommitish: 'HEAD', baseCommitish: 'HEAD~1' }),
       ).toEqual([]);
-      expect(gitRaw).not.toHaveBeenCalled();
+      expect(gitRaw).toHaveBeenCalledTimes(1);
+      expect(gitRaw).toHaveBeenCalledWith(
+        expect.arrayContaining(['log', '--first-parent', 'HEAD~1..aaaa']),
+      );
     });
 
     it('does not hand an option-like target to git', async () => {
@@ -1648,7 +1657,7 @@ index abc123..def456 100644
       const targetSha = '1234567890abcdef1234567890abcdef12345678';
 
       gitRevparse.mockResolvedValueOnce(`${targetSha}\n`).mockResolvedValueOnce('ffff\n');
-      gitRaw.mockResolvedValue(
+      const stackedLog =
         fixupLogEntry(
           fixupSha,
           'fixup! change b',
@@ -1663,7 +1672,9 @@ index abc123..def456 100644
             '+// why',
             ' b',
           ].join('\n'),
-        ) + fixupLogEntry('deadbeef', 'no trailer', ''),
+        ) + fixupLogEntry('deadbeef', 'no trailer', '');
+      gitRaw.mockImplementation(async (args: string[]) =>
+        args.includes(`${targetSha}..HEAD`) ? stackedLog : '',
       );
 
       const fixups = await parser.listThreadFixups({
@@ -1682,7 +1693,10 @@ index abc123..def456 100644
           `${targetSha}..HEAD`,
         ]),
       );
-      expect(gitRaw).toHaveBeenCalledTimes(1);
+      expect(gitRaw).toHaveBeenCalledWith(
+        expect.arrayContaining(['--first-parent', `main..${targetSha}`]),
+      );
+      expect(gitRaw).toHaveBeenCalledTimes(2);
       expect(gitDiff).not.toHaveBeenCalled();
       expect(fixups).toHaveLength(1);
       expect(fixups[0]).toMatchObject({

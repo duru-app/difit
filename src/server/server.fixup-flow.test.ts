@@ -1416,3 +1416,119 @@ it('carries the comments and decisions of a review into the review reopened on a
     await threadIds(`base=${movedTo.baseCommitish}&target=${movedTo.targetCommitish}`),
   ).toEqual(['line', 'subject', 'settled']);
 });
+
+async function reviewWithFixupBehindNewCommit(preferredPort: number) {
+  const repo = mkdtempSync(join(tmpdir(), 'difit-fixup-flow-'));
+  cleanups.push(() => rmSync(repo, { recursive: true, force: true }));
+  git(repo, ['init', '-q']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  const base = commit(repo, 'base', {
+    'discount.js': 'export function discount(price) {\n  return price * 0.1;\n}\n',
+  });
+  const pin = commit(repo, 'test: pin current discount', { 'discount.test.js': PINNING_TEST });
+  const oldTip = commit(repo, 'fix: round discount down', {
+    'discount.js': 'export function discount(price) {\n  return Math.floor(price * 0.1);\n}\n',
+  });
+
+  const { port, server } = await startServer({
+    selection: createDiffSelection(base, oldTip),
+    repoPath: repo,
+    preferredPort,
+  });
+  cleanups.push(() => new Promise<void>((resolve) => server?.close(() => resolve())));
+  const api = (path: string) => `http://localhost:${port}${path}`;
+  const post = (path: string, body: unknown) =>
+    fetch(api(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  await fetch(api('/api/diff'));
+  await post('/api/comment-imports', [
+    {
+      type: 'thread',
+      id: 't1',
+      author: 'User',
+      filePath: 'discount.test.js',
+      position: { side: 'new', line: 3 },
+      fixupTarget: pin,
+      body: 'Say what it pins.',
+    },
+  ]);
+
+  writeFileSync(
+    join(repo, 'discount.test.js'),
+    PINNING_TEST.replace("test('discount'", "test('takes ten percent without rounding'"),
+  );
+  // A comment written in the same second as the fixup reads as a reply to it.
+  const later = new Date(Date.now() + 60_000).toISOString();
+  git(repo, ['commit', '-q', '-a', `--fixup=${pin}`, '--trailer', 'Review-Thread: t1'], {
+    GIT_AUTHOR_DATE: later,
+    GIT_COMMITTER_DATE: later,
+  });
+  const fixup = git(repo, ['rev-parse', 'HEAD']);
+  const newTip = commit(repo, 'docs: note the rounding', { 'README.md': 'rounds down\n' });
+
+  const newReview = `base=${base}&target=${newTip}`;
+  const reopened = (await (await fetch(api(`/api/diff?${newReview}`))).json()) as DiffResponse;
+  expect(reopened.reviewMoves).toHaveLength(1);
+  const text = async (path: string) => (await fetch(api(path))).text();
+  const decide = (decision: Record<string, string>) =>
+    post(`/api/decisions?${newReview}`, [
+      { threadId: 't1', at: new Date().toISOString(), ...decision },
+    ]);
+  const cards = async () =>
+    (
+      (await (await fetch(api(`/api/fixups?${newReview}`))).json()) as {
+        fixups: Array<{ sha: string; threadIds: string[]; foldTargetSha?: string }>;
+      }
+    ).fixups.map(({ sha, threadIds, foldTargetSha }) => ({ sha, threadIds, foldTargetSha }));
+  return { repo, base, pin, fixup, newReview, text, decide, cards };
+}
+
+it('keeps the card of a fixup awaiting approval when the review is reopened on a commit above it', async () => {
+  const { fixup, pin, newReview, text, cards } = await reviewWithFixupBehindNewCommit(9360);
+
+  expect(await cards()).toEqual([{ sha: fixup, threadIds: ['t1'], foldTargetSha: pin }]);
+  expect(await text(`/api/comments-output?${newReview}`)).toContain(
+    'discount.test.js:L3 [승인 대기]',
+  );
+});
+
+it('folds a fixup approved in the reopened review into the commit it was made for', async () => {
+  const { repo, base, pin, fixup, newReview, text, decide, cards } =
+    await reviewWithFixupBehindNewCommit(9365);
+
+  await decide({ kind: 'approved', fixupSha: fixup });
+  expect(await cards()).toEqual([{ sha: fixup, threadIds: ['t1'], foldTargetSha: pin }]);
+  expect(await text(`/api/comments-output?${newReview}`)).toContain('discount.test.js:L3 [승인됨]');
+
+  git(repo, ['rebase', '-q', '-i', '--autosquash', base], { GIT_SEQUENCE_EDITOR: ':' });
+  expect(git(repo, ['log', '--format=%s', `${base}..HEAD`]).split('\n')).toEqual([
+    'docs: note the rounding',
+    'fix: round discount down',
+    'test: pin current discount',
+  ]);
+  const newPin = git(repo, ['rev-parse', 'HEAD~2']);
+  expect(git(repo, ['show', newPin, '--', 'discount.test.js'])).toContain(
+    "+test('takes ten percent without rounding', () => {",
+  );
+  await decide({ kind: 'folded', fixupSha: fixup, targetSha: newPin });
+  expect(await text(`/api/comments-output?${newReview}`)).toContain('discount.test.js:L3 [접힘]');
+});
+
+it('hands the comment back to the agent when the fixup is rejected in the reopened review', async () => {
+  const { fixup, newReview, text, decide } = await reviewWithFixupBehindNewCommit(9370);
+  const wait = () => text(`/api/comments-wait?${newReview}`);
+  const waiting = await Promise.race([
+    wait(),
+    new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 500)),
+  ]);
+  expect(waiting).toBe('still waiting');
+
+  await decide({ kind: 'rejected', fixupSha: fixup });
+  expect(await text(`/api/comments-output?${newReview}`)).toContain(
+    'discount.test.js:L3 [다시 수정 중]',
+  );
+  expect(await wait()).toContain('"threadId":"t1"');
+});
