@@ -808,9 +808,20 @@ function pickNewerMessage(
   return cloneMessage(existingMessage);
 }
 
+function withWalkthroughOf(
+  message: DiffCommentMessage,
+  owner: DiffCommentMessage | undefined,
+): DiffCommentMessage {
+  const copy = { ...message };
+  delete copy.walkthrough;
+  if (owner?.walkthrough) copy.walkthrough = cloneWalkthrough(owner.walkthrough);
+  return copy;
+}
+
 function mergeThread(
   existingThread: DiffCommentThread,
   incomingThread: DiffCommentThread,
+  { existingOwnsWalkthroughs = false }: MergeCommentThreadsOptions,
 ): DiffCommentThread {
   const mergedMessages = existingThread.messages.map(cloneMessage);
 
@@ -819,11 +830,16 @@ function mergeThread(
       messagesMatch(message, incomingMessage),
     );
     if (matchIndex >= 0) {
-      mergedMessages[matchIndex] = pickNewerMessage(mergedMessages[matchIndex], incomingMessage);
+      const existingMessage = mergedMessages[matchIndex];
+      const newer = pickNewerMessage(existingMessage, incomingMessage);
+      mergedMessages[matchIndex] = existingOwnsWalkthroughs
+        ? withWalkthroughOf(newer, existingMessage)
+        : newer;
       continue;
     }
 
-    mergedMessages.push(cloneMessage(incomingMessage));
+    const added = cloneMessage(incomingMessage);
+    mergedMessages.push(existingOwnsWalkthroughs ? withWalkthroughOf(added, undefined) : added);
   }
 
   const [rootMessage, ...replyMessages] = mergedMessages;
@@ -858,9 +874,16 @@ function mergeThread(
   };
 }
 
+interface MergeCommentThreadsOptions {
+  // The existing threads are the server's, the only writer of walkthroughs, and the incoming ones
+  // a page's copy that may predate a walkthrough being attached or removed.
+  existingOwnsWalkthroughs?: boolean;
+}
+
 export function mergeCommentThreads(
   existingThreads: DiffCommentThread[],
   incomingThreads: DiffCommentThread[],
+  options: MergeCommentThreadsOptions = {},
 ): MergeCommentImportsResult {
   const threads = existingThreads.map(cloneThread);
 
@@ -871,7 +894,7 @@ export function mergeCommentThreads(
       continue;
     }
 
-    threads[existingIndex] = mergeThread(threads[existingIndex], incomingThread);
+    threads[existingIndex] = mergeThread(threads[existingIndex], incomingThread, options);
   }
 
   return { threads, warnings: [] };

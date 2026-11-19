@@ -1373,4 +1373,46 @@ describe('commentImports', () => {
       expect(mergeCommentThreads(threads, threads).threads).toEqual(threads);
     });
   });
+
+  describe('a walkthrough on an agent reply', () => {
+    const steps = {
+      commit: PIN_SHA,
+      cases: [{ steps: [{ file: 'a.ts', line: 1, description: 'x' }] }],
+    };
+    const answered = (body: string, updatedAt: string, withWalkthrough: boolean) => {
+      const thread = createThread({ id: 't', body: 'q' });
+      const reply = {
+        id: 'r',
+        body,
+        author: 'Agent',
+        createdAt: '2024-01-01T00:01:00.000Z',
+        updatedAt,
+        ...(withWalkthrough ? { walkthrough: steps } : {}),
+      };
+      return { ...thread, messages: [...thread.messages, reply] };
+    };
+
+    it('stays removed when the existing side owns walkthroughs and the incoming copy still has it', () => {
+      const existing = answered('a', '2024-01-01T00:01:00.000Z', false);
+      const incoming = answered('a', '2024-01-01T00:01:00.000Z', true);
+
+      const [merged] = mergeCommentThreads([existing], [incoming], {
+        existingOwnsWalkthroughs: true,
+      }).threads;
+
+      expect(merged?.messages[1]).not.toHaveProperty('walkthrough');
+    });
+
+    it('stays when the existing side owns walkthroughs and the incoming copy edits the reply text', () => {
+      const existing = answered('a', '2024-01-01T00:01:00.000Z', true);
+      const incoming = answered('b', '2024-01-01T00:02:00.000Z', false);
+
+      const [merged] = mergeCommentThreads([existing], [incoming], {
+        existingOwnsWalkthroughs: true,
+      }).threads;
+
+      expect(merged?.messages[1]?.body).toBe('b');
+      expect(merged?.messages[1]?.walkthrough).toEqual(steps);
+    });
+  });
 });
