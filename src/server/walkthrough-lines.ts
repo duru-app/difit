@@ -1,4 +1,5 @@
 import type { WalkthroughCase } from '../types/diff.js';
+import { caseLabel } from '../utils/walkthrough.js';
 
 // `countLines` gives null for a file the tree does not have.
 export async function warningsForMissingLines(
@@ -14,13 +15,18 @@ export async function warningsForMissingLines(
     counts.set(file, counted);
     return counted;
   };
-  const steps = cases.flatMap((item) => item.steps);
+  const steps = cases.flatMap((item, caseIndex) =>
+    item.steps.map((step, index) => ({
+      ...step,
+      where: `${cases.length > 1 ? `${caseLabel(caseIndex)} ` : ''}step ${index + 1}`,
+    })),
+  );
   const warnings = await Promise.all(
-    steps.map(async ({ file, line, endLine = line }, index) => {
+    steps.map(async ({ file, line, endLine = line, where }) => {
       const count = await countOf(file);
-      if (count === null) return [`step ${index + 1}: ${file} is not in ${treeLabel}`];
+      if (count === null) return [`${where}: ${file} is not in ${treeLabel}`];
       if (endLine > count) {
-        return [`step ${index + 1}: ${file} has ${count} lines, so line ${endLine} is not there`];
+        return [`${where}: ${file} has ${count} lines, so line ${endLine} is not there`];
       }
       return [];
     }),

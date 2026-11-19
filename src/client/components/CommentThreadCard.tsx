@@ -86,7 +86,8 @@ function ThreadMessageItem({
   const isAgentAuthored = Boolean(author) && isAgentMessage({ author });
 
   const openWalkthrough = useOpenWalkthrough();
-  const walkthroughSteps = message.walkthrough?.cases[0]?.steps.length ?? 0;
+  const walkthroughCases = message.walkthrough?.cases ?? [];
+  const walkthroughSteps = walkthroughCases[0]?.steps.length ?? 0;
   const opensWalkthrough =
     openWalkthrough && walkthroughSteps > 0
       ? () => openWalkthrough(threadId, message.id)
@@ -263,7 +264,9 @@ function ThreadMessageItem({
               className="mt-1 inline-flex items-center gap-1 rounded-full border border-[var(--color-walkthrough-step-border)] px-2 py-0.5 text-xs text-github-text-primary hover:bg-github-bg-tertiary"
             >
               <Route size={12} />
-              따라가기 {walkthroughSteps}단계
+              {walkthroughCases.length > 1
+                ? `따라가기 경우 ${walkthroughCases.length}개`
+                : `따라가기 ${walkthroughSteps}단계`}
             </button>
           )}
         </div>

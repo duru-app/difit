@@ -1,7 +1,7 @@
 import type { Walkthrough, WalkthroughCase, WalkthroughStep } from '../types/diff.js';
 
 const STEP_FIELDS = new Set(['file', 'line', 'endLine', 'description']);
-const CASE_FIELDS = new Set(['title', 'steps']);
+const CASE_FIELDS = new Set(['title', 'setup', 'steps']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -43,15 +43,22 @@ function parseStep(value: unknown, where: string, warnings: string[]): Walkthrou
   };
 }
 
-function parseCase(value: unknown, warnings: string[]): WalkthroughCase {
-  if (!isRecord(value)) invalid('a case must be an object');
-  const { title, steps } = value;
-  if (title !== undefined && typeof title !== 'string') invalid('"title" must be a string');
-  if (!Array.isArray(steps) || steps.length === 0) invalid('a case needs at least one step');
-  warnings.push(...ignoredFields(value, CASE_FIELDS, 'case'));
+export const caseLabel = (index: number) => `case ${index + 1}`;
+
+function parseCase(value: unknown, where: string, warnings: string[]): WalkthroughCase {
+  const inCase = (what: string) => (where ? `${where} ${what}` : what);
+  if (!isRecord(value)) invalid(`${where || 'a case'} must be an object`);
+  const { title, setup, steps } = value;
+  if (title !== undefined && typeof title !== 'string') invalid(inCase('"title" must be a string'));
+  if (setup !== undefined && typeof setup !== 'string') invalid(inCase('"setup" must be a string'));
+  if (!Array.isArray(steps) || steps.length === 0) {
+    invalid(`${where || 'a case'} needs at least one step`);
+  }
+  warnings.push(...ignoredFields(value, CASE_FIELDS, where || 'case'));
   return {
     ...(title?.trim() ? { title } : {}),
-    steps: steps.map((step, index) => parseStep(step, `step ${index + 1}`, warnings)),
+    ...(setup?.trim() ? { setup } : {}),
+    steps: steps.map((step, index) => parseStep(step, inCase(`step ${index + 1}`), warnings)),
   };
 }
 
@@ -63,16 +70,21 @@ export function parseWalkthrough(value: unknown): {
   if (!isRecord(value)) invalid('expected a JSON object with "cases"');
   const { cases } = value;
   if (!Array.isArray(cases) || cases.length === 0) invalid('"cases" needs one case');
-  if (cases.length > 1) invalid('only one case is supported for now');
   const warnings = ignoredFields(value, new Set(['cases']), 'walkthrough');
-  return { cases: cases.map((item) => parseCase(item, warnings)), warnings };
+  return {
+    cases: cases.map((item, index) =>
+      parseCase(item, cases.length > 1 ? caseLabel(index) : '', warnings),
+    ),
+    warnings,
+  };
 }
 
 export function cloneWalkthrough(walkthrough: Walkthrough): Walkthrough {
   return {
     commit: walkthrough.commit,
-    cases: walkthrough.cases.map(({ title, steps }) => ({
+    cases: walkthrough.cases.map(({ title, setup, steps }) => ({
       ...(title === undefined ? {} : { title }),
+      ...(setup === undefined ? {} : { setup }),
       steps: steps.map((step) => ({ ...step })),
     })),
   };

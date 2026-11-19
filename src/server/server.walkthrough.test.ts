@@ -212,6 +212,45 @@ describe('walkthrough API', () => {
     ]);
   });
 
+  it('stores every case with its setup and names the case of each step it warns about', async () => {
+    const { repo, base, head } = createRepo();
+    const review = await open(repo, base);
+    await askAndAnswer(review);
+
+    const added = await review.call('PUT', '/api/threads/t1/walkthrough', {
+      cases: [
+        {
+          title: '정상 흐름',
+          setup: '값이 2 이다.',
+          steps: [{ file: 'a.txt', line: 2, description: '값을 바꾼다.' }],
+        },
+        {
+          title: '오류 흐름',
+          setup: '파일이 없다.',
+          steps: [
+            { file: 'a.txt', line: 1, description: '읽으려 한다.' },
+            { file: 'missing.ts', line: 1, description: '없는 파일' },
+          ],
+        },
+      ],
+    });
+
+    expect(added.body.warnings).toEqual([
+      `case 2 step 2: missing.ts is not in ${head.slice(0, 7)}`,
+    ]);
+    const [thread] = await review.threads();
+    expect(
+      thread?.messages[1]?.walkthrough?.cases.map(({ title, setup, steps }) => ({
+        title,
+        setup,
+        steps: steps.length,
+      })),
+    ).toEqual([
+      { title: '정상 흐름', setup: '값이 2 이다.', steps: 1 },
+      { title: '오류 흐름', setup: '파일이 없다.', steps: 2 },
+    ]);
+  });
+
   it('replaces the walkthrough on the same reply and removes it on request', async () => {
     const { repo, base } = createRepo();
     const review = await open(repo, base);
@@ -306,9 +345,6 @@ describe('walkthrough API', () => {
     const step = { file: 'a.txt', line: 2, description: '값을 바꾼다.' };
 
     const noSteps = await review.call('PUT', '/api/threads/t1/walkthrough', { cases: [] });
-    const twoCases = await review.call('PUT', '/api/threads/t1/walkthrough', {
-      cases: [{ steps: [step] }, { steps: [step] }],
-    });
     const noReply = await review.call(
       'PUT',
       `/api/threads/${agentThread?.id}/walkthrough`,
@@ -319,10 +355,6 @@ describe('walkthrough API', () => {
     expect(noSteps).toEqual({
       status: 400,
       body: { error: 'Invalid walkthrough: "cases" needs one case' },
-    });
-    expect(twoCases).toEqual({
-      status: 400,
-      body: { error: 'Invalid walkthrough: only one case is supported for now' },
     });
     expect(noReply.status).toBe(409);
     expect(noThread.status).toBe(404);

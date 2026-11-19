@@ -2009,6 +2009,46 @@ describe(
         expect(stepRows()).toEqual([]);
       });
 
+      it('switches to the first step of the picked case and moves the highlight there', async () => {
+        const thread = answered();
+        thread.messages[1]!.walkthrough!.cases = [
+          {
+            title: '정상 흐름',
+            setup: '값이 숫자다.',
+            steps: [
+              { file: 'a.ts', line: 3, description: '요청을 받는다.' },
+              { file: 'a.ts', line: 4, description: '값을 더한다.' },
+            ],
+          },
+          {
+            title: '오류 흐름',
+            setup: '값이 비었다.',
+            steps: [
+              { file: 'b.ts', line: 10, description: '빈 값을 만난다.' },
+              { file: 'b.ts', line: 11, description: '던진다.' },
+              { file: 'a.ts', line: 5, description: '받아서 알린다.' },
+            ],
+          },
+        ];
+        mockComments = [thread];
+        const user = userEvent.setup();
+        renderApp();
+        await openFromReply(user);
+        await user.click(screen.getByRole('button', { name: '다음 단계' }));
+        await waitFor(() => expect(stepRows()).toEqual([['a.ts', 'line 4']]));
+
+        await user.selectOptions(
+          within(bar()!).getByRole('combobox', { name: '경우' }),
+          '오류 흐름',
+        );
+
+        expect(within(bar()!).getByText('1 / 3')).toBeInTheDocument();
+        expect(within(bar()!).getByText('값이 비었다.')).toBeInTheDocument();
+        expect(within(bar()!).getByText('빈 값을 만난다.')).toBeInTheDocument();
+        await waitFor(() => expect(stepRows()).toEqual([['b.ts', 'line 10']]));
+        await waitFor(() => expect(fileShown()).toBe('b.ts'));
+      });
+
       it('takes a comment on a step line as usual', async () => {
         const user = userEvent.setup();
         renderApp();

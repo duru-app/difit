@@ -163,6 +163,11 @@ import {
 } from './utils/symbolPeek';
 import { copyTextToClipboard } from './utils/clipboard';
 import { createDiffPathResolver, type DiffLineTarget, linesOf } from './utils/diffLineLinks';
+import {
+  playWalkthrough,
+  type WalkthroughPlayback,
+  type WalkthroughPlaybackAction,
+} from './utils/walkthroughPlayback';
 import { placeOfStep, type StepPlace } from './utils/walkthroughStep';
 import { fixupFileElementId, getFileElementId } from './utils/domUtils';
 import { fixupLinesPlace } from './utils/fixupLines';
@@ -2504,12 +2509,14 @@ function App() {
   };
   showFixupFileRef.current = showFixupFile;
 
-  const [openedWalkthrough, setOpenedWalkthrough] = useState<{
-    threadId: string;
-    messageId: string;
-    index: number;
-    entry: string | null;
-  } | null>(null);
+  const [openedWalkthrough, setOpenedWalkthrough] = useState<
+    | (WalkthroughPlayback & {
+        threadId: string;
+        messageId: string;
+        entry: string | null;
+      })
+    | null
+  >(null);
   const showPlace = (place: ReviewPlace, restoring: boolean, afterRender: boolean) => {
     if (place.kind === 'thread') {
       const thread = shownThreads.find(({ id }) => id === place.threadId);
@@ -2732,9 +2739,13 @@ function App() {
   const walkthroughOf = (threadId: string, messageId: string) =>
     shownThreads.find(({ id }) => id === threadId)?.messages.find(({ id }) => id === messageId)
       ?.walkthrough;
-  const walkthroughStepAt = (threadId: string, messageId: string, index: number) => {
+  const walkthroughStepAt = (
+    threadId: string,
+    messageId: string,
+    { caseIndex, stepIndex }: WalkthroughPlayback,
+  ) => {
     const walkthrough = walkthroughOf(threadId, messageId);
-    const step = walkthrough?.cases[0]?.steps[index];
+    const step = walkthrough?.cases[caseIndex]?.steps[stepIndex];
     if (!walkthrough || !step) return null;
     return placeOfStep(step, {
       commit: walkthrough.commit,
@@ -2755,7 +2766,8 @@ function App() {
     );
   };
   const openWalkthrough = (threadId: string, messageId: string) => {
-    const place = walkthroughStepAt(threadId, messageId, 0);
+    const start = { caseIndex: 0, stepIndex: 0 };
+    const place = walkthroughStepAt(threadId, messageId, start);
     if (!place) return;
     const before = JSON.stringify(window.history.state);
     if (place.kind === 'shown') {
@@ -2765,15 +2777,22 @@ function App() {
       );
     }
     const after = JSON.stringify(window.history.state);
-    setOpenedWalkthrough({ threadId, messageId, index: 0, entry: after === before ? null : after });
+    setOpenedWalkthrough({
+      threadId,
+      messageId,
+      ...start,
+      entry: after === before ? null : after,
+    });
     showWalkthroughStep(place);
   };
-  const moveWalkthrough = (index: number) => {
+  const playOpenedWalkthrough = (action: WalkthroughPlaybackAction) => {
     if (!openedWalkthrough) return;
-    setOpenedWalkthrough({ ...openedWalkthrough, index });
-    showWalkthroughStep(
-      walkthroughStepAt(openedWalkthrough.threadId, openedWalkthrough.messageId, index),
-    );
+    const { threadId, messageId } = openedWalkthrough;
+    const cases = walkthroughOf(threadId, messageId)?.cases ?? [];
+    const next = playWalkthrough(openedWalkthrough, action, cases);
+    if (next === openedWalkthrough) return;
+    setOpenedWalkthrough({ ...openedWalkthrough, ...next });
+    showWalkthroughStep(walkthroughStepAt(threadId, messageId, next));
   };
   const closeWalkthrough = () => {
     if (!openedWalkthrough) return;
@@ -2793,20 +2812,17 @@ function App() {
     (threadId, messageId) => openWalkthroughRef.current(threadId, messageId),
     [],
   );
-  const shownWalkthroughCase = openedWalkthrough
-    ? walkthroughOf(openedWalkthrough.threadId, openedWalkthrough.messageId)?.cases[0]
+  const shownWalkthroughCases = openedWalkthrough
+    ? walkthroughOf(openedWalkthrough.threadId, openedWalkthrough.messageId)?.cases
     : undefined;
   const openedStepGone =
-    openedWalkthrough !== null && !shownWalkthroughCase?.steps[openedWalkthrough.index];
+    openedWalkthrough !== null &&
+    !shownWalkthroughCases?.[openedWalkthrough.caseIndex]?.steps[openedWalkthrough.stepIndex];
   useEffect(() => {
     if (openedStepGone) setOpenedWalkthrough(null);
   }, [openedStepGone]);
   const shownWalkthroughPlace = openedWalkthrough
-    ? walkthroughStepAt(
-        openedWalkthrough.threadId,
-        openedWalkthrough.messageId,
-        openedWalkthrough.index,
-      )
+    ? walkthroughStepAt(openedWalkthrough.threadId, openedWalkthrough.messageId, openedWalkthrough)
     : null;
   const walkthroughStepKey =
     shownWalkthroughPlace?.kind === 'shown'
@@ -3475,12 +3491,13 @@ function App() {
                           }
                     }
                   >
-                    {openedWalkthrough && shownWalkthroughCase && (
+                    {openedWalkthrough && shownWalkthroughCases && (
                       <WalkthroughBar
-                        walkthroughCase={shownWalkthroughCase}
-                        index={openedWalkthrough.index}
+                        cases={shownWalkthroughCases}
+                        caseIndex={openedWalkthrough.caseIndex}
+                        index={openedWalkthrough.stepIndex}
                         shown={shownWalkthroughPlace?.kind === 'shown'}
-                        onMove={moveWalkthrough}
+                        onPlay={playOpenedWalkthrough}
                         onClose={closeWalkthrough}
                       />
                     )}

@@ -1622,6 +1622,24 @@ describe('CommentThreadCard walkthrough reply', () => {
     expect(open).toHaveBeenCalledWith('thread-1', 'answer');
   });
 
+  it('counts the cases on the cue when the walkthrough has several', () => {
+    const second = { steps: [{ file: 'src/a.ts', line: 5, description: '오류를 던진다.' }] };
+    renderCard({
+      ...answered,
+      messages: [
+        answered.messages[0]!,
+        {
+          ...answered.messages[1]!,
+          walkthrough: { ...walkthrough, cases: [walkthrough.cases[0]!, second] },
+        },
+      ],
+    });
+
+    expect(screen.getByRole('button', { name: '따라가기 열기' })).toHaveTextContent(
+      '따라가기 경우 2개',
+    );
+  });
+
   it('opens it from the keyboard through the cue', async () => {
     const user = userEvent.setup();
     const open = renderCard();

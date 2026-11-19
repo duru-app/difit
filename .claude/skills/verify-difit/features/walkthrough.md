@@ -6,9 +6,11 @@ An agent answers a reviewer's "show me how this flows" with a step-by-step walkt
 
 - `difit walkthrough add <threadId>`, from an argument or stdin: attaches to the thread's latest agent reply and moves off any older reply; adding again replaces it
 - `warnings` for an unknown step field (not stored), a file the review target lacks, or a line past the file's end; the step is still stored
+- Several cases, each with an optional `title` and `setup`; with more than one case the warnings and refusals name the step as `case 2 step 1`
 - `get` and `remove`; both exit 1 once nothing is attached
-- Refusals: 409 before any agent reply, 404 for a missing or deleted thread, 400 for a bad shape (no case, two cases, a step without `file`, `line` or `description`)
+- Refusals: 409 before any agent reply, 404 for a missing or deleted thread, 400 for a bad shape (no case, a case without steps, a step without `file`, `line` or `description`)
 - The browser: the reply gets a `따라가기 n단계` button and never opens by itself; the bar's `이전`·`다음` highlight the step's lines, `diff 에 안 보이는 줄` when the line is not in the diff; closing returns to the thread with one history entry for the whole walkthrough
+- With several cases the bar has a `경우` select (no select for one case); picking a case goes to its step `1 / n` and moves the highlight; `처음 상태` shows the picked case's `setup`
 - A removed walkthrough stays removed when a tab loaded before the removal saves
 
 ## How to get to it (user POV)

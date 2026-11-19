@@ -9,7 +9,8 @@ describe('parseWalkthrough', () => {
         cases: [
           {
             title: '정상 흐름',
-            setup: '로그인한 사용자',
+            setup: '로그인한 사용자가 저장을 누른다.',
+            owner: 'agent',
             steps: [
               {
                 file: './src/a.ts',
@@ -27,17 +28,49 @@ describe('parseWalkthrough', () => {
       cases: [
         {
           title: '정상 흐름',
+          setup: '로그인한 사용자가 저장을 누른다.',
           steps: [
             { file: 'src/a.ts', line: 3, endLine: 5, description: '여기서 들어간다.' },
             { file: 'src/a.ts', line: 9, description: '돌아온다.' },
           ],
         },
       ],
-      warnings: ['case: ignored unknown field "setup"', 'step 1: ignored unknown field "callPath"'],
+      warnings: ['case: ignored unknown field "owner"', 'step 1: ignored unknown field "callPath"'],
+    });
+  });
+
+  it('keeps every case in order and names the case in the warnings when there are several', () => {
+    expect(
+      parseWalkthrough({
+        cases: [
+          { title: '정상 흐름', steps: [{ file: 'a.ts', line: 1, description: '저장한다.' }] },
+          {
+            setup: '디스크가 가득 찼다.',
+            steps: [{ file: 'a.ts', line: 4, description: '실패한다.', vars: {} }],
+          },
+        ],
+      }),
+    ).toEqual({
+      cases: [
+        { title: '정상 흐름', steps: [{ file: 'a.ts', line: 1, description: '저장한다.' }] },
+        {
+          setup: '디스크가 가득 찼다.',
+          steps: [{ file: 'a.ts', line: 4, description: '실패한다.' }],
+        },
+      ],
+      warnings: ['case 2 step 1: ignored unknown field "vars"'],
     });
   });
 
   it.each([
+    [
+      { cases: [{ steps: [{ file: 'a', line: 1, description: 'x' }] }, { steps: [] }] },
+      'case 2 needs at least one step',
+    ],
+    [
+      { cases: [{ setup: 3, steps: [{ file: 'a', line: 1, description: 'x' }] }] },
+      '"setup" must be a string',
+    ],
     [{ cases: [{ steps: [] }] }, 'a case needs at least one step'],
     [{ cases: [{ steps: [{ line: 1, description: 'x' }] }] }, 'step 1 needs "file"'],
     [
