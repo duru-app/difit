@@ -514,7 +514,15 @@ interface ThreadAwaitingAgentBase {
   // Present when the latest message was written on lines of a fixup card.
   fixupLines?: FixupLines;
   fixupTarget?: string;
+  // Set only when the lines under the thread moved or went stale, as `comment get` finds them now;
+  // `position` keeps where the thread was made.
+  placement?: ChangedPlacement;
 }
+
+export type ChangedPlacement = { line?: LineNumber; extraLines?: SidedLine[] } & (
+  | { kind: 'moved' }
+  | { kind: 'stale'; reason: AnchorStaleReason }
+);
 
 export type ThreadAwaitingAgent = ThreadAwaitingAgentBase &
   ({ filePath: string; position: DiffCommentPosition } | { position: CommitCommentPosition });
