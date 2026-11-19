@@ -212,6 +212,26 @@ describe('walkthrough API', () => {
     ]);
   });
 
+  it('warns about a step whose file is outside the repository', async () => {
+    const { repo, base, head } = createRepo();
+    const review = await open(repo, base);
+    await askAndAnswer(review);
+
+    const added = await review.call(
+      'PUT',
+      '/api/threads/t1/walkthrough',
+      walkthrough(
+        { file: '../outside.txt', line: 1, description: '저장소 위' },
+        { file: '/etc/hostname', line: 1, description: '절대 경로' },
+      ),
+    );
+
+    expect(added.body.warnings).toEqual([
+      `step 1: ../outside.txt is not in ${head.slice(0, 7)}`,
+      `step 2: /etc/hostname is not in ${head.slice(0, 7)}`,
+    ]);
+  });
+
   it('stores every case with its setup and names the case of each step it warns about', async () => {
     const { repo, base, head } = createRepo();
     const review = await open(repo, base);
