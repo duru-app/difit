@@ -317,6 +317,7 @@ export interface WalkthroughStep {
 
 export interface WalkthroughCase {
   title?: string;
+  setup?: string;
   steps: WalkthroughStep[];
 }
 

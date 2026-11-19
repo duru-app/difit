@@ -39,7 +39,7 @@ export function createWalkthroughCommand(): Command {
     .argument('<threadId>', 'thread the reply belongs to')
     .argument(
       '[json]',
-      'walkthrough JSON: {"cases":[{"title"?,"steps":[{file,line,endLine?,description}]}]}',
+      'walkthrough JSON: {"cases":[{"title"?,"setup"?,"steps":[{file,line,endLine?,description}]}]}',
     )
     .requiredOption('--port <port>', 'port of the running difit server', parseInt)
     .action(async (threadId: string, json: string | undefined, opts: { port: number }) => {
