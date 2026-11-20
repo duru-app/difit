@@ -87,7 +87,7 @@ export function useViewedFiles(
         const localIndex = startsClean
           ? { entries: [], removed: [] }
           : storageService.getViewedHashIndex(repositoryId);
-        shared = await syncViewedRecord(repositoryId, localIndex.entries, localIndex.removed);
+        shared = await syncViewedRecord(localIndex.entries, localIndex.removed);
       }
       if (shared) {
         storageService.recordViewedHashes(repositoryId, shared.entries);
@@ -231,7 +231,7 @@ export function useViewedFiles(
   const recordViewed = useCallback(
     (entries: ViewedHashIndexEntry[]) => {
       storageService.recordViewedHashes(repositoryId, entries);
-      if (repositoryId) void syncViewedRecord(repositoryId, entries);
+      if (repositoryId) void syncViewedRecord(entries);
     },
     [repositoryId],
   );
@@ -247,7 +247,7 @@ export function useViewedFiles(
       storageService.removeViewedHashes(repositoryId, entries);
       if (repositoryId) {
         storageService.recordViewedRemovals(repositoryId, removals);
-        void syncViewedRecord(repositoryId, [], removals);
+        void syncViewedRecord([], removals);
       }
     },
     [repositoryId],

@@ -24,10 +24,10 @@ describe('syncViewedRecord', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(record)));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(syncViewedRecord('repo', [entry])).resolves.toEqual(record);
+    await expect(syncViewedRecord([entry])).resolves.toEqual(record);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('/api/viewed-record/repo');
+    expect(url).toBe('/api/viewed-record');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ entries: [entry], removed: [] });
   });
@@ -36,31 +36,31 @@ describe('syncViewedRecord', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(record)));
     vi.stubGlobal('fetch', fetchMock);
 
-    await syncViewedRecord('repo', [entry]);
+    await syncViewedRecord([entry]);
     expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].keepalive).toBe(true);
 
     const many = Array.from({ length: 1000 }, (_, i) => ({ ...entry, filePath: `f${i}.txt` }));
-    await syncViewedRecord('repo', many);
+    await syncViewedRecord(many);
     expect((fetchMock.mock.calls[1] as [string, RequestInit])[1].keepalive).toBe(false);
   });
 
   it('returns null when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 
-    await expect(syncViewedRecord('repo', [entry])).resolves.toBeNull();
+    await expect(syncViewedRecord([entry])).resolves.toBeNull();
   });
 
   it('returns null on an error status', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 500 })));
 
-    await expect(syncViewedRecord('repo', [entry])).resolves.toBeNull();
+    await expect(syncViewedRecord([entry])).resolves.toBeNull();
   });
 
   it('returns null for a body that is not a record', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html></html>')));
-    await expect(syncViewedRecord('repo', [entry])).resolves.toBeNull();
+    await expect(syncViewedRecord([entry])).resolves.toBeNull();
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"entries":[]}')));
-    await expect(syncViewedRecord('repo', [entry])).resolves.toBeNull();
+    await expect(syncViewedRecord([entry])).resolves.toBeNull();
   });
 });

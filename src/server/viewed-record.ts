@@ -1,5 +1,6 @@
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { setTimeout as delay } from 'timers/promises';
 
 import type { SharedViewedRecord, ViewedHashIndexEntry, ViewedHashRemoval } from '../types/diff.js';
@@ -9,19 +10,68 @@ import {
   viewedEntryKey,
 } from '../utils/viewedRecord.js';
 
+import { runGit } from './run-git.js';
 import { getDifitConfigDir, isPlainObject } from './user-config.js';
 
 export type ViewedRecordUpdate = Pick<SharedViewedRecord, 'entries' | 'removed'>;
 
-const REPOSITORY_ID_PATTERN = /^[0-9a-f]{64}$/;
 const LOCK_WAIT_MS = 2000;
 const LOCK_RETRY_MS = 20;
 const LOCK_STALE_MS = 10_000;
 
-export function getViewedRecordPath(repositoryId: string): string | null {
-  return REPOSITORY_ID_PATTERN.test(repositoryId)
-    ? join(getDifitConfigDir(), 'viewed', `${repositoryId}.json`)
-    : null;
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+
+// Hashes the .git directory the worktrees of a repository share, so every worktree gets the same
+// id. Null outside a git repository.
+export async function getSharedRepositoryId(repositoryPath: string): Promise<string | null> {
+  const run = await runGit(repositoryPath, ['rev-parse', '--git-common-dir']);
+  const gitDir = run.code === 0 ? run.stdout.toString('utf8').trim() : '';
+  if (gitDir === '') return null;
+  return sha256(await fs.realpath(resolve(repositoryPath, gitDir)));
+}
+
+export function getViewedRecordPath(recordId: string): string {
+  return join(getDifitConfigDir(), 'viewed', `${recordId}.json`);
+}
+
+export async function locateViewedRecord(repositoryPath: string): Promise<string> {
+  return getViewedRecordPath(
+    (await getSharedRepositoryId(repositoryPath)) ?? sha256(repositoryPath),
+  );
+}
+
+async function listWorktrees(repositoryPath: string): Promise<string[]> {
+  const run = await runGit(repositoryPath, ['worktree', 'list', '--porcelain']);
+  if (run.code !== 0) return [];
+  return run.stdout
+    .toString('utf8')
+    .split('\n')
+    .flatMap((line) =>
+      line.startsWith('worktree ') ? [resolve(line.slice('worktree '.length))] : [],
+    );
+}
+
+// Merging the per-checkout records in again on every start is safe: the merge rules keep an unmark
+// made since from being undone by an older mark.
+export async function adoptCheckoutViewedRecords(
+  repositoryPath: string,
+  recordPath: string,
+): Promise<void> {
+  const checkouts = new Set([repositoryPath, ...(await listWorktrees(repositoryPath))]);
+  const failures: unknown[] = [];
+  for (const checkout of checkouts) {
+    const legacyPath = getViewedRecordPath(sha256(checkout));
+    if (legacyPath === recordPath) continue;
+    try {
+      const { entries, removed } = await readViewedRecord(legacyPath);
+      await mergeViewedRecord(recordPath, { entries, removed });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Could not merge every checkout viewed record');
+  }
 }
 
 function isIsoDate(value: unknown): value is string {

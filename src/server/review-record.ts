@@ -1,6 +1,5 @@
-import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
-import { join, resolve } from 'path';
+import { join } from 'path';
 
 import {
   COMMIT_MESSAGE_PATH,
@@ -19,9 +18,8 @@ import {
 } from '../utils/diffSelection.js';
 import { mergeReviewDecisions, normalizeReviewDecisions } from '../utils/reviewDecisions.js';
 
-import { runGit } from './run-git.js';
 import { getDifitConfigDir, isPlainObject } from './user-config.js';
-import { withRecordLock } from './viewed-record.js';
+import { getSharedRepositoryId, withRecordLock } from './viewed-record.js';
 
 export interface StoredReview {
   selection: DiffSelection;
@@ -36,15 +34,10 @@ export interface ReviewRecord {
   reviews: StoredReview[];
 }
 
-// Keyed by the .git directory the worktrees of a repository share, so every worktree reads the
-// same record. Null outside a git repository.
+// Every worktree of a repository reads the same record. Null outside a git repository.
 export async function getReviewRecordPath(repositoryPath: string): Promise<string | null> {
-  const run = await runGit(repositoryPath, ['rev-parse', '--git-common-dir']);
-  const gitDir = run.code === 0 ? run.stdout.toString('utf8').trim() : '';
-  if (gitDir === '') return null;
-  const commonDir = await fs.realpath(resolve(repositoryPath, gitDir));
-  const repositoryId = createHash('sha256').update(commonDir).digest('hex');
-  return join(getDifitConfigDir(), 'reviews', `${repositoryId}.json`);
+  const repositoryId = await getSharedRepositoryId(repositoryPath);
+  return repositoryId ? join(getDifitConfigDir(), 'reviews', `${repositoryId}.json`) : null;
 }
 
 function toSelection(value: unknown): DiffSelection | null {

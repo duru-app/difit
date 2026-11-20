@@ -58,18 +58,14 @@ vi.mock('../services/StorageService', () => ({
 
 const mockSyncViewedRecord = vi.fn(
   async (
-    _repositoryId: string,
     _entries: ViewedHashIndexEntry[],
     _removed?: ViewedHashRemoval[],
   ): Promise<SharedViewedRecord | null> => null,
 );
 
 vi.mock('../services/viewedRecord', () => ({
-  syncViewedRecord: (
-    repositoryId: string,
-    entries: ViewedHashIndexEntry[],
-    removed?: ViewedHashRemoval[],
-  ) => mockSyncViewedRecord(repositoryId, entries, removed),
+  syncViewedRecord: (entries: ViewedHashIndexEntry[], removed?: ViewedHashRemoval[]) =>
+    mockSyncViewedRecord(entries, removed),
 }));
 
 // Mock diffUtils
@@ -788,7 +784,7 @@ describe('useViewedFiles', () => {
       const { result } = render();
       await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
 
-      expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [entry], undefined);
+      expect(mockSyncViewedRecord).toHaveBeenCalledWith([entry], undefined);
     });
 
     it('resends the unmarks kept in this browser when the review loads', async () => {
@@ -802,7 +798,7 @@ describe('useViewedFiles', () => {
       const { result } = render();
       await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
 
-      expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [], [removal]);
+      expect(mockSyncViewedRecord).toHaveBeenCalledWith([], [removal]);
     });
 
     it('keeps an unmark in this browser even when the request fails', async () => {
@@ -892,7 +888,6 @@ describe('useViewedFiles', () => {
         await result.current.toggleFileViewed('src/foo.ts', file);
       });
       expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
-        'repo-1',
         [expect.objectContaining({ filePath: 'src/foo.ts', diffContentHash: hash })],
         undefined,
       );
@@ -901,7 +896,6 @@ describe('useViewedFiles', () => {
         await result.current.toggleFileViewed('src/foo.ts', file);
       });
       expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
-        'repo-1',
         [],
         [expect.objectContaining({ filePath: 'src/foo.ts', diffContentHash: hash })],
       );
@@ -930,7 +924,6 @@ describe('useViewedFiles', () => {
         await result.current.setFilesViewed([file], true);
       });
       expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
-        'repo-1',
         [expect.objectContaining({ filePath: 'src/foo.ts' })],
         undefined,
       );
@@ -939,7 +932,6 @@ describe('useViewedFiles', () => {
         await result.current.setFilesViewed([file], false);
       });
       expect(mockSyncViewedRecord).toHaveBeenLastCalledWith(
-        'repo-1',
         [],
         [expect.objectContaining({ filePath: 'src/foo.ts' })],
       );
@@ -962,7 +954,7 @@ describe('useViewedFiles', () => {
         await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
 
         expect(result.current.viewedFiles.size).toBe(0);
-        expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [], []);
+        expect(mockSyncViewedRecord).toHaveBeenCalledWith([], []);
       });
 
       it('keeps the marks of this browser when the run was already applied', async () => {
@@ -974,7 +966,7 @@ describe('useViewedFiles', () => {
         await waitFor(() => expect(result.current.hasLoadedInitialViewedFiles).toBe(true));
 
         expect(result.current.viewedFiles.has('src/foo.ts')).toBe(true);
-        expect(mockSyncViewedRecord).toHaveBeenCalledWith('repo-1', [entry], undefined);
+        expect(mockSyncViewedRecord).toHaveBeenCalledWith([entry], undefined);
       });
     });
 

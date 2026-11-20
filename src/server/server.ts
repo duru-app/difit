@@ -87,8 +87,10 @@ import { listSkills, skillLocations } from './skills.js';
 import { searchSymbol } from './symbol-search.js';
 import { parseUserSettingsPatch, readUserConfig, updateUserClientSettings } from './user-config.js';
 import {
+  adoptCheckoutViewedRecords,
   clearViewedRecord,
   getViewedRecordPath,
+  locateViewedRecord,
   mergeViewedRecord,
   parseViewedRecordUpdate,
 } from './viewed-record.js';
@@ -318,7 +320,7 @@ export async function startServer(options: ServerOptions): Promise<{
   app.use((req, res, next) => {
     if (req.path === '/api/direct-edit' && isLocalRequest(req)) {
       parseDirectEditJson(req, res, next);
-    } else if (req.path.startsWith('/api/viewed-record/') && isLocalRequest(req)) {
+    } else if (req.path === '/api/viewed-record' && isLocalRequest(req)) {
       parseViewedRecordJson(req, res, next);
     } else {
       parseJson(req, res, next);
@@ -624,6 +626,15 @@ export async function startServer(options: ServerOptions): Promise<{
         console.error('Error locating the review record:', error);
         return null;
       });
+  const viewedRecordPath = await locateViewedRecord(repositoryPath).catch((error: unknown) => {
+    console.error('Error locating the viewed record:', error);
+    return getViewedRecordPath(repositoryId);
+  });
+  const viewedRecordAdopted = adoptCheckoutViewedRecords(repositoryPath, viewedRecordPath).catch(
+    (error: unknown) => {
+      console.error('Error merging the per-checkout viewed records:', error);
+    },
+  );
   let reviewSaves: Promise<void> = Promise.resolve();
   const commentsSaved = () => reviewSaves;
   function saveCommentSession(selection: DiffSelection) {
@@ -2744,20 +2755,20 @@ export async function startServer(options: ServerOptions): Promise<{
     }
   });
 
-  app.post('/api/viewed-record/:repositoryId', async (req, res) => {
+  app.post('/api/viewed-record', async (req, res) => {
     if (!isLocalRequest(req)) {
       res.status(403).json({ error: 'Viewed record is only available on this machine' });
       return;
     }
-    const path = getViewedRecordPath(req.params.repositoryId);
     const update = parseViewedRecordUpdate(req.body);
-    if (!path || !update) {
+    if (!update) {
       res.status(400).json({ error: 'Invalid viewed record request' });
       return;
     }
 
     try {
-      res.json(await mergeViewedRecord(path, update));
+      await viewedRecordAdopted;
+      res.json(await mergeViewedRecord(viewedRecordPath, update));
     } catch (error) {
       console.error('Error saving viewed record:', error);
       res.status(500).json({ error: 'Failed to save viewed record' });
@@ -3017,12 +3028,10 @@ export async function startServer(options: ServerOptions): Promise<{
   }
 
   if (options.clearComments && listensOnLoopbackOnly) {
-    const viewedRecordPath = getViewedRecordPath(repositoryId);
-    if (viewedRecordPath) {
-      await clearViewedRecord(viewedRecordPath).catch((error: unknown) => {
-        console.error('Error clearing viewed record:', error);
-      });
-    }
+    await viewedRecordAdopted;
+    await clearViewedRecord(viewedRecordPath).catch((error: unknown) => {
+      console.error('Error clearing viewed record:', error);
+    });
   }
 
   // Check if diff is empty and skip browser opening
