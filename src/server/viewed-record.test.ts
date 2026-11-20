@@ -50,18 +50,6 @@ describe('viewed-record', () => {
         join(homedir(), '.difit', 'viewed', `${REPOSITORY_ID}.json`),
       );
     });
-
-    it.each([
-      ['parent traversal', '../../etc/passwd'],
-      ['traversal padded to the right length', `../${'a'.repeat(61)}`],
-      ['path separator', `${'a'.repeat(32)}/${'a'.repeat(31)}`],
-      ['too short', 'abc123'],
-      ['uppercase hex', 'A'.repeat(64)],
-      ['trailing newline', `${REPOSITORY_ID}\n`],
-      ['empty', ''],
-    ])('rejects %s', (_name, repositoryId) => {
-      expect(getViewedRecordPath(repositoryId)).toBeNull();
-    });
   });
 
   describe('parseViewedRecordUpdate', () => {

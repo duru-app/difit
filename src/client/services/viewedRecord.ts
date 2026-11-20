@@ -10,13 +10,12 @@ function isSharedViewedRecord(value: unknown): value is SharedViewedRecord {
 }
 
 export async function syncViewedRecord(
-  repositoryId: string,
   entries: ViewedHashIndexEntry[],
   removed: ViewedHashRemoval[] = [],
 ): Promise<SharedViewedRecord | null> {
   try {
     const body = JSON.stringify({ entries, removed });
-    const response = await fetch(`/api/viewed-record/${encodeURIComponent(repositoryId)}`, {
+    const response = await fetch('/api/viewed-record', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,

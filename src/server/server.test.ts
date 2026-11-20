@@ -1,9 +1,11 @@
+import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import { once } from 'events';
-import { promises as fs } from 'fs';
+import { promises as fs, realpathSync } from 'fs';
 import { createServer, request } from 'http';
 import { createServer as createNetServer, type Server as NetServer } from 'net';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
@@ -1852,7 +1854,6 @@ describe('Server Integration Tests', () => {
   });
 
   describe('Viewed record API', () => {
-    const repositoryId = 'a'.repeat(64);
     const entry = {
       filePath: 'src/a.ts',
       diffContentHash: 'h1',
@@ -1867,6 +1868,7 @@ describe('Server Integration Tests', () => {
         host?: string;
         keepAlive?: boolean;
         preferredPort?: number;
+        repoPath?: string;
       } = {},
     ) {
       const result = await startServer({
@@ -1878,19 +1880,47 @@ describe('Server Integration Tests', () => {
       return result.port;
     }
 
-    const post = (port: number, id: string, body: unknown) =>
-      fetch(`http://localhost:${port}/api/viewed-record/${id}`, {
+    const post = (port: number, body: unknown) =>
+      fetch(`http://localhost:${port}/api/viewed-record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
+    const git = (cwd: string, args: string[]) =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+    const recordPathOf = (repo: string) =>
+      join(
+        configDir,
+        'viewed',
+        `${sha256(realpathSync(resolve(repo, git(repo, ['rev-parse', '--git-common-dir']))))}.json`,
+      );
+    const checkoutRecordPathOf = (checkout: string) =>
+      join(configDir, 'viewed', `${sha256(checkout)}.json`);
+    const record = async (path: string, entries: unknown[], removed: unknown[] = []) => {
+      await fs.mkdir(join(configDir, 'viewed'), { recursive: true });
+      await fs.writeFile(
+        path,
+        JSON.stringify({ version: 1, lastModifiedAt: entry.viewedAt, entries, removed }),
+      );
+    };
+    const marksOn = async (port: number) =>
+      ((await (await post(port, { entries: [], removed: [] })).json()) as { entries: unknown[] })
+        .entries;
+    const pageRepositoryId = async (port: number) =>
+      (
+        (await (await fetch(`http://localhost:${port}/api/diff`)).json()) as {
+          repositoryId: string;
+        }
+      ).repositoryId;
+
     it('merges writes from two servers into one record', async () => {
       const first = await start();
       const second = await start();
 
-      await post(first, repositoryId, { entries: [entry], removed: [] });
-      const response = await post(second, repositoryId, {
+      await post(first, { entries: [entry], removed: [] });
+      const response = await post(second, {
         entries: [{ ...entry, filePath: 'src/b.ts' }],
         removed: [],
       });
@@ -1898,41 +1928,97 @@ describe('Server Integration Tests', () => {
       expect(response.ok).toBe(true);
       const record = (await response.json()) as { entries: unknown[] };
       expect(record.entries).toHaveLength(2);
-      const onDisk = JSON.parse(
-        await fs.readFile(join(configDir, 'viewed', `${repositoryId}.json`), 'utf-8'),
-      ) as { entries: unknown[] };
+      const onDisk = JSON.parse(await fs.readFile(recordPathOf(process.cwd()), 'utf-8')) as {
+        entries: unknown[];
+      };
       expect(onDisk.entries).toHaveLength(2);
     });
 
-    it('reads the record of the repository the page names', async () => {
-      const port = await start();
-      const page = (await (await fetch(`http://localhost:${port}/api/diff`)).json()) as {
-        repositoryId: string;
-      };
+    describe('across the checkouts of one repository', () => {
+      let dir: string;
+      let main: string;
+      let linked: string;
 
-      const response = await post(port, page.repositoryId, { entries: [], removed: [] });
+      beforeEach(async () => {
+        // A test run started from a commit hook would otherwise point every git call at that commit.
+        for (const key of Object.keys(process.env)) {
+          if (key.startsWith('GIT_')) vi.stubEnv(key, undefined);
+        }
+        for (const role of ['AUTHOR', 'COMMITTER']) {
+          vi.stubEnv(`GIT_${role}_NAME`, 'difit');
+          vi.stubEnv(`GIT_${role}_EMAIL`, 'difit@example.com');
+        }
+        dir = realpathSync(await fs.mkdtemp(join(tmpdir(), 'difit-viewed-checkouts-')));
+        main = join(dir, 'main');
+        linked = join(dir, 'linked');
+        await fs.mkdir(join(main, 'nested'), { recursive: true });
+        git(main, ['init', '-q']);
+        git(main, ['commit', '-q', '--allow-empty', '-m', 'base']);
+        git(main, ['worktree', 'add', '-q', linked, '-b', 'linked']);
+      });
 
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ entries: [], removed: [] });
-    });
+      afterEach(async () => {
+        await fs.rm(dir, { recursive: true, force: true, maxRetries: 10 });
+      });
 
-    it.each([
-      ['parent traversal', '..%2F..%2Fescape'],
-      ['padded traversal', `..%2F${'a'.repeat(61)}`],
-      ['too short', 'abc'],
-    ])('refuses %s and writes nothing', async (_name, id) => {
-      const port = await start();
+      it('shares the marks of the main checkout with a linked worktree and back', async () => {
+        const fromMain = await start({ repoPath: main });
+        await post(fromMain, { entries: [entry], removed: [] });
 
-      const response = await post(port, id, { entries: [entry], removed: [] });
+        const fromLinked = await start({ repoPath: linked });
+        expect(await marksOn(fromLinked)).toEqual([entry]);
+        const other = { ...entry, filePath: 'src/b.ts' };
+        await post(fromLinked, { entries: [other], removed: [] });
 
-      expect(response.status).toBe(400);
-      expect(await fs.readdir(configDir)).toEqual([]);
+        expect(await marksOn(fromMain)).toEqual(expect.arrayContaining([entry, other]));
+        expect(await pageRepositoryId(fromMain)).not.toBe(await pageRepositoryId(fromLinked));
+      });
+
+      it('takes in the marks each checkout recorded under its own path', async () => {
+        const fromNested = { ...entry, filePath: 'src/nested.ts' };
+        const fromLinked = { ...entry, filePath: 'src/linked.ts' };
+        await record(checkoutRecordPathOf(join(main, 'nested')), [fromNested]);
+        await record(checkoutRecordPathOf(linked), [fromLinked]);
+
+        const port = await start({ repoPath: join(main, 'nested') });
+
+        expect(await marksOn(port)).toEqual(expect.arrayContaining([fromNested, fromLinked]));
+        expect(await fs.readFile(checkoutRecordPathOf(linked), 'utf-8')).toContain('linked.ts');
+      });
+
+      it('keeps an unmark when the older checkout record still holds the mark', async () => {
+        await record(checkoutRecordPathOf(linked), [entry]);
+        const first = await start({ repoPath: main });
+        const removal = {
+          filePath: entry.filePath,
+          diffContentHash: entry.diffContentHash,
+          removedAt: '2026-02-01T00:00:00.000Z',
+        };
+        await post(first, { entries: [], removed: [removal] });
+
+        const second = await start({ repoPath: linked });
+
+        expect(await marksOn(second)).toEqual([]);
+      });
+
+      it('keeps a record named by its path outside a git repository', async () => {
+        vi.stubEnv('GIT_CEILING_DIRECTORIES', dir);
+        const plain = join(dir, 'plain');
+        await fs.mkdir(plain);
+
+        const port = await start({ repoPath: plain });
+        await post(port, { entries: [entry], removed: [] });
+
+        const path = checkoutRecordPathOf(plain);
+        expect(path).toBe(join(configDir, 'viewed', `${await pageRepositoryId(port)}.json`));
+        expect(JSON.parse(await fs.readFile(path, 'utf-8'))).toMatchObject({ entries: [entry] });
+      });
     });
 
     it('refuses a malformed body', async () => {
       const port = await start();
 
-      const response = await post(port, repositoryId, { entries: 'nope' });
+      const response = await post(port, { entries: 'nope' });
 
       expect(response.status).toBe(400);
     });
@@ -1945,7 +2031,7 @@ describe('Server Integration Tests', () => {
         diffContentHash: 'f'.repeat(64),
       }));
 
-      const response = await post(port, repositoryId, { entries, removed: [] });
+      const response = await post(port, { entries, removed: [] });
 
       expect(response.status).toBe(200);
     });
@@ -1954,7 +2040,7 @@ describe('Server Integration Tests', () => {
       const port = await start();
       await fs.writeFile(join(configDir, 'viewed'), 'a file where the directory belongs');
 
-      const response = await post(port, repositoryId, { entries: [entry], removed: [] });
+      const response = await post(port, { entries: [entry], removed: [] });
 
       expect(response.status).toBe(500);
     });
@@ -1962,30 +2048,20 @@ describe('Server Integration Tests', () => {
     it('is closed to clients when the server listens beyond localhost', async () => {
       const port = await start({ host: '0.0.0.0' });
 
-      const response = await post(port, repositoryId, { entries: [entry], removed: [] });
+      const response = await post(port, { entries: [entry], removed: [] });
 
       expect(response.status).toBe(403);
       expect(await fs.readdir(configDir)).toEqual([]);
     });
 
     describe('--clean', () => {
-      async function ownRecordPath(port: number) {
-        const page = (await (await fetch(`http://localhost:${port}/api/diff`)).json()) as {
-          repositoryId: string;
-        };
-        return {
-          id: page.repositoryId,
-          path: join(configDir, 'viewed', `${page.repositoryId}.json`),
-        };
-      }
-
       it('removes the record of this repository when the server starts', async () => {
-        const { id } = await ownRecordPath(await start());
-        await post(9160, id, { entries: [entry], removed: [] });
+        await start();
+        await post(9160, { entries: [entry], removed: [] });
 
         const port = await start({ clearComments: true });
 
-        const record = await post(port, id, { entries: [], removed: [] });
+        const record = await post(port, { entries: [], removed: [] });
         expect(await record.json()).toMatchObject({ entries: [] });
       });
 
@@ -1995,8 +2071,9 @@ describe('Server Integration Tests', () => {
         });
 
         it('keeps the record for an invalid revision', async () => {
-          const { id, path } = await ownRecordPath(await start());
-          await post(9160, id, { entries: [entry], removed: [] });
+          await start();
+          const path = recordPathOf(process.cwd());
+          await post(9160, { entries: [entry], removed: [] });
           parserStartup.validCommit = false;
 
           await expect(start({ clearComments: true })).rejects.toThrow('Invalid or non-existent');
@@ -2005,8 +2082,9 @@ describe('Server Integration Tests', () => {
         });
 
         it('keeps the record when the address cannot be bound', async () => {
-          const { id, path } = await ownRecordPath(await start());
-          await post(9160, id, { entries: [entry], removed: [] });
+          await start();
+          const path = recordPathOf(process.cwd());
+          await post(9160, { entries: [entry], removed: [] });
 
           await expect(start({ clearComments: true, host: '203.0.113.9' })).rejects.toThrow();
 
@@ -2014,8 +2092,9 @@ describe('Server Integration Tests', () => {
         });
 
         it('keeps the record for a server open beyond localhost', async () => {
-          const { id, path } = await ownRecordPath(await start());
-          await post(9160, id, { entries: [entry], removed: [] });
+          await start();
+          const path = recordPathOf(process.cwd());
+          await post(9160, { entries: [entry], removed: [] });
 
           await start({ clearComments: true, host: '0.0.0.0' });
 
@@ -2024,20 +2103,21 @@ describe('Server Integration Tests', () => {
       });
 
       it('removes the record even when the diff is empty', async () => {
-        const { id } = await ownRecordPath(await start());
-        await post(9160, id, { entries: [entry], removed: [] });
+        await start();
+        await post(9160, { entries: [entry], removed: [] });
         parserStartup.emptyDiff = true;
 
         const port = await start({ clearComments: true });
         parserStartup.emptyDiff = false;
 
-        const record = await post(port, id, { entries: [], removed: [] });
+        const record = await post(port, { entries: [], removed: [] });
         expect(await record.json()).toMatchObject({ entries: [] });
       });
 
       it('accepts a live socket while it waits for the record lock', async () => {
-        const { id, path } = await ownRecordPath(await start());
-        await post(9160, id, { entries: [entry], removed: [] });
+        await start();
+        const path = recordPathOf(process.cwd());
+        await post(9160, { entries: [entry], removed: [] });
         await fs.writeFile(`${path}.lock`, '');
         const port = 9175;
 
@@ -2084,7 +2164,7 @@ describe('Server Integration Tests', () => {
           socket.terminate();
         }
 
-        const record = await post(port, id, { entries: [], removed: [] });
+        const record = await post(port, { entries: [], removed: [] });
         expect(await record.json()).toMatchObject({ entries: [] });
       });
 
@@ -2111,12 +2191,12 @@ describe('Server Integration Tests', () => {
       });
 
       it('does not take back a mark from another port after the clean', async () => {
-        const { id } = await ownRecordPath(await start());
-        await post(9160, id, { entries: [entry], removed: [] });
+        await start();
+        await post(9160, { entries: [entry], removed: [] });
 
         const port = await start({ clearComments: true });
 
-        const record = (await (await post(port, id, { entries: [entry], removed: [] })).json()) as {
+        const record = (await (await post(port, { entries: [entry], removed: [] })).json()) as {
           entries: unknown[];
           removed: unknown[];
         };
@@ -2131,24 +2211,24 @@ describe('Server Integration Tests', () => {
 
       it('does not touch the record when the page loads again', async () => {
         const port = await start({ clearComments: true });
-        const { id } = await ownRecordPath(port);
-        await post(port, id, { entries: [entry], removed: [] });
+        await post(port, { entries: [entry], removed: [] });
 
         await fetch(`http://localhost:${port}/api/diff`);
         await fetch(`http://localhost:${port}/api/diff`);
 
-        const record = await post(port, id, { entries: [], removed: [] });
+        const record = await post(port, { entries: [], removed: [] });
         expect(await record.json()).toMatchObject({ entries: [entry] });
       });
 
       it('leaves other repositories alone', async () => {
-        const first = await start();
-        await post(first, repositoryId, { entries: [entry], removed: [] });
+        const otherPath = join(configDir, 'viewed', `${'a'.repeat(64)}.json`);
+        await record(otherPath, [entry]);
 
-        const port = await start({ clearComments: true });
+        await start({ clearComments: true });
 
-        const record = await post(port, repositoryId, { entries: [], removed: [] });
-        expect(await record.json()).toMatchObject({ entries: [entry] });
+        expect(JSON.parse(await fs.readFile(otherPath, 'utf-8'))).toMatchObject({
+          entries: [entry],
+        });
       });
 
       it('starts even when the record cannot be removed', async () => {
